@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useMemo, useState, useCallback } from 'react';
 import {
   AVAILABLE_COUPONS,
   EXCHANGE_RATES,
@@ -13,6 +13,7 @@ import {
   CurrencyCode,
   LanguageCode,
   OrderItem,
+  OrderStatus,
   Product,
   UserProfile,
 } from '@/types';
@@ -32,6 +33,7 @@ interface AppContextType {
   cartDiscountKRW: number;
   cartShippingFeeKRW: number;
   cartTotalKRW: number;
+  isDarkMode: boolean;
 
   // Actions
   addToCart: (productId: string, quantity?: number) => void;
@@ -45,10 +47,21 @@ interface AppContextType {
   createOrder: (orderPayload: {
     originHub: string;
     destinationCity: string;
-    destinationCountry: 'India' | 'Nepal';
+    destinationCountry: 'South Korea' | 'India' | 'Nepal';
     shippingMethod: 'Standard' | 'Express';
     recipient: OrderItem['recipient'];
     paymentMethod: string;
+    customItems?: CartItem[];
+    customSubtotalKRW?: number;
+    customShippingKRW?: number;
+    customDiscountKRW?: number;
+    customTotalKRW?: number;
+    bankAccount?: {
+      bankName: string;
+      accountNumber: string;
+      accountHolder: string;
+    };
+    senderName?: string;
   }) => OrderItem;
   reorder: (orderId: string) => boolean;
   setCurrency: (currency: CurrencyCode) => void;
@@ -59,6 +72,11 @@ interface AppContextType {
   deleteAddress: (id: string) => void;
   setDefaultAddress: (id: string) => void;
   formatPrice: (amountKRW: number) => string;
+  addProduct: (newProd: Omit<Product, 'id'>) => Product;
+  updateProduct: (id: string, updates: Partial<Product>) => void;
+  deleteProduct: (id: string) => void;
+  updateOrderStatus: (orderId: string, status: OrderStatus) => void;
+  toggleDarkMode: () => void;
 }
 
 const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
@@ -507,7 +525,7 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [products] = useState<Product[]>(INITIAL_PRODUCTS);
+  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [cart, setCart] = useState<CartItem[]>([
     { product: INITIAL_PRODUCTS[0], quantity: 1 },
     { product: INITIAL_PRODUCTS[3], quantity: 2 },
@@ -515,11 +533,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [wishlist, setWishlist] = useState<string[]>(['2', '6']);
   const [orders, setOrders] = useState<OrderItem[]>(INITIAL_ORDERS);
   const [user, setUser] = useState<UserProfile>(INITIAL_USER);
-  const [selectedCurrency, setSelectedCurrency] = useState<CurrencyCode>('KRW');
-  const [language, setLanguage] = useState<LanguageCode>('KR');
+  const [currency, setCurrencyState] = useState<CurrencyCode>('KRW');
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [language, setLanguage] = useState<LanguageCode>('EN');
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
 
   // Cart Totals
+  const toggleDarkMode = useCallback(() => {
+    setIsDarkMode((prev) => !prev);
+  }, []);
+
   const cartCount = useMemo(() => {
     return cart.reduce((sum, item) => sum + item.quantity, 0);
   }, [cart]);
@@ -538,6 +561,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!appliedCoupon) return 0;
     if (appliedCoupon.code === 'FREESHIP') return 0;
     if (cartSubtotalKRW < appliedCoupon.minOrderKRW) return 0;
+
+    if (appliedCoupon.fixedDiscountKRW && appliedCoupon.fixedDiscountKRW > 0) {
+      return appliedCoupon.fixedDiscountKRW;
+    }
 
     const calculated = (cartSubtotalKRW * appliedCoupon.discountPercent) / 100;
     return Math.min(calculated, appliedCoupon.maxDiscountKRW);
@@ -558,6 +585,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [cartSubtotalKRW, cartShippingFeeKRW, cartDiscountKRW]);
 
   // Actions
+  // Product Management (Admin Real-Time Sync)
+  const addProduct = (newProd: Omit<Product, 'id'>): Product => {
+    const created: Product = {
+      ...newProd,
+      id: `prod-${Date.now()}`,
+    };
+    setProducts((prev) => [created, ...prev]);
+    return created;
+  };
+
+  const updateProduct = (id: string, updates: Partial<Product>) => {
+    setProducts((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, ...updates } : p))
+    );
+    // Sync with Cart items in real-time
+    setCart((prev) =>
+      prev.map((item) =>
+        item.product.id === id
+          ? { ...item, product: { ...item.product, ...updates } }
+          : item
+      )
+    );
+  };
+
+  const deleteProduct = (id: string) => {
+    setProducts((prev) => prev.filter((p) => p.id !== id));
+    // Purge from Cart & Wishlist in real-time
+    setCart((prev) => prev.filter((item) => item.product.id !== id));
+    setWishlist((prev) => prev.filter((pid) => pid !== id));
+  };
+
+  const updateOrderStatus = (
+    orderId: string,
+    status: OrderStatus
+  ) => {
+    setOrders((prev) =>
+      prev.map((o) => {
+        if (o.id !== orderId) return o;
+        return {
+          ...o,
+          status,
+        };
+      })
+    );
+  };
+
   const addToCart = (productId: string, quantity = 1) => {
     const product = products.find((p) => p.id === productId);
     if (!product) return;
@@ -610,6 +683,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const applyCoupon = (code: string) => {
     const trimmed = code.trim().toUpperCase();
+
+    // Dynamic lucky coupon support (₩1,000 ~ ₩3,000 OFF based on order size)
+    if (trimmed.startsWith('LUCKY')) {
+      let luckyAmount = 2000;
+      const parsedNum = parseInt(trimmed.replace('LUCKY', '').replace('-', ''), 10);
+      if (!isNaN(parsedNum) && parsedNum >= 1000 && parsedNum <= 3000) {
+        luckyAmount = parsedNum;
+      } else {
+        // Calculate based on order size:
+        if (cartSubtotalKRW >= 70000) {
+          luckyAmount = Math.floor(Math.random() * 6) * 100 + 2500; // ₩2,500 ~ ₩3,000
+        } else if (cartSubtotalKRW >= 40000) {
+          luckyAmount = Math.floor(Math.random() * 8) * 100 + 1500; // ₩1,500 ~ ₩2,200
+        } else {
+          luckyAmount = Math.floor(Math.random() * 6) * 100 + 1000; // ₩1,000 ~ ₩1,500
+        }
+      }
+
+      const luckyCoupon: Coupon = {
+        code: `LUCKY-${luckyAmount}`,
+        title: `🎲 Lucky Random Discount (₩${luckyAmount.toLocaleString('en-KR')} OFF)`,
+        discountPercent: 0,
+        fixedDiscountKRW: luckyAmount,
+        minOrderKRW: 10000,
+        maxDiscountKRW: luckyAmount,
+      };
+
+      setAppliedCoupon(luckyCoupon);
+      return {
+        success: true,
+        message: `🎉 Lucky Discount Applied! ₩${luckyAmount.toLocaleString('en-KR')} OFF your order.`,
+      };
+    }
+
     const coupon = AVAILABLE_COUPONS.find((c) => c.code === trimmed);
 
     if (!coupon) {
@@ -633,15 +740,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const createOrder = (orderPayload: {
     originHub: string;
     destinationCity: string;
-    destinationCountry: 'India' | 'Nepal';
+    destinationCountry: 'South Korea' | 'India' | 'Nepal';
     shippingMethod: 'Standard' | 'Express';
     recipient: OrderItem['recipient'];
     paymentMethod: string;
+    customItems?: CartItem[];
+    customSubtotalKRW?: number;
+    customShippingKRW?: number;
+    customDiscountKRW?: number;
+    customTotalKRW?: number;
+    bankAccount?: {
+      bankName: string;
+      accountNumber: string;
+      accountHolder: string;
+    };
+    senderName?: string;
   }): OrderItem => {
     const newOrderId = `order-${Date.now()}`;
-    const trackingNum = `KR${Math.floor(10000000 + Math.random() * 90000000)}${
-      orderPayload.destinationCountry === 'Nepal' ? 'NP' : 'IN'
-    }`;
+    const trackingNum =
+      orderPayload.destinationCountry === 'South Korea'
+        ? `KR-CJ${Math.floor(10000000 + Math.random() * 90000000)}`
+        : `KR${Math.floor(10000000 + Math.random() * 90000000)}${
+            orderPayload.destinationCountry === 'Nepal' ? 'NP' : 'IN'
+          }`;
     const dateFormatted = new Date().toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -649,65 +770,69 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     const isExpress = orderPayload.shippingMethod === 'Express';
-    const shippingFee = isExpress
-      ? cartShippingFeeKRW + 8000
-      : cartShippingFeeKRW;
-    const finalTotal = Math.max(0, cartSubtotalKRW + shippingFee - cartDiscountKRW);
+    const itemsToOrder = orderPayload.customItems && orderPayload.customItems.length > 0
+      ? orderPayload.customItems
+      : [...cart];
+
+    const subtotal = orderPayload.customSubtotalKRW !== undefined
+      ? orderPayload.customSubtotalKRW
+      : cartSubtotalKRW;
+
+    const shippingFee = orderPayload.customShippingKRW !== undefined
+      ? orderPayload.customShippingKRW
+      : (isExpress ? cartShippingFeeKRW + 8000 : cartShippingFeeKRW);
+
+    const discount = orderPayload.customDiscountKRW !== undefined
+      ? orderPayload.customDiscountKRW
+      : cartDiscountKRW;
+
+    const finalTotal = orderPayload.customTotalKRW !== undefined
+      ? orderPayload.customTotalKRW
+      : Math.max(0, subtotal + shippingFee - discount);
+
+    const totalWeight = Number(
+      itemsToOrder.reduce((sum, it) => sum + it.product.weightKg * it.quantity, 0).toFixed(2)
+    );
+
+    const isKoreaLocal = orderPayload.destinationCountry === 'South Korea';
 
     const newOrder: OrderItem = {
       id: newOrderId,
       orderNumber: `NM-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
       date: dateFormatted,
-      items: [...cart],
-      subtotalKRW: cartSubtotalKRW,
+      items: itemsToOrder,
+      subtotalKRW: subtotal,
       shippingFeeKRW: shippingFee,
-      discountKRW: cartDiscountKRW,
+      discountKRW: discount,
       totalKRW: finalTotal,
-      totalWeightKg: cartTotalWeightKg,
+      totalWeightKg: totalWeight,
       status: 'ORDER_PLACED',
       originHub: orderPayload.originHub,
       destinationCity: orderPayload.destinationCity,
       destinationCountry: orderPayload.destinationCountry,
       shippingMethod: orderPayload.shippingMethod,
-      estimatedDelivery: isExpress ? 'In 3-5 days' : 'In 10-14 days',
-      trackingNumber: trackingNum,
+      estimatedDelivery: isKoreaLocal
+        ? (isExpress ? 'Tomorrow by 8 PM' : 'In 1-2 days (CJ Express)')
+        : (isExpress ? 'In 3-5 days' : 'In 10-14 days'),
       recipient: orderPayload.recipient,
       paymentMethod: orderPayload.paymentMethod,
+      bankAccount: orderPayload.bankAccount,
+      senderName: orderPayload.senderName,
+      trackingNumber: `AWB${Math.floor(100000000 + Math.random() * 900000000)}`,
       timeline: [
         {
-          title: 'Order Placed & Payment Confirmed',
+          title: 'Order Placed',
           location: orderPayload.originHub,
-          timestamp: 'Just now',
-          description: `Shipment order created with payment method ${orderPayload.paymentMethod}.`,
+          timestamp: dateFormatted,
+          description: 'Payment verified and package registered',
           completed: true,
           current: true,
         },
         {
-          title: 'Scheduled Collection & Packaging',
+          title: 'Picked Up',
           location: orderPayload.originHub,
-          timestamp: 'Upcoming',
-          description: 'Package will be weighed and customs tags affixed.',
-          completed: false,
-        },
-        {
-          title: 'Incheon International Airport Departure',
-          location: 'Incheon Cargo Terminal (ICN)',
-          timestamp: 'Upcoming',
-          description: 'International air transit.',
-          completed: false,
-        },
-        {
-          title: 'Destination Customs Clearance',
-          location: `${orderPayload.destinationCity} Customs Hub`,
-          timestamp: 'Upcoming',
-          description: 'Import regulatory verification.',
-          completed: false,
-        },
-        {
-          title: 'Delivered',
-          location: `${orderPayload.recipient.address}, ${orderPayload.recipient.city}`,
-          timestamp: 'Upcoming',
-          description: 'Delivery to recipient.',
+          timestamp: '',
+          description: 'Carrier sorting pending',
           completed: false,
         },
       ],
@@ -717,9 +842,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setUser((prev) => ({
       ...prev,
       totalShipments: prev.totalShipments + 1,
-      totalSavedKRW: prev.totalSavedKRW + cartDiscountKRW,
+      totalSavedKRW: prev.totalSavedKRW + discount,
     }));
-    clearCart();
+
+    // If only specific items were ordered, remove only those from cart
+    if (orderPayload.customItems && orderPayload.customItems.length > 0) {
+      const orderedIds = new Set(orderPayload.customItems.map((it) => it.product.id));
+      setCart((prev) => prev.filter((item) => !orderedIds.has(item.product.id)));
+    } else {
+      clearCart();
+    }
+
     return newOrder;
   };
 
@@ -732,7 +865,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const setCurrency = (currency: CurrencyCode) => {
-    setSelectedCurrency(currency);
+    setCurrencyState(currency);
     setUser((prev) => ({ ...prev, preferredCurrency: currency }));
   };
 
@@ -769,11 +902,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const formatPrice = (amountKRW: number): string => {
-    if (selectedCurrency === 'INR') {
+    if (currency === 'INR') {
       const inr = Math.round(amountKRW * EXCHANGE_RATES.INR);
       return `₹${inr.toLocaleString('en-IN')}`;
     }
-    if (selectedCurrency === 'NPR') {
+    if (currency === 'NPR') {
       const npr = Math.round(amountKRW * EXCHANGE_RATES.NPR);
       return `रू ${npr.toLocaleString('en-NP')}`;
     }
@@ -793,7 +926,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         wishlist,
         orders,
         user,
-        selectedCurrency,
+        selectedCurrency: currency,
         language,
         appliedCoupon,
         cartCount,
@@ -802,6 +935,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         cartDiscountKRW,
         cartShippingFeeKRW,
         cartTotalKRW,
+        isDarkMode,
         addToCart,
         removeFromCart,
         updateCartQuantity,
@@ -820,6 +954,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteAddress,
         setDefaultAddress,
         formatPrice,
+        addProduct,
+        updateProduct,
+        deleteProduct,
+        updateOrderStatus,
+        toggleDarkMode,
       }}
     >
       {children}

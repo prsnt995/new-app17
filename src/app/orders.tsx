@@ -18,7 +18,9 @@ import { OrderItem } from '@/types';
 
 export default function OrdersScreen() {
   const router = useRouter();
-  const { orders, reorder, formatPrice, t } = useApp();
+  const { orders, reorder, formatPrice, t, isDarkMode } = useApp();
+
+  const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'ACTIVE' | 'DELIVERED'>('ALL');
   const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<OrderItem | null>(null);
@@ -47,21 +49,44 @@ export default function OrdersScreen() {
   const getStatusBadge = (status: OrderItem['status']) => {
     switch (status) {
       case 'IN_TRANSIT':
-        return { label: 'IN TRANSIT ✈️', bg: '#FFF3E0', text: '#E65100' };
+        return {
+          label: 'IN TRANSIT ✈️',
+          bg: isDarkMode ? '#2D271E' : '#FFF3E0',
+          text: isDarkMode ? '#FFB74D' : '#E65100',
+        };
       case 'ORDER_PLACED':
-        return { label: 'ORDER PLACED 📦', bg: '#E3F2FD', text: '#1565C0' };
+        return {
+          label: 'ORDER PLACED 📦',
+          bg: isDarkMode ? '#1E2838' : '#E3F2FD',
+          text: isDarkMode ? '#90CAF9' : '#1565C0',
+        };
       case 'DELIVERED':
-        return { label: 'DELIVERED ✓', bg: '#E8F5E9', text: '#2E7D32' };
+        return {
+          label: 'DELIVERED ✓',
+          bg: isDarkMode ? '#1E2D1E' : '#E8F5E9',
+          text: isDarkMode ? '#81C784' : '#2E7D32',
+        };
       case 'CANCELLED':
-        return { label: 'CANCELLED', bg: '#FFEBEE', text: '#C62828' };
+        return {
+          label: 'CANCELLED',
+          bg: isDarkMode ? '#3E1F1F' : '#FFEBEE',
+          text: isDarkMode ? '#FF8A80' : '#C62828',
+        };
       default:
-        return { label: status, bg: '#F5F5F5', text: '#616161' };
+        return {
+          label: status,
+          bg: isDarkMode ? '#262626' : '#F5F5F5',
+          text: isDarkMode ? '#B0B0B0' : '#616161',
+        };
     }
   };
 
   return (
     <>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8F7F3" />
+      <StatusBar
+        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
+        backgroundColor={isDarkMode ? '#121212' : '#F8F7F3'}
+      />
       <SafeAreaView style={styles.container}>
         {/* HEADER */}
         <View style={styles.header}>
@@ -501,52 +526,63 @@ export default function OrdersScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (isDark: boolean) => {
+  const bg = isDark ? '#121212' : '#F8F7F3';
+  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
+  const cardBgElevated = isDark ? '#262626' : '#F8F7F3';
+  const textMain = isDark ? '#FFFFFF' : '#212121';
+  const textSub = isDark ? '#A0A0A0' : '#8A857A';
+  const border = isDark ? '#333333' : '#EFEBE4';
+  const accent = isDark ? '#D4AF37' : '#C88D2B';
+  const activeTint = isDark ? '#2D271E' : '#FFF9ED';
+  const borderLight = isDark ? '#262626' : '#F5F5F5';
+
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: bg,
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 14,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#EFEBE4',
+    borderBottomColor: border,
   },
   backButton: {
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     justifyContent: 'center',
     alignItems: 'center',
   },
   backArrow: {
     fontSize: 18,
-    color: '#212121',
+    color: textMain,
     fontWeight: '800',
   },
   headerTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   headerSubtitle: {
-    fontSize: 11,
-    color: '#8A857A',
+    fontSize: 10,
+    color: textSub,
     marginTop: 2,
   },
   newShipmentBtn: {
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
   },
   newShipmentText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 11,
     fontWeight: '800',
   },
@@ -555,24 +591,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     gap: 8,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
   },
   filterTab: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
   },
   filterTabActive: {
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : '#212121',
   },
   filterTabText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#8A857A',
+    color: textSub,
   },
   filterTabTextActive: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
   },
   scrollContent: {
     padding: 16,
@@ -581,9 +617,11 @@ const styles = StyleSheet.create({
   emptyOrders: {
     padding: 40,
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 20,
     marginTop: 20,
+    borderWidth: 1,
+    borderColor: border,
   },
   emptyIcon: {
     fontSize: 50,
@@ -592,38 +630,38 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   emptySubtitle: {
     fontSize: 12,
-    color: '#8A857A',
+    color: textSub,
     textAlign: 'center',
     marginTop: 4,
     marginBottom: 16,
   },
   sendParcelBtn: {
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 10,
   },
   sendParcelBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 11,
     fontWeight: '800',
   },
   orderCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 18,
     padding: 16,
     marginBottom: 14,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: isDark ? 0.3 : 0.04,
     shadowRadius: 5,
     elevation: 2,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -634,11 +672,11 @@ const styles = StyleSheet.create({
   orderNumber: {
     fontSize: 14,
     fontWeight: '900',
-    color: '#212121',
+    color: textMain,
   },
   orderDate: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   statusBadge: {
@@ -651,13 +689,15 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   routeBox: {
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 12,
     padding: 10,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 10,
+    borderWidth: 1,
+    borderColor: border,
   },
   routeEndpoint: {
     flex: 1,
@@ -665,11 +705,11 @@ const styles = StyleSheet.create({
   routeCity: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   routeSub: {
     fontSize: 9,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   routeTransit: {
@@ -678,12 +718,12 @@ const styles = StyleSheet.create({
   },
   routeArrow: {
     fontSize: 14,
-    color: '#C88D2B',
+    color: accent,
   },
   shippingSpeed: {
     fontSize: 8,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
   },
   trackingBar: {
     flexDirection: 'row',
@@ -692,21 +732,21 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0EBE0',
+    borderBottomColor: borderLight,
   },
   trackingLabel: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
   },
   trackingNumber: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
   },
   etaText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#2E7D32',
+    color: isDark ? '#81C784' : '#2E7D32',
   },
   itemsPreview: {
     flexDirection: 'row',
@@ -722,19 +762,19 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 8,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: cardBgElevated,
   },
   itemThumbQty: {
     position: 'absolute',
     bottom: -3,
     right: -3,
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : '#212121',
     borderRadius: 6,
     paddingHorizontal: 3,
     paddingVertical: 1,
   },
   itemThumbQtyText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 8,
     fontWeight: '800',
   },
@@ -744,12 +784,12 @@ const styles = StyleSheet.create({
   },
   itemSummaryText: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
   },
   orderTotal: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#212121',
+    color: textMain,
     marginTop: 2,
   },
   cardActions: {
@@ -758,42 +798,42 @@ const styles = StyleSheet.create({
   },
   trackBtn: {
     flex: 1.4,
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : '#212121',
     paddingVertical: 9,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   trackBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 11,
     fontWeight: '800',
   },
   invoiceBtn: {
     flex: 1,
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     paddingVertical: 9,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   invoiceBtnText: {
-    color: '#C88D2B',
+    color: accent,
     fontSize: 11,
     fontWeight: '800',
   },
   reorderBtn: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
     paddingVertical: 9,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   reorderBtnText: {
-    color: '#212121',
+    color: textMain,
     fontSize: 11,
     fontWeight: '700',
   },
@@ -803,20 +843,24 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   trackingModalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
     maxHeight: '85%',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   invoiceModalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     margin: 20,
     borderRadius: 20,
     padding: 20,
     maxHeight: '80%',
     alignSelf: 'center',
     width: '90%',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -825,48 +869,48 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#EFEBE4',
+    borderBottomColor: border,
   },
   modalHeading: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   modalSubheading: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   closeModalBtn: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     justifyContent: 'center',
     alignItems: 'center',
   },
   closeModalText: {
     fontSize: 14,
-    color: '#8A857A',
+    color: textSub,
     fontWeight: '800',
   },
   modalRouteBanner: {
-    backgroundColor: '#FFF9ED',
+    backgroundColor: isDark ? '#2D271E' : '#FFF9ED',
     borderRadius: 12,
     padding: 12,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#F3E1BA',
+    borderColor: isDark ? '#4D3B18' : '#F3E1BA',
   },
   modalRouteText: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   modalEta: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#C88D2B',
+    color: accent,
     marginTop: 2,
   },
   timelineContainer: {
@@ -885,31 +929,33 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: '#EFEBE4',
+    backgroundColor: isDark ? '#262626' : '#EFEBE4',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   timelineDotCompleted: {
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
   },
   timelineDotCurrent: {
-    backgroundColor: '#E65100',
+    backgroundColor: isDark ? '#D4AF37' : '#E65100',
     borderWidth: 3,
-    borderColor: '#FFE0B2',
+    borderColor: isDark ? '#4D3B18' : '#FFE0B2',
   },
   timelineCheck: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 11,
     fontWeight: '900',
   },
   timelineLine: {
     width: 2,
     flex: 1,
-    backgroundColor: '#EFEBE4',
+    backgroundColor: border,
     marginTop: 2,
   },
   timelineLineCompleted: {
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
   },
   timelineDetails: {
     flex: 1,
@@ -922,59 +968,61 @@ const styles = StyleSheet.create({
   timelineTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#8A857A',
+    color: textSub,
   },
   timelineTitleCurrent: {
-    color: '#E65100',
+    color: isDark ? accent : '#E65100',
     fontWeight: '800',
   },
   timelineTime: {
     fontSize: 9,
-    color: '#8A857A',
+    color: textSub,
   },
   timelineLocation: {
     fontSize: 10,
-    color: '#212121',
+    color: textMain,
     fontWeight: '600',
     marginTop: 2,
   },
   timelineDesc: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
     lineHeight: 14,
   },
   modalRecipientCard: {
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 12,
     padding: 12,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: border,
   },
   modalRecipientTitle: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#8A857A',
+    color: textSub,
   },
   modalRecipientName: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
     marginTop: 2,
   },
   modalRecipientAddress: {
     fontSize: 10,
-    color: '#666155',
+    color: textSub,
     marginTop: 2,
   },
   doneTrackingBtn: {
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : '#212121',
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
     marginTop: 10,
   },
   doneTrackingBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -985,22 +1033,22 @@ const styles = StyleSheet.create({
   },
   invoiceLabel: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
   },
   invoiceValue: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   invoiceDivider: {
     height: 1,
-    backgroundColor: '#EFEBE4',
+    backgroundColor: borderLight,
     marginVertical: 10,
   },
   invoiceTableTitle: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
     marginBottom: 6,
   },
   invoiceItemRow: {
@@ -1010,14 +1058,14 @@ const styles = StyleSheet.create({
   },
   invoiceItemName: {
     fontSize: 11,
-    color: '#212121',
+    color: textMain,
     flex: 1,
     marginRight: 8,
   },
   invoiceItemPrice: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   invoiceRow: {
     flexDirection: 'row',
@@ -1026,21 +1074,21 @@ const styles = StyleSheet.create({
   },
   invoiceRowLabel: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
   },
   invoiceRowVal: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   invoiceDiscountLabel: {
     fontSize: 11,
-    color: '#2E7D32',
+    color: isDark ? '#81C784' : '#2E7D32',
   },
   invoiceDiscountVal: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#2E7D32',
+    color: isDark ? '#81C784' : '#2E7D32',
   },
   invoiceTotalRow: {
     flexDirection: 'row',
@@ -1052,11 +1100,12 @@ const styles = StyleSheet.create({
   invoiceTotalLabel: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   invoiceTotalAmount: {
     fontSize: 16,
     fontWeight: '900',
-    color: '#C88D2B',
+    color: accent,
   },
 });
+};

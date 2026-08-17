@@ -37,7 +37,10 @@ export default function CartScreen() {
     formatPrice,
     user,
     t,
+    isDarkMode,
   } = useApp();
+
+  const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
   const [couponInput, setCouponInput] = useState('');
   const [couponError, setCouponError] = useState('');
@@ -103,7 +106,10 @@ export default function CartScreen() {
 
   return (
     <>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8F7F3" />
+      <StatusBar
+        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
+        backgroundColor={isDarkMode ? '#121212' : '#F8F7F3'}
+      />
       <SafeAreaView style={styles.container}>
         {/* HEADER */}
         <View style={styles.header}>
@@ -623,42 +629,53 @@ export default function CartScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (isDark: boolean) => {
+  const bg = isDark ? '#121212' : '#F8F7F3';
+  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
+  const cardBgElevated = isDark ? '#262626' : '#F8F7F3';
+  const textMain = isDark ? '#FFFFFF' : '#212121';
+  const textSub = isDark ? '#A0A0A0' : '#8A857A';
+  const border = isDark ? '#333333' : '#EFEBE4';
+  const accent = isDark ? '#D4AF37' : '#C88D2B';
+  const activeTint = isDark ? '#2D271E' : '#FFF9ED';
+  const borderLight = isDark ? '#262626' : '#F5F5F5';
+
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: bg,
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 14,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#EFEBE4',
+    borderBottomColor: border,
   },
   backButton: {
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     justifyContent: 'center',
     alignItems: 'center',
   },
   backArrow: {
     fontSize: 18,
-    color: '#212121',
+    color: textMain,
     fontWeight: '800',
   },
   headerTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   headerSubtitle: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   clearText: {
@@ -671,12 +688,12 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   freeShippingCard: {
-    backgroundColor: '#FFF9ED',
+    backgroundColor: isDark ? '#2D271E' : '#FFF9ED',
     borderRadius: 16,
     padding: 14,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#F3E1BA',
+    borderColor: isDark ? '#4D3B18' : '#F3E1BA',
   },
   freeShippingHeader: {
     flexDirection: 'row',
@@ -687,7 +704,7 @@ const styles = StyleSheet.create({
   freeShippingTitle: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
     flex: 1,
   },
   freeShippingIcon: {
@@ -696,21 +713,23 @@ const styles = StyleSheet.create({
   },
   progressBarBackground: {
     height: 6,
-    backgroundColor: '#EFEBE4',
+    backgroundColor: isDark ? '#262626' : '#EFEBE4',
     borderRadius: 3,
     overflow: 'hidden',
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
     borderRadius: 3,
   },
   emptyCart: {
     padding: 40,
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 20,
     marginTop: 20,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   emptyIcon: {
     fontSize: 54,
@@ -719,24 +738,24 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   emptySubtitle: {
     fontSize: 12,
-    color: '#8A857A',
+    color: textSub,
     textAlign: 'center',
     marginTop: 6,
     lineHeight: 18,
     marginBottom: 20,
   },
   browseButton: {
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 12,
   },
   browseButtonText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -746,12 +765,12 @@ const styles = StyleSheet.create({
   sectionHeading: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
     marginBottom: 10,
     letterSpacing: 0.3,
   },
   cartItemCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 16,
     padding: 12,
     flexDirection: 'row',
@@ -759,15 +778,17 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: isDark ? 0.3 : 0.04,
     shadowRadius: 4,
     elevation: 1,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   itemImage: {
     width: 65,
     height: 65,
     borderRadius: 10,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: cardBgElevated,
   },
   itemInfo: {
     flex: 1,
@@ -777,48 +798,50 @@ const styles = StyleSheet.create({
   itemName: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
     lineHeight: 17,
   },
   itemMeta: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 3,
   },
   itemPrice: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
     marginTop: 4,
   },
   quantityContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 10,
     padding: 3,
   },
   qtyBtn: {
     width: 26,
     height: 26,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 6,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
+    shadowOpacity: isDark ? 0.3 : 0.05,
     shadowRadius: 2,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   qtyBtnText: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   qtyText: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
     marginHorizontal: 8,
   },
   deleteBtn: {
@@ -829,19 +852,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   routeCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 14,
     padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   routeIconWrapper: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
@@ -852,36 +875,36 @@ const styles = StyleSheet.create({
   routeLabel: {
     fontSize: 8,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
     letterSpacing: 0.5,
   },
   routeName: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
     marginTop: 1,
   },
   routeDetail: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   routePhone: {
     fontSize: 10,
-    color: '#666155',
+    color: textSub,
     marginTop: 2,
     fontWeight: '600',
   },
   changeAddressBtn: {
     paddingHorizontal: 10,
     paddingVertical: 5,
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     borderRadius: 8,
   },
   changeAddressText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#C88D2B',
+    color: accent,
   },
   hubChipsRow: {
     flexDirection: 'row',
@@ -890,44 +913,44 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   hubChip: {
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   hubChipActive: {
-    backgroundColor: '#FFF9ED',
-    borderColor: '#C88D2B',
+    backgroundColor: activeTint,
+    borderColor: accent,
   },
   hubChipText: {
     fontSize: 9,
     fontWeight: '700',
-    color: '#8A857A',
+    color: textSub,
   },
   hubChipTextActive: {
-    color: '#C88D2B',
+    color: accent,
   },
   shippingOption: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 14,
     padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   shippingOptionActive: {
-    borderColor: '#C88D2B',
-    backgroundColor: '#FFFBF3',
+    borderColor: accent,
+    backgroundColor: activeTint,
   },
   shippingRadio: {
     width: 18,
     height: 18,
     borderRadius: 9,
     borderWidth: 2,
-    borderColor: '#C88D2B',
+    borderColor: accent,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -936,12 +959,12 @@ const styles = StyleSheet.create({
     width: 9,
     height: 9,
     borderRadius: 4.5,
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
   },
   shippingTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   expressTagRow: {
     flexDirection: 'row',
@@ -949,50 +972,50 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   fastBadge: {
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
   },
   fastBadgeText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 8,
     fontWeight: '800',
   },
   shippingEta: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   shippingCost: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   appliedCouponCard: {
-    backgroundColor: '#E8F5E9',
+    backgroundColor: isDark ? '#1E2D1E' : '#E8F5E9',
     borderRadius: 12,
     padding: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#C8E6C9',
+    borderColor: isDark ? '#2E4C2E' : '#C8E6C9',
   },
   appliedCouponCode: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#2E7D32',
+    color: isDark ? '#81C784' : '#2E7D32',
   },
   appliedCouponDesc: {
     fontSize: 10,
-    color: '#4CAF50',
+    color: isDark ? '#A5D6A7' : '#4CAF50',
     marginTop: 2,
   },
   removeCouponBtn: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 6,
   },
   removeCouponText: {
@@ -1006,24 +1029,24 @@ const styles = StyleSheet.create({
   },
   couponInput: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: isDark ? '#262626' : '#FFFFFF',
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 13,
-    color: '#212121',
+    color: textMain,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   applyBtn: {
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : '#212121',
     paddingHorizontal: 16,
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 12,
   },
   applyBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 11,
     fontWeight: '800',
   },
@@ -1038,33 +1061,33 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   couponChip: {
-    backgroundColor: '#FFF9ED',
+    backgroundColor: activeTint,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#F3E1BA',
+    borderColor: isDark ? '#4D3B18' : '#F3E1BA',
   },
   couponChipText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#C88D2B',
+    color: accent,
   },
   paymentGrid: {
     gap: 8,
   },
   paymentCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 12,
     padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   paymentCardSelected: {
-    borderColor: '#C88D2B',
-    backgroundColor: '#FFFBF3',
+    borderColor: accent,
+    backgroundColor: activeTint,
   },
   paymentIcon: {
     fontSize: 18,
@@ -1073,32 +1096,34 @@ const styles = StyleSheet.create({
   paymentLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
     flex: 1,
   },
   paymentLabelSelected: {
-    color: '#C88D2B',
+    color: accent,
   },
   checkMark: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
   },
   billCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: isDark ? 0.3 : 0.04,
     shadowRadius: 6,
     elevation: 2,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   billTitle: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
     marginBottom: 12,
   },
   billRow: {
@@ -1108,31 +1133,31 @@ const styles = StyleSheet.create({
   },
   billLabel: {
     fontSize: 12,
-    color: '#8A857A',
+    color: textSub,
   },
   billValue: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#212121',
+    color: textMain,
   },
   billValueBold: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   discountLabel: {
     fontSize: 12,
-    color: '#2E7D32',
+    color: isDark ? '#81C784' : '#2E7D32',
     fontWeight: '700',
   },
   discountValue: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#2E7D32',
+    color: isDark ? '#81C784' : '#2E7D32',
   },
   divider: {
     height: 1,
-    backgroundColor: '#EFEBE4',
+    backgroundColor: borderLight,
     marginVertical: 10,
   },
   totalRow: {
@@ -1143,40 +1168,201 @@ const styles = StyleSheet.create({
   totalLabel: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   taxInclusive: {
     fontSize: 9,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 1,
   },
   totalAmount: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#C88D2B',
+    color: accent,
   },
   checkoutBtn: {
-    backgroundColor: '#212121',
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    backgroundColor: accent,
+    borderRadius: 14,
+    paddingVertical: 12,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
+    marginTop: 10,
+    shadowColor: accent,
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowRadius: 6,
+    elevation: 3,
   },
   checkoutBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '900',
     letterSpacing: 0.5,
   },
+
+  successModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  successModalContent: {
+    backgroundColor: cardBg,
+    borderRadius: 24,
+    padding: 20,
+    width: '100%',
+    maxWidth: 385,
+    alignItems: 'center',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
+  },
+  modalSuccessIcon: {
+    fontSize: 44,
+    marginBottom: 8,
+  },
+  modalSuccessTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: textMain,
+    textAlign: 'center',
+  },
+  modalSuccessSubtitle: {
+    fontSize: 11,
+    color: textSub,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  modalSuccessMsg: {
+    fontSize: 10,
+    color: textSub,
+    marginTop: 6,
+    textAlign: 'center',
+    lineHeight: 14,
+  },
+  modalInvoiceCard: {
+    width: '100%',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
+    borderRadius: 16,
+    padding: 12,
+    marginTop: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: border,
+  },
+  modalInvoiceHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: border,
+    paddingBottom: 6,
+    marginBottom: 8,
+  },
+  modalInvoiceTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: textMain,
+  },
+  modalInvoiceDate: {
+    fontSize: 9,
+    color: textSub,
+  },
+  modalInvoiceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  modalInvoiceLabel: {
+    fontSize: 10,
+    color: textSub,
+  },
+  modalInvoiceValue: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: textMain,
+  },
+  modalInvoiceTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: border,
+    paddingTop: 8,
+    marginTop: 2,
+  },
+  modalInvoiceTotalLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: textMain,
+  },
+  modalInvoiceTotalValue: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: accent,
+  },
+  modalTrackingBox: {
+    width: '100%',
+    backgroundColor: isDark ? '#2D271E' : '#FFF9ED',
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'center',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: isDark ? '#4D3B18' : '#F3E1BA',
+  },
+  modalTrackingLabel: {
+    fontSize: 10,
+    color: textSub,
+  },
+  modalTrackingCode: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: accent,
+  },
+  modalTrackBtn: {
+    backgroundColor: accent,
+    borderRadius: 12,
+    paddingVertical: 12,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  modalTrackBtnText: {
+    color: isDark ? '#121212' : '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  modalHomeBtn: {
+    paddingVertical: 8,
+  },
+  modalHomeBtnText: {
+    color: textSub,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  modalOrderDetails: {
+    width: '100%',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: border,
+  },
+  modalDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  modalDetailLabel: {
+    fontSize: 10,
+    color: textSub,
+  },
+  modalDetailValue: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: textMain,
+  },
   checkoutBtnAmount: {
-    color: '#F0BA5A',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 14,
     fontWeight: '900',
   },
@@ -1188,75 +1374,26 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   modalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 24,
-    padding: 24,
+    padding: 20,
     width: '100%',
-    maxWidth: 380,
+    maxWidth: 385,
     alignItems: 'center',
-  },
-  modalSuccessIcon: {
-    fontSize: 50,
-    marginBottom: 8,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   modalTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#212121',
+    fontSize: 17,
+    fontWeight: '800',
+    color: textMain,
     textAlign: 'center',
   },
   modalSubtitle: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
+    marginTop: 2,
     textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 16,
-  },
-  modalOrderDetails: {
-    width: '100%',
-    backgroundColor: '#F8F7F3',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 16,
-    gap: 6,
-  },
-  modalDetailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  modalDetailLabel: {
-    fontSize: 10,
-    color: '#8A857A',
-  },
-  modalDetailValue: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#212121',
-  },
-  modalTrackingCode: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#C88D2B',
-  },
-  modalTrackBtn: {
-    backgroundColor: '#C88D2B',
-    borderRadius: 12,
-    paddingVertical: 12,
-    width: '100%',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  modalTrackBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  modalHomeBtn: {
-    paddingVertical: 8,
-  },
-  modalHomeBtnText: {
-    color: '#8A857A',
-    fontSize: 12,
-    fontWeight: '700',
   },
 });
+};

@@ -40,7 +40,11 @@ export default function HomeScreen() {
     setLanguage,
     setCurrency,
     t,
+    isDarkMode,
+    toggleDarkMode,
   } = useApp();
+
+  const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -63,7 +67,10 @@ export default function HomeScreen() {
 
   return (
     <>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8F7F3" />
+      <StatusBar
+        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
+        backgroundColor={isDarkMode ? '#121212' : '#F8F7F3'}
+      />
 
       <SafeAreaView style={styles.container}>
         <ScrollView
@@ -524,10 +531,68 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (isDark: boolean) => {
+  const bg = isDark ? '#121212' : '#F8F7F3';
+  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
+  const cardBgElevated = isDark ? '#262626' : '#F8F7F3';
+  const textMain = isDark ? '#FFFFFF' : '#212121';
+  const textSub = isDark ? '#A0A0A0' : '#8A857A';
+  const border = isDark ? '#333333' : '#EFEBE4';
+  const accent = isDark ? '#D4AF37' : '#C88D2B';
+  const activeTint = isDark ? '#2D271E' : '#FFFBF3';
+  const activeTintOrange = isDark ? '#2D271E' : '#FFF5E0';
+  
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: bg,
+  },
+  specialOffer: {
+    backgroundColor: isDark ? activeTintOrange : '#FFEED4',
+    marginHorizontal: 16,
+    borderRadius: 18,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: isDark ? '#4D3B18' : '#FFD085',
+  },
+  specialSmall: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: accent,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  specialTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: textMain,
+    marginTop: 2,
+  },
+  specialText: {
+    fontSize: 10,
+    color: textSub,
+    marginTop: 4,
+    lineHeight: 14,
+  },
+  specialButton: {
+    backgroundColor: isDark ? accent : '#212121',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    marginTop: 10,
+  },
+  specialButtonText: {
+    color: isDark ? '#121212' : '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  deliveryEmoji: {
+    fontSize: 48,
+    marginLeft: 10,
   },
   scrollContent: {
     paddingBottom: 20,
@@ -543,22 +608,22 @@ const styles = StyleSheet.create({
   welcome: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#8A857A',
+    color: textSub,
     letterSpacing: 1,
   },
   logo: {
     fontSize: 22,
     fontWeight: '900',
-    color: '#212121',
+    color: textMain,
     marginTop: 2,
     letterSpacing: 0.5,
   },
   logoGold: {
-    color: '#C88D2B',
+    color: accent,
   },
   tagline: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
     fontWeight: '600',
   },
@@ -571,15 +636,17 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
+    shadowOpacity: isDark ? 0.3 : 0.08,
     shadowRadius: 6,
     elevation: 3,
     position: 'relative',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   cartIcon: {
     fontSize: 18,
@@ -588,7 +655,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -2,
     right: -2,
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
     borderRadius: 10,
     minWidth: 18,
     height: 18,
@@ -596,7 +663,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 4,
     borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+    borderColor: cardBg,
   },
   cartBadgeText: {
     color: '#FFFFFF',
@@ -606,17 +673,17 @@ const styles = StyleSheet.create({
   langButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
+    shadowOpacity: isDark ? 0.3 : 0.08,
     shadowRadius: 6,
     elevation: 3,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   langButtonFlag: {
     fontSize: 15,
@@ -625,26 +692,45 @@ const styles = StyleSheet.create({
   langButtonText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
+  },
+  authHeaderBtn: {
+    backgroundColor: isDark ? accent : '#212121',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: isDark ? 0.3 : 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  authHeaderBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: isDark ? '#121212' : '#FFFFFF',
+    letterSpacing: 0.5,
   },
   locationCard: {
     marginHorizontal: 20,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 16,
     padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
+    shadowOpacity: isDark ? 0.3 : 0.05,
     shadowRadius: 5,
     elevation: 2,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   locationCircle: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -655,24 +741,24 @@ const styles = StyleSheet.create({
   locationLabel: {
     fontSize: 9,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
     letterSpacing: 0.5,
   },
   location: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
     marginTop: 2,
   },
   chevron: {
     fontSize: 20,
-    color: '#C88D2B',
+    color: accent,
     fontWeight: '700',
   },
   searchContainer: {
     marginHorizontal: 20,
     marginTop: 14,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -680,25 +766,64 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: isDark ? 0.3 : 0.04,
     shadowRadius: 4,
     elevation: 2,
+    borderWidth: 1,
+    borderColor: border,
   },
   searchIcon: {
     fontSize: 16,
-    color: '#8A857A',
+    color: textSub,
     marginRight: 10,
   },
   searchInput: {
     flex: 1,
     fontSize: 13,
-    color: '#212121',
+    color: textMain,
     padding: 0,
   },
   clearSearch: {
     fontSize: 14,
-    color: '#8A857A',
+    color: textSub,
     padding: 4,
+  },
+  searchSuggestionsWrapper: {
+    marginHorizontal: 20,
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  searchSuggestionLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: textSub,
+    marginRight: 6,
+  },
+  searchSuggestionsScroll: {
+    paddingRight: 10,
+    gap: 6,
+  },
+  searchChip: {
+    backgroundColor: cardBg,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: border,
+  },
+  searchChipActive: {
+    backgroundColor: activeTintOrange,
+    borderColor: accent,
+  },
+  searchChipText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: textSub,
+  },
+  searchChipTextActive: {
+    color: accent,
+    fontWeight: '800',
   },
   hero: {
     marginHorizontal: 20,
@@ -709,6 +834,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     position: 'relative',
     overflow: 'hidden',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: '#3D3425',
   },
   heroLeft: {
     flex: 1,
@@ -743,7 +870,7 @@ const styles = StyleSheet.create({
   },
   heroButton: {
     marginTop: 14,
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 12,
@@ -796,51 +923,141 @@ const styles = StyleSheet.create({
     bottom: -60,
     right: 40,
   },
-  specialOffer: {
+  clothingAdBanner: {
     marginHorizontal: 20,
-    marginTop: 14,
-    backgroundColor: '#FFF9ED',
-    borderRadius: 18,
-    padding: 16,
+    marginTop: 16,
+    backgroundColor: '#1E1B18',
+    borderRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: '#38322B',
+  },
+  adHeaderBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+  },
+  adLiveBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#F3E1BA',
+    gap: 6,
   },
-  specialSmall: {
+  livePulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#E53935',
+  },
+  adLiveText: {
+    color: '#FFFFFF',
     fontSize: 9,
     fontWeight: '800',
-    color: '#C88D2B',
     letterSpacing: 0.5,
   },
-  specialTitle: {
+  adPlayToggle: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  adPlayToggleText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  adMediaWrapper: {
+    height: 165,
+    position: 'relative',
+  },
+  adMediaImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  adGradientOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.68)',
+    padding: 12,
+  },
+  adTagPill: {
+    backgroundColor: accent,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginBottom: 4,
+  },
+  adTagPillText: {
+    color: '#FFFFFF',
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  adMainTitle: {
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '800',
-    color: '#212121',
+    lineHeight: 18,
+  },
+  adSubtitle: {
+    color: '#E0DDD5',
+    fontSize: 10,
     marginTop: 2,
   },
-  specialText: {
-    fontSize: 11,
-    color: '#666155',
-    marginTop: 3,
-    lineHeight: 16,
-  },
-  codeHighlight: {
-    color: '#C88D2B',
-    fontWeight: '800',
-  },
-  specialButton: {
+  shopClothesActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginTop: 8,
-    alignSelf: 'flex-start',
   },
-  specialButtonText: {
-    color: '#C88D2B',
-    fontSize: 11,
-    fontWeight: '800',
+  shopClothesButton: {
+    backgroundColor: accent,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
-  deliveryEmoji: {
-    fontSize: 36,
-    marginLeft: 12,
+  shopClothesBtnText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  shopClothesBtnArrow: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  adTapHint: {
+    color: '#D4CEBF',
+    fontSize: 9,
+    fontWeight: '600',
+  },
+  adProgressBarTrack: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  adProgressBarActive: {
+    width: '70%',
+    height: '100%',
+    backgroundColor: accent,
   },
   benefitRow: {
     flexDirection: 'row',
@@ -850,16 +1067,18 @@ const styles = StyleSheet.create({
   },
   benefit: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 14,
     padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: isDark ? 0.3 : 0.04,
     shadowRadius: 4,
     elevation: 2,
+    borderWidth: 1,
+    borderColor: border,
   },
   benefitIcon: {
     fontSize: 22,
@@ -868,11 +1087,11 @@ const styles = StyleSheet.create({
   benefitTitle: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   benefitText: {
     fontSize: 9,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   sectionHeader: {
@@ -891,7 +1110,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
     letterSpacing: 0.2,
   },
   fire: {
@@ -899,13 +1118,13 @@ const styles = StyleSheet.create({
   },
   sectionSubtitle: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   seeAll: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#C88D2B',
+    color: accent,
   },
   categoryContainer: {
     paddingLeft: 20,
@@ -914,33 +1133,33 @@ const styles = StyleSheet.create({
   },
   categoryCard: {
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 16,
     padding: 12,
     width: 96,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: isDark ? 0.3 : 0.04,
     shadowRadius: 4,
     elevation: 2,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   categoryCardActive: {
-    borderColor: '#C88D2B',
-    backgroundColor: '#FFFBF3',
+    borderColor: accent,
+    backgroundColor: activeTint,
   },
   categoryImage: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: cardBgElevated,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 8,
   },
   categoryImageActive: {
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#3D3425' : '#F5EEDC',
   },
   categoryEmoji: {
     fontSize: 22,
@@ -948,15 +1167,15 @@ const styles = StyleSheet.create({
   categoryName: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
     textAlign: 'center',
   },
   categoryNameActive: {
-    color: '#C88D2B',
+    color: accent,
   },
   categoryCount: {
     fontSize: 8,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
     textAlign: 'center',
   },
@@ -968,21 +1187,21 @@ const styles = StyleSheet.create({
   },
   productCard: {
     width: '47.5%',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 18,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
+    shadowOpacity: isDark ? 0.3 : 0.05,
     shadowRadius: 5,
     elevation: 2,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   productImageContainer: {
     position: 'relative',
     height: 130,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: cardBgElevated,
   },
   productImage: {
     width: '100%',
@@ -993,7 +1212,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 8,
     left: 8,
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
@@ -1007,15 +1226,17 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 8,
     left: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    backgroundColor: isDark ? '#2A2A2A' : 'rgba(255, 255, 255, 0.92)',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: '#444444',
   },
   originText: {
     fontSize: 9,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   heartButton: {
     position: 'absolute',
@@ -1024,16 +1245,18 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    backgroundColor: isDark ? '#2A2A2A' : 'rgba(255, 255, 255, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: '#444444',
   },
   heartButtonActive: {
-    backgroundColor: '#FFEBEE',
+    backgroundColor: isDark ? '#421C1C' : '#FFEBEE',
   },
   heart: {
     fontSize: 16,
-    color: '#8A857A',
+    color: textSub,
   },
   heartActive: {
     color: '#E53935',
@@ -1044,13 +1267,13 @@ const styles = StyleSheet.create({
   productName: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
     lineHeight: 16,
     minHeight: 32,
   },
   productSize: {
     fontSize: 9,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 3,
   },
   ratingRow: {
@@ -1066,11 +1289,11 @@ const styles = StyleSheet.create({
   rating: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   review: {
     fontSize: 9,
-    color: '#8A857A',
+    color: textSub,
   },
   priceRow: {
     flexDirection: 'row',
@@ -1079,37 +1302,39 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingTop: 6,
     borderTopWidth: 1,
-    borderTopColor: '#F5F5F5',
+    borderTopColor: isDark ? '#2A2A2A' : '#F5F5F5',
   },
   price: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
   },
   oldPrice: {
     fontSize: 9,
-    color: '#8A857A',
+    color: textSub,
     textDecorationLine: 'line-through',
     marginTop: 1,
   },
   addButton: {
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : textMain,
     paddingHorizontal: 9,
     paddingVertical: 5,
     borderRadius: 8,
   },
   plus: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 10,
     fontWeight: '800',
   },
   emptySearch: {
     padding: 30,
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     marginHorizontal: 20,
     borderRadius: 18,
     marginTop: 10,
+    borderWidth: 1,
+    borderColor: border,
   },
   emptySearchIcon: {
     fontSize: 36,
@@ -1117,12 +1342,12 @@ const styles = StyleSheet.create({
   emptySearchTitle: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
     marginTop: 8,
   },
   emptySearchText: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
     textAlign: 'center',
     marginTop: 4,
     lineHeight: 16,
@@ -1131,27 +1356,27 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingHorizontal: 14,
     paddingVertical: 7,
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     borderRadius: 8,
   },
   resetBtnText: {
-    color: '#C88D2B',
+    color: accent,
     fontSize: 11,
     fontWeight: '800',
   },
   trustSection: {
     marginHorizontal: 20,
     marginTop: 24,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 18,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   trustTitle: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
     marginBottom: 12,
   },
   trustGrid: {
@@ -1161,7 +1386,7 @@ const styles = StyleSheet.create({
   trustItem: {
     flex: 1,
     alignItems: 'center',
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : bg,
     padding: 10,
     borderRadius: 12,
   },
@@ -1172,12 +1397,12 @@ const styles = StyleSheet.create({
   trustItemTitle: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
     textAlign: 'center',
   },
   trustItemText: {
     fontSize: 8,
-    color: '#8A857A',
+    color: textSub,
     textAlign: 'center',
     marginTop: 2,
   },
@@ -1189,11 +1414,13 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   langModalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 22,
     padding: 20,
     width: '100%',
     maxWidth: 380,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1204,16 +1431,16 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   closeText: {
     fontSize: 18,
-    color: '#8A857A',
+    color: textSub,
     fontWeight: '800',
   },
   modalSubtitle: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
     marginBottom: 14,
   },
   langOptionsList: {
@@ -1221,17 +1448,17 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   langOptionCard: {
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : bg,
     borderRadius: 14,
     padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   langOptionCardActive: {
-    borderColor: '#C88D2B',
-    backgroundColor: '#FFFBF3',
+    borderColor: accent,
+    backgroundColor: activeTint,
   },
   langFlag: {
     fontSize: 24,
@@ -1239,21 +1466,21 @@ const styles = StyleSheet.create({
   langOptionTitle: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   langOptionSub: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   checkIcon: {
     fontSize: 16,
     fontWeight: '900',
-    color: '#C88D2B',
+    color: accent,
     marginLeft: 8,
   },
   closeModalBtn: {
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : textMain,
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
@@ -1265,3 +1492,4 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 });
+};

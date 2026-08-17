@@ -40,7 +40,10 @@ export default function ProfileScreen() {
     formatPrice,
     orders,
     t,
+    isDarkMode,
   } = useApp();
+
+  const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
   // Modals
   const [isEditProfileModalOpen, setIsEditProfileModalOpen] = useState(false);
@@ -166,7 +169,10 @@ export default function ProfileScreen() {
 
   return (
     <>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8F7F3" />
+      <StatusBar
+        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
+        backgroundColor={isDarkMode ? '#121212' : '#F8F7F3'}
+      />
       <SafeAreaView style={styles.container}>
         {/* HEADER */}
         <View style={styles.header}>
@@ -809,71 +815,82 @@ export default function ProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (isDark: boolean) => {
+  const bg = isDark ? '#121212' : '#F8F7F3';
+  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
+  const cardBgElevated = isDark ? '#262626' : '#F8F7F3';
+  const textMain = isDark ? '#FFFFFF' : '#212121';
+  const textSub = isDark ? '#A0A0A0' : '#8A857A';
+  const border = isDark ? '#333333' : '#EFEBE4';
+  const accent = isDark ? '#D4AF37' : '#C88D2B';
+  const activeTint = isDark ? '#2D271E' : '#FFF9ED';
+  const borderLight = isDark ? '#262626' : '#F5F5F5';
+
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: bg,
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 14,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#EFEBE4',
+    borderBottomColor: border,
   },
   backButton: {
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     justifyContent: 'center',
     alignItems: 'center',
   },
   backArrow: {
     fontSize: 18,
-    color: '#212121',
+    color: textMain,
     fontWeight: '800',
   },
   headerTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   headerSubtitle: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   logoutBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#FFEBEE',
+    backgroundColor: isDark ? '#3E1F1F' : '#FFEBEE',
   },
   logoutBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#C62828',
+    color: isDark ? '#FF8A80' : '#C62828',
   },
   scrollContent: {
     padding: 16,
     paddingBottom: 20,
   },
   userCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 20,
     padding: 16,
     marginBottom: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: isDark ? 0.3 : 0.04,
     shadowRadius: 6,
     elevation: 2,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   userTopRow: {
     flexDirection: 'row',
@@ -886,20 +903,20 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: cardBgElevated,
   },
   avatarEditBadge: {
     position: 'absolute',
     bottom: -2,
     right: -2,
-    backgroundColor: '#212121',
+    backgroundColor: accent,
     borderRadius: 10,
     width: 20,
     height: 20,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+    borderColor: cardBg,
   },
   avatarEditBadgeText: {
     fontSize: 10,
@@ -912,34 +929,34 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   tierBadge: {
-    backgroundColor: '#FFF9ED',
+    backgroundColor: activeTint,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#F3E1BA',
+    borderColor: isDark ? '#4D3B18' : '#F3E1BA',
   },
   tierBadgeText: {
-    color: '#C88D2B',
+    color: accent,
     fontSize: 9,
     fontWeight: '800',
   },
   userEmail: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   userPhone: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#212121',
+    color: textMain,
     marginTop: 2,
   },
   editProfileBtn: {
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
@@ -947,14 +964,14 @@ const styles = StyleSheet.create({
   editProfileBtnText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
   },
   metricsRow: {
     flexDirection: 'row',
     marginTop: 16,
     paddingTop: 14,
     borderTopWidth: 1,
-    borderTopColor: '#F0EBE0',
+    borderTopColor: border,
     justifyContent: 'space-around',
     alignItems: 'center',
   },
@@ -965,50 +982,50 @@ const styles = StyleSheet.create({
   metricValue: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#C88D2B',
+    color: accent,
   },
   metricLabel: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   metricDivider: {
     width: 1,
     height: 24,
-    backgroundColor: '#EFEBE4',
+    backgroundColor: border,
   },
   editProfileBanner: {
-    backgroundColor: '#FFF9ED',
+    backgroundColor: activeTint,
     borderRadius: 16,
     padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#F3E1BA',
+    borderColor: isDark ? '#4D3B18' : '#F3E1BA',
   },
   editProfileBannerIcon: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     justifyContent: 'center',
     alignItems: 'center',
   },
   editProfileBannerTitle: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   editProfileBannerDesc: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   editProfileBannerArrow: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
   },
   section: {
     marginBottom: 20,
@@ -1016,12 +1033,12 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
     letterSpacing: 0.3,
   },
   sectionSubtitle: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
     marginBottom: 10,
   },
@@ -1031,33 +1048,33 @@ const styles = StyleSheet.create({
   },
   currencyCard: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 14,
     padding: 12,
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   currencyCardActive: {
-    borderColor: '#C88D2B',
-    backgroundColor: '#FFFBF3',
+    borderColor: accent,
+    backgroundColor: activeTint,
   },
   currencySymbol: {
     fontSize: 22,
     fontWeight: '900',
-    color: '#8A857A',
+    color: textSub,
     marginBottom: 2,
   },
   currencySymbolActive: {
-    color: '#C88D2B',
+    color: accent,
   },
   currencyCode: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   currencyCodeActive: {
-    color: '#C88D2B',
+    color: accent,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
@@ -1066,23 +1083,23 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   addAddressBtn: {
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
   },
   addAddressBtnText: {
-    color: '#C88D2B',
+    color: accent,
     fontSize: 11,
     fontWeight: '800',
   },
   addressCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 16,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   addressHeader: {
     flexDirection: 'row',
@@ -1101,38 +1118,38 @@ const styles = StyleSheet.create({
   addressTitle: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   defaultBadge: {
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 4,
   },
   defaultBadgeText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 8,
     fontWeight: '800',
   },
   setDefaultText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#C88D2B',
+    color: accent,
   },
   addressName: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   addressFull: {
     fontSize: 11,
-    color: '#666155',
+    color: textSub,
     marginTop: 2,
     lineHeight: 16,
   },
   addressPhone: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 4,
   },
   addressActions: {
@@ -1141,7 +1158,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: '#F5F5F5',
+    borderTopColor: borderLight,
   },
   deleteAddrBtn: {
     paddingHorizontal: 8,
@@ -1153,55 +1170,55 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   menuItem: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 14,
     padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   menuIconCircle: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     justifyContent: 'center',
     alignItems: 'center',
   },
   menuTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   menuDesc: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   menuArrow: {
     fontSize: 20,
-    color: '#C88D2B',
+    color: accent,
     fontWeight: '700',
   },
   settingRow: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 14,
     padding: 14,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   settingTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   settingDesc: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   modalOverlay: {
@@ -1210,27 +1227,33 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   editProfileModalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
     maxHeight: '90%',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   addressModalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
     maxHeight: '85%',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   guideModalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     margin: 20,
     borderRadius: 20,
     padding: 20,
     maxHeight: '80%',
     alignSelf: 'center',
     width: '90%',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1239,23 +1262,23 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#EFEBE4',
+    borderBottomColor: border,
   },
   modalTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   closeText: {
     fontSize: 18,
-    color: '#8A857A',
+    color: textSub,
     fontWeight: '800',
   },
   avatarSelectionContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 10,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 14,
     padding: 10,
   },
@@ -1264,12 +1287,12 @@ const styles = StyleSheet.create({
     height: 60,
     borderRadius: 30,
     borderWidth: 2,
-    borderColor: '#C88D2B',
+    borderColor: accent,
   },
   avatarSubtext: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#8A857A',
+    color: textSub,
   },
   avatarThumbnailBtn: {
     marginRight: 8,
@@ -1278,7 +1301,7 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   avatarThumbnailBtnActive: {
-    borderColor: '#C88D2B',
+    borderColor: accent,
   },
   avatarThumbnail: {
     width: 36,
@@ -1288,22 +1311,22 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
     marginTop: 10,
     marginBottom: 4,
   },
   input: {
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 9,
     fontSize: 13,
-    color: '#212121',
+    color: textMain,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   saveProfileBtn: {
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : '#212121',
     borderRadius: 14,
     paddingVertical: 13,
     alignItems: 'center',
@@ -1311,7 +1334,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   saveProfileBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.5,
@@ -1323,27 +1346,27 @@ const styles = StyleSheet.create({
   },
   countryToggleBtn: {
     flex: 1,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     paddingVertical: 8,
     borderRadius: 8,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   countryToggleBtnActive: {
-    backgroundColor: '#FFF9ED',
-    borderColor: '#C88D2B',
+    backgroundColor: activeTint,
+    borderColor: accent,
   },
   countryToggleText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#8A857A',
+    color: textSub,
   },
   countryToggleTextActive: {
-    color: '#C88D2B',
+    color: accent,
   },
   saveAddressBtn: {
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : '#212121',
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
@@ -1351,30 +1374,30 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   saveAddressBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 12,
     fontWeight: '800',
   },
   guideHeading: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#2E7D32',
+    color: isDark ? '#81C784' : '#2E7D32',
     marginBottom: 4,
   },
   guideText: {
     fontSize: 11,
-    color: '#666155',
+    color: textSub,
     lineHeight: 18,
   },
   closeGuideBtn: {
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : '#212121',
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
     marginTop: 16,
   },
   closeGuideBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -1383,11 +1406,13 @@ const styles = StyleSheet.create({
     marginVertical: 10,
   },
   supportCard: {
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 12,
     padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: border,
   },
   supportIcon: {
     fontSize: 22,
@@ -1395,11 +1420,12 @@ const styles = StyleSheet.create({
   supportTitle: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   supportSub: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
 });
+};

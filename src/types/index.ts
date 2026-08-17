@@ -16,6 +16,12 @@ export interface Product {
   origin: string;
   description: string;
   isBestSeller?: boolean;
+  keywords?: {
+    KR?: string[];
+    HI?: string[];
+    NE?: string[];
+    EN?: string[];
+  };
 }
 
 export interface CartItem {
@@ -55,7 +61,7 @@ export interface OrderItem {
   status: OrderStatus;
   originHub: string;
   destinationCity: string;
-  destinationCountry: 'India' | 'Nepal';
+  destinationCountry: 'South Korea' | 'India' | 'Nepal';
   shippingMethod: 'Standard' | 'Express';
   estimatedDelivery: string;
   trackingNumber: string;
@@ -69,6 +75,12 @@ export interface OrderItem {
     country: string;
   };
   paymentMethod: string;
+  bankAccount?: {
+    bankName: string;
+    accountNumber: string;
+    accountHolder: string;
+  };
+  senderName?: string;
 }
 
 export interface Address {
@@ -103,6 +115,7 @@ export interface Coupon {
   code: string;
   title: string;
   discountPercent: number;
+  fixedDiscountKRW?: number;
   minOrderKRW: number;
   maxDiscountKRW: number;
 }

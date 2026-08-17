@@ -12,7 +12,9 @@ interface BottomNavProps {
 export const BottomNav: React.FC<BottomNavProps> = ({ currentTab }) => {
   const router = useRouter();
   const pathname = usePathname();
-  const { cartCount, wishlist, t } = useApp();
+  const { cartCount, wishlist, t, isDarkMode } = useApp();
+
+  const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
   const getActiveTab = (): NavTab => {
     if (currentTab) return currentTab;
@@ -135,24 +137,30 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const getStyles = (isDark: boolean) => {
+  const bg = isDark ? '#1E1E1E' : '#FFFFFF';
+  const border = isDark ? '#333333' : '#EFEBE4';
+  const textSub = isDark ? '#A0A0A0' : '#8A857A';
+  const activeTint = isDark ? '#D4AF37' : '#C88D2B';
+
+  return StyleSheet.create({
   bottomNav: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
     height: 75,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: bg,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
     paddingHorizontal: 8,
     paddingBottom: 10,
     borderTopWidth: 1,
-    borderTopColor: '#EFEBE4',
+    borderTopColor: border,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.05,
+    shadowOpacity: isDark ? 0.3 : 0.05,
     shadowRadius: 8,
     elevation: 8,
     zIndex: 999,
@@ -170,7 +178,7 @@ const styles = StyleSheet.create({
   },
   activeNav: {
     position: 'relative',
-    backgroundColor: '#C88D2B',
+    backgroundColor: activeTint,
     paddingHorizontal: 16,
     paddingVertical: 5,
     borderRadius: 20,
@@ -178,23 +186,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   activeNavIcon: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 18,
     fontWeight: '700',
   },
   navIconInactive: {
     fontSize: 20,
-    color: '#8A857A',
+    color: textSub,
   },
   activeNavText: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: activeTint,
     marginTop: 2,
   },
   navText: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     fontWeight: '600',
     marginTop: 2,
   },
@@ -202,7 +210,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -2,
     right: -4,
-    backgroundColor: '#C88D2B',
+    backgroundColor: activeTint,
     borderRadius: 9,
     minWidth: 16,
     height: 16,
@@ -210,7 +218,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 3,
     borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+    borderColor: bg,
   },
   navBadgeWishlist: {
     position: 'absolute',
@@ -224,11 +232,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 3,
     borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+    borderColor: bg,
   },
   navBadgeText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 9,
     fontWeight: '800',
   },
 });
+};

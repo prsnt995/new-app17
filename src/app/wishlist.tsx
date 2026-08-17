@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Alert,
   Image,
+  RefreshControl,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -23,10 +24,21 @@ export default function WishlistScreen() {
     addToCart,
     formatPrice,
     t,
+    isDarkMode,
   } = useApp();
+
+  const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
   const wishlistProducts = products.filter((p) => wishlist.includes(p.id));
   const suggestedProducts = products.filter((p) => !wishlist.includes(p.id)).slice(0, 4);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    setTimeout(() => {
+      setRefreshing(false);
+    }, 1000);
+  }, []);
 
   const handleMoveAllToCart = () => {
     if (wishlistProducts.length === 0) return;
@@ -43,7 +55,10 @@ export default function WishlistScreen() {
 
   return (
     <>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8F7F3" />
+      <StatusBar
+        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
+        backgroundColor={isDarkMode ? '#121212' : '#F8F7F3'}
+      />
       <SafeAreaView style={styles.container}>
         {/* HEADER */}
         <View style={styles.header}>
@@ -74,6 +89,16 @@ export default function WishlistScreen() {
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#C88D2B']}
+              tintColor="#C88D2B"
+              title="Updating wishlist..."
+              titleColor="#8A857A"
+            />
+          }
         >
           {wishlistProducts.length === 0 ? (
             <View style={styles.emptyContainer}>
@@ -199,52 +224,63 @@ export default function WishlistScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (isDark: boolean) => {
+  const bg = isDark ? '#121212' : '#F8F7F3';
+  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
+  const cardBgElevated = isDark ? '#262626' : '#F8F7F3';
+  const textMain = isDark ? '#FFFFFF' : '#212121';
+  const textSub = isDark ? '#A0A0A0' : '#8A857A';
+  const border = isDark ? '#333333' : '#EFEBE4';
+  const accent = isDark ? '#D4AF37' : '#C88D2B';
+  const activeTint = isDark ? '#2D271E' : '#FFF9ED';
+  const borderLight = isDark ? '#262626' : '#F5F5F5';
+
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: bg,
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 14,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#EFEBE4',
+    borderBottomColor: border,
   },
   backButton: {
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     justifyContent: 'center',
     alignItems: 'center',
   },
   backArrow: {
     fontSize: 18,
-    color: '#212121',
+    color: textMain,
     fontWeight: '800',
   },
   headerTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   headerSubtitle: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   moveAllBtn: {
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
   },
   moveAllText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 11,
     fontWeight: '800',
   },
@@ -255,10 +291,12 @@ const styles = StyleSheet.create({
   emptyContainer: {
     padding: 40,
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 20,
     marginTop: 16,
     marginBottom: 20,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   emptyIcon: {
     fontSize: 54,
@@ -268,24 +306,24 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   emptySubtitle: {
     fontSize: 12,
-    color: '#8A857A',
+    color: textSub,
     textAlign: 'center',
     marginTop: 6,
     lineHeight: 18,
     marginBottom: 20,
   },
   exploreBtn: {
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : '#212121',
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 12,
   },
   exploreBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -296,22 +334,22 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '48%',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 16,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: isDark ? 0.3 : 0.04,
     shadowRadius: 5,
     elevation: 2,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   imageContainer: {
     height: 135,
     width: '100%',
     position: 'relative',
-    backgroundColor: '#F5F5F5',
+    backgroundColor: cardBgElevated,
   },
   productImage: {
     width: '100%',
@@ -322,13 +360,13 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 8,
     left: 8,
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
   },
   discountText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 8,
     fontWeight: '800',
   },
@@ -353,7 +391,7 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: '#FFEBEE',
+    backgroundColor: isDark ? '#3E1F1F' : '#FFEBEE',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -367,13 +405,13 @@ const styles = StyleSheet.create({
   productName: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
     lineHeight: 16,
     minHeight: 32,
   },
   productSize: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 4,
   },
   ratingRow: {
@@ -389,11 +427,11 @@ const styles = StyleSheet.create({
   rating: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   reviews: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
   },
   priceRow: {
     flexDirection: 'row',
@@ -404,21 +442,21 @@ const styles = StyleSheet.create({
   price: {
     fontSize: 13,
     fontWeight: '900',
-    color: '#212121',
+    color: accent,
   },
   oldPrice: {
     fontSize: 9,
-    color: '#A2A2A2',
+    color: textSub,
     textDecorationLine: 'line-through',
   },
   addBtn: {
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : '#212121',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
   },
   addBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 10,
     fontWeight: '800',
   },
@@ -434,51 +472,52 @@ const styles = StyleSheet.create({
   suggestionsTitle: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   seeAllText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#C88D2B',
+    color: accent,
   },
   suggestedList: {
     gap: 10,
   },
   suggestedCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 14,
     padding: 10,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   suggestedImg: {
     width: 48,
     height: 48,
     borderRadius: 8,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: cardBgElevated,
   },
   suggestedName: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   suggestedPrice: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
     marginTop: 2,
   },
   suggestedAddBtn: {
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
   },
   suggestedAddText: {
-    color: '#C88D2B',
+    color: accent,
     fontSize: 11,
     fontWeight: '800',
   },
 });
+};

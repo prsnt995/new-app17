@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Alert,
   Modal,
+  RefreshControl,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -98,7 +99,9 @@ const PARCEL_CATEGORIES = [
 
 export default function SendParcelScreen() {
   const router = useRouter();
-  const { user, formatPrice, createOrder, t } = useApp();
+  const { user, formatPrice, createOrder, t, isDarkMode } = useApp();
+
+  const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
   // Selected Category Builder State
   const [selectedCatId, setSelectedCatId] = useState('mobile');
@@ -140,7 +143,8 @@ export default function SendParcelScreen() {
   const [recipientPostal, setRecipientPostal] = useState(user.savedAddresses[0]?.postalCode || '110075');
 
   // Korea Origin & Scheduling
-  const [koreaHub, setKoreaHub] = useState('Seoul Gangnam Main Hub');
+  const [koreaHub, setKoreaHub] = useState('Send by Parcel');
+  const [pickupLocationText, setPickupLocationText] = useState('');
   const [pickupDate, setPickupDate] = useState('Tomorrow (Aug 18)');
   const [pickupSlot, setPickupSlot] = useState('Afternoon (12:00 PM - 06:00 PM)');
 
@@ -150,6 +154,14 @@ export default function SendParcelScreen() {
   // Success Modal
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
   const [bookedOrder, setBookedOrder] = useState<OrderItem | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    setTimeout(() => {
+      setRefreshing(false);
+    }, 1000);
+  }, []);
 
   const activeCategoryConfig = PARCEL_CATEGORIES.find((c) => c.id === selectedCatId) || PARCEL_CATEGORIES[0];
 
@@ -208,14 +220,11 @@ export default function SendParcelScreen() {
     }
 
     const order = createOrder({
-      originHub: koreaHub,
+      originHub: koreaHub === 'Pick up location' ? `Pickup: ${pickupLocationText}` : 'Send by Parcel',
       destinationCity: recipientCity,
       destinationCountry,
       shippingMethod: 'Express',
-      paymentMethod:
-        paymentOption === 'PAY_NOW'
-          ? 'Payment Now (Online / Card / UPI)'
-          : 'Payment After Parcel Received (Cash on Delivery)',
+      paymentMethod: 'Direct Bank Transfer',
       recipient: {
         name: recipientName,
         phone: recipientPhone,
@@ -245,7 +254,10 @@ export default function SendParcelScreen() {
 
   return (
     <>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8F7F3" />
+      <StatusBar
+        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
+        backgroundColor={isDarkMode ? '#121212' : '#F8F7F3'}
+      />
       <SafeAreaView style={styles.container}>
         {/* HEADER */}
         <View style={styles.header}>
@@ -271,6 +283,16 @@ export default function SendParcelScreen() {
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#C88D2B']}
+              tintColor="#C88D2B"
+              title="Updating parcel rates..."
+              titleColor="#8A857A"
+            />
+          }
         >
           {/* BANNER PROMO */}
           <View style={styles.heroBanner}>
@@ -620,14 +642,12 @@ export default function SendParcelScreen() {
               </View>
             </View>
 
-            {/* SOUTH KOREA PICKUP POINT */}
+            {/* KOREA SEND/PICKUP OPTIONS */}
             <View style={styles.koreaHubContainer}>
-              <Text style={styles.inputLabel}>{t('koreaPickupPoint')}</Text>
+              <Text style={styles.inputLabel}>How to send your parcel?</Text>
               {[
-                'Seoul Gangnam Main Hub (123 Teheran-ro)',
-                'Busan Seo-gu Logistics Point',
-                'Incheon Airport Cargo Drop-off',
-                'Doorstep Pickup anywhere in Korea (+₩5,000)',
+                'Send by Parcel',
+                'Pick up location',
               ].map((hub) => (
                 <TouchableOpacity
                   key={hub}
@@ -650,6 +670,27 @@ export default function SendParcelScreen() {
                   </Text>
                 </TouchableOpacity>
               ))}
+
+              {koreaHub === 'Send by Parcel' && (
+                <View style={{ marginTop: 10, padding: 12, backgroundColor: '#FFF5E5', borderRadius: 8 }}>
+                  <Text style={{ fontSize: 14, color: '#C88D2B', fontWeight: 'bold', marginBottom: 4 }}>Please send your parcel to:</Text>
+                  <Text style={{ fontSize: 16, color: '#212121', fontWeight: 'bold' }}>경기도 남양주시 불암로 41-2 102호</Text>
+                  <Text style={{ fontSize: 16, color: '#212121' }}>parshant 01083615305</Text>
+                </View>
+              )}
+
+              {koreaHub === 'Pick up location' && (
+                <View style={{ marginTop: 10 }}>
+                  <Text style={styles.inputLabel}>Enter Pick up location</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Type your detailed pick up address"
+                    placeholderTextColor="#A2A2A2"
+                    value={pickupLocationText}
+                    onChangeText={setPickupLocationText}
+                  />
+                </View>
+              )}
 
               <View style={styles.slotRow}>
                 <View style={{ flex: 1 }}>
@@ -687,65 +728,25 @@ export default function SendParcelScreen() {
             </View>
           </View>
 
-          {/* SIMPLIFIED PAYMENT CHOICE: PAYMENT NOW VS PAYMENT AFTER PARCEL RECEIVED (CASH) */}
+          {/* SIMPLIFIED PAYMENT CHOICE: DIRECT BANK TRANSFER */}
           <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>{t('paymentOption')}</Text>
+            <Text style={styles.sectionTitle}>Payment Method</Text>
 
             <View style={styles.paymentOptionsContainer}>
-              {/* Option 1: Payment Now */}
-              <TouchableOpacity
-                style={[
-                  styles.paymentChoiceCard,
-                  paymentOption === 'PAY_NOW' && styles.paymentChoiceCardActive,
-                ]}
-                activeOpacity={0.85}
-                onPress={() => setPaymentOption('PAY_NOW')}
-              >
+              <View style={[styles.paymentChoiceCard, styles.paymentChoiceCardActive]}>
                 <View style={styles.paymentChoiceRadio}>
-                  {paymentOption === 'PAY_NOW' && (
-                    <View style={styles.paymentChoiceRadioDot} />
-                  )}
+                  <View style={styles.paymentChoiceRadioDot} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.paymentChoiceTitle}>
-                    {t('paymentNow')}
+                    Direct Bank Transfer
                   </Text>
                   <Text style={styles.paymentChoiceDesc}>
-                    {t('paymentNowSub')}
+                    국민/신한은행 계좌이체
                   </Text>
                 </View>
-                {paymentOption === 'PAY_NOW' && (
-                  <Text style={styles.paymentChoiceCheck}>✓</Text>
-                )}
-              </TouchableOpacity>
-
-              {/* Option 2: Payment After Parcel Received (Cash) */}
-              <TouchableOpacity
-                style={[
-                  styles.paymentChoiceCard,
-                  paymentOption === 'CASH_ON_DELIVERY' && styles.paymentChoiceCardActive,
-                  { marginTop: 10 },
-                ]}
-                activeOpacity={0.85}
-                onPress={() => setPaymentOption('CASH_ON_DELIVERY')}
-              >
-                <View style={styles.paymentChoiceRadio}>
-                  {paymentOption === 'CASH_ON_DELIVERY' && (
-                    <View style={styles.paymentChoiceRadioDot} />
-                  )}
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.paymentChoiceTitle}>
-                    {t('paymentAfter')}
-                  </Text>
-                  <Text style={styles.paymentChoiceDesc}>
-                    {t('paymentAfterSub')}
-                  </Text>
-                </View>
-                {paymentOption === 'CASH_ON_DELIVERY' && (
-                  <Text style={styles.paymentChoiceCheck}>✓</Text>
-                )}
-              </TouchableOpacity>
+                <Text style={styles.paymentChoiceCheck}>✓</Text>
+              </View>
             </View>
           </View>
 
@@ -806,9 +807,9 @@ export default function SendParcelScreen() {
               {bookedOrder && (
                 <View style={styles.modalDetailsBox}>
                   <View style={styles.modalRow}>
-                    <Text style={styles.modalRowLabel}>Tracking Airway Bill:</Text>
+                    <Text style={styles.modalRowLabel}>Order ID:</Text>
                     <Text style={styles.modalRowCode}>
-                      {bookedOrder.trackingNumber}
+                      {bookedOrder.orderNumber}
                     </Text>
                   </View>
 
@@ -863,54 +864,65 @@ export default function SendParcelScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (isDark: boolean) => {
+  const bg = isDark ? '#121212' : '#F8F7F3';
+  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
+  const cardBgElevated = isDark ? '#262626' : '#F8F7F3';
+  const textMain = isDark ? '#FFFFFF' : '#212121';
+  const textSub = isDark ? '#A0A0A0' : '#8A857A';
+  const border = isDark ? '#333333' : '#EFEBE4';
+  const accent = isDark ? '#D4AF37' : '#C88D2B';
+  const activeTint = isDark ? '#2D271E' : '#FFF9ED';
+  const borderLight = isDark ? '#262626' : '#F5F5F5';
+
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: bg,
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 14,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#EFEBE4',
+    borderBottomColor: border,
   },
   backButton: {
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#F5EEDC',
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
     justifyContent: 'center',
     alignItems: 'center',
   },
   backArrow: {
     fontSize: 18,
-    color: '#212121',
+    color: textMain,
     fontWeight: '800',
   },
   headerTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   headerSubtitle: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   headerBadge: {
-    backgroundColor: '#FFF9ED',
+    backgroundColor: activeTint,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#F3E1BA',
+    borderColor: isDark ? '#4D3B18' : '#F3E1BA',
   },
   headerBadgeText: {
-    color: '#C88D2B',
+    color: accent,
     fontSize: 11,
     fontWeight: '800',
   },
@@ -954,17 +966,17 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   sectionCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 18,
     padding: 16,
     marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: isDark ? 0.3 : 0.04,
     shadowRadius: 5,
     elevation: 2,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   stepHeader: {
     flexDirection: 'row',
@@ -973,24 +985,24 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   stepBadge: {
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : '#212121',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
   },
   stepBadgeText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 9,
     fontWeight: '800',
   },
   sectionTitle: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   sectionSubtitle: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
     marginBottom: 12,
   },
   categoryGrid: {
@@ -1001,16 +1013,16 @@ const styles = StyleSheet.create({
   },
   categoryCard: {
     width: '31.3%',
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 12,
     padding: 10,
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   categoryCardSelected: {
-    borderColor: '#C88D2B',
-    backgroundColor: '#FFFBF3',
+    borderColor: accent,
+    backgroundColor: activeTint,
   },
   categoryIcon: {
     fontSize: 22,
@@ -1019,33 +1031,33 @@ const styles = StyleSheet.create({
   categoryTitle: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
     textAlign: 'center',
     minHeight: 24,
   },
   categoryTitleSelected: {
-    color: '#C88D2B',
+    color: accent,
   },
   rateBadge: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: isDark ? '#1E1E1E' : '#FFFFFF',
     paddingHorizontal: 5,
     paddingVertical: 2,
     borderRadius: 4,
     marginTop: 4,
   },
   rateBadgeSelected: {
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
   },
   rateBadgeText: {
     fontSize: 8,
     fontWeight: '800',
-    color: '#8A857A',
+    color: textSub,
   },
   rateBadgeTextSelected: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
   },
   rateInfoBox: {
-    backgroundColor: '#FFF9ED',
+    backgroundColor: isDark ? '#2D271E' : '#FFF9ED',
     borderRadius: 10,
     padding: 10,
     flexDirection: 'row',
@@ -1053,94 +1065,100 @@ const styles = StyleSheet.create({
     gap: 6,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#F3E1BA',
+    borderColor: isDark ? '#4D3B18' : '#F3E1BA',
   },
   rateInfoIcon: {
     fontSize: 14,
   },
   rateInfoText: {
     fontSize: 10,
-    color: '#8A6218',
+    color: accent,
     fontWeight: '600',
     flex: 1,
   },
   itemBuilderForm: {
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 14,
     padding: 12,
     marginBottom: 14,
+    borderWidth: 1,
+    borderColor: border,
   },
   inputLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
     marginBottom: 4,
   },
   textInput: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 9,
     fontSize: 12,
-    color: '#212121',
+    color: textMain,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
     marginBottom: 10,
   },
   counterRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 10,
     padding: 10,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   counterLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   counterSub: {
     fontSize: 9,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   counterControls: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 8,
     padding: 2,
+    borderWidth: 1,
+    borderColor: border,
   },
   counterBtn: {
     width: 28,
     height: 28,
     borderRadius: 6,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   counterBtnText: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   counterValue: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
     marginHorizontal: 10,
   },
   weightSelectorContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 10,
     padding: 10,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   weightHeaderRow: {
     flexDirection: 'row',
@@ -1150,7 +1168,7 @@ const styles = StyleSheet.create({
   },
   weightCalculatedText: {
     fontSize: 10,
-    color: '#212121',
+    color: textMain,
   },
   weightChipsRow: {
     flexDirection: 'row',
@@ -1161,36 +1179,36 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 6,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   weightChipActive: {
-    backgroundColor: '#C88D2B',
-    borderColor: '#C88D2B',
+    backgroundColor: accent,
+    borderColor: accent,
   },
   weightChipText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#8A857A',
+    color: textSub,
   },
   weightChipTextActive: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
   },
   addItemBtn: {
-    backgroundColor: '#212121',
+    backgroundColor: isDark ? accent : '#212121',
     borderRadius: 10,
     paddingVertical: 10,
     alignItems: 'center',
   },
   addItemBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 11,
     fontWeight: '800',
   },
   parcelBoxContainer: {
     borderTopWidth: 1,
-    borderTopColor: '#EFEBE4',
+    borderTopColor: border,
     paddingTop: 12,
   },
   parcelBoxHeader: {
@@ -1202,41 +1220,43 @@ const styles = StyleSheet.create({
   parcelBoxTitle: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   parcelBoxTotalWeight: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
   },
   emptyBoxText: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
     textAlign: 'center',
     marginVertical: 8,
   },
   parcelItemRow: {
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 10,
     padding: 10,
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 6,
+    borderWidth: 1,
+    borderColor: border,
   },
   parcelItemName: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   parcelItemMeta: {
     fontSize: 9,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   parcelItemPrice: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
     marginRight: 8,
   },
   deleteItemBtn: {
@@ -1254,7 +1274,7 @@ const styles = StyleSheet.create({
   },
   countryPickerBtn: {
     flex: 1,
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 12,
     padding: 12,
     flexDirection: 'row',
@@ -1262,11 +1282,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     borderWidth: 1.5,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   countryPickerBtnActive: {
-    backgroundColor: '#FFFBF3',
-    borderColor: '#C88D2B',
+    backgroundColor: activeTint,
+    borderColor: accent,
   },
   countryFlag: {
     fontSize: 18,
@@ -1274,44 +1294,46 @@ const styles = StyleSheet.create({
   countryPickerText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#8A857A',
+    color: textSub,
   },
   countryPickerTextActive: {
-    color: '#C88D2B',
+    color: accent,
     fontWeight: '800',
   },
   savedAddressesBox: {
     marginBottom: 10,
   },
   savedAddressChip: {
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
     marginRight: 6,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   savedAddressChipActive: {
-    backgroundColor: '#FFF9ED',
-    borderColor: '#C88D2B',
+    backgroundColor: activeTint,
+    borderColor: accent,
   },
   savedAddressChipText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#8A857A',
+    color: textSub,
   },
   savedAddressChipTextActive: {
-    color: '#C88D2B',
+    color: accent,
   },
   addressForm: {
     marginTop: 4,
   },
   koreaHubContainer: {
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 14,
     padding: 12,
     marginTop: 10,
+    borderWidth: 1,
+    borderColor: border,
   },
   hubOption: {
     flexDirection: 'row',
@@ -1321,15 +1343,15 @@ const styles = StyleSheet.create({
   hubOptionActive: {},
   hubRadio: {
     fontSize: 14,
-    color: '#C88D2B',
+    color: accent,
     marginRight: 8,
   },
   hubOptionText: {
     fontSize: 11,
-    color: '#666155',
+    color: textSub,
   },
   hubOptionTextActive: {
-    color: '#212121',
+    color: textMain,
     fontWeight: '700',
   },
   slotRow: {
@@ -1338,39 +1360,39 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   slotPicker: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     padding: 8,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   slotPickerText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   paymentOptionsContainer: {
     marginTop: 6,
   },
   paymentChoiceCard: {
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 14,
     padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#EFEBE4',
+    borderColor: border,
   },
   paymentChoiceCardActive: {
-    borderColor: '#C88D2B',
-    backgroundColor: '#FFFBF3',
+    borderColor: accent,
+    backgroundColor: activeTint,
   },
   paymentChoiceRadio: {
     width: 20,
     height: 20,
     borderRadius: 10,
     borderWidth: 2,
-    borderColor: '#C88D2B',
+    borderColor: accent,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -1379,39 +1401,41 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
   },
   paymentChoiceTitle: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   paymentChoiceDesc: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
     marginTop: 2,
   },
   paymentChoiceCheck: {
     fontSize: 16,
     fontWeight: '900',
-    color: '#C88D2B',
+    color: accent,
     marginLeft: 8,
   },
   billSummaryCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 18,
     padding: 16,
     marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: isDark ? 0.3 : 0.04,
     shadowRadius: 5,
     elevation: 2,
+    borderWidth: 1,
+    borderColor: border,
   },
   billTitle: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
     marginBottom: 10,
   },
   billRow: {
@@ -1421,21 +1445,21 @@ const styles = StyleSheet.create({
   },
   billLabel: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
   },
   billVal: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   billValBold: {
     fontSize: 11,
     fontWeight: '900',
-    color: '#212121',
+    color: textMain,
   },
   billDivider: {
     height: 1,
-    backgroundColor: '#EFEBE4',
+    backgroundColor: borderLight,
     marginVertical: 8,
   },
   grandTotalRow: {
@@ -1446,19 +1470,19 @@ const styles = StyleSheet.create({
   grandTotalLabel: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#212121',
+    color: textMain,
   },
   grandTotalSub: {
     fontSize: 9,
-    color: '#8A857A',
+    color: textSub,
   },
   grandTotalAmount: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#C88D2B',
+    color: accent,
   },
   bookBtn: {
-    backgroundColor: '#212121',
+    backgroundColor: accent,
     borderRadius: 16,
     paddingVertical: 14,
     paddingHorizontal: 20,
@@ -1472,12 +1496,12 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   bookBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 12,
     fontWeight: '800',
   },
   bookBtnPrice: {
-    color: '#F0BA5A',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 14,
     fontWeight: '900',
   },
@@ -1489,12 +1513,14 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   modalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: cardBg,
     borderRadius: 24,
     padding: 24,
     width: '100%',
     maxWidth: 380,
     alignItems: 'center',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
   },
   modalEmoji: {
     fontSize: 48,
@@ -1503,23 +1529,25 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#212121',
+    color: textMain,
     textAlign: 'center',
   },
   modalDesc: {
     fontSize: 11,
-    color: '#8A857A',
+    color: textSub,
     textAlign: 'center',
     marginTop: 4,
     marginBottom: 16,
   },
   modalDetailsBox: {
     width: '100%',
-    backgroundColor: '#F8F7F3',
+    backgroundColor: isDark ? '#262626' : '#F8F7F3',
     borderRadius: 12,
     padding: 12,
     marginBottom: 16,
     gap: 6,
+    borderWidth: 1,
+    borderColor: border,
   },
   modalRow: {
     flexDirection: 'row',
@@ -1527,20 +1555,20 @@ const styles = StyleSheet.create({
   },
   modalRowLabel: {
     fontSize: 10,
-    color: '#8A857A',
+    color: textSub,
   },
   modalRowVal: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#212121',
+    color: textMain,
   },
   modalRowCode: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#C88D2B',
+    color: accent,
   },
   modalTrackBtn: {
-    backgroundColor: '#C88D2B',
+    backgroundColor: accent,
     borderRadius: 12,
     paddingVertical: 12,
     width: '100%',
@@ -1548,7 +1576,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   modalTrackBtnText: {
-    color: '#FFFFFF',
+    color: isDark ? '#121212' : '#FFFFFF',
     fontSize: 11,
     fontWeight: '800',
   },
@@ -1556,8 +1584,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   modalHomeBtnText: {
-    color: '#8A857A',
+    color: textSub,
     fontSize: 11,
     fontWeight: '700',
   },
 });
+};
