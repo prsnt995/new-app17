@@ -269,7 +269,7 @@ export default function OrdersScreen() {
                       activeOpacity={0.85}
                       onPress={() => setSelectedTrackingOrder(order)}
                     >
-                      <Text style={styles.trackBtnText}>{t('liveTrackingBtn')}</Text>
+                      <Text style={styles.trackBtnText}>{t('shipmentDetailsBtn')}</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -296,7 +296,7 @@ export default function OrdersScreen() {
           <View style={{ height: 100 }} />
         </ScrollView>
 
-        {/* LIVE TRACKING TIMELINE MODAL */}
+        {/* SHIPMENT DETAILS TIMELINE MODAL */}
         <Modal
           visible={!!selectedTrackingOrder}
           transparent
@@ -306,7 +306,7 @@ export default function OrdersScreen() {
             <View style={styles.trackingModalContent}>
               <View style={styles.modalHeader}>
                 <View>
-                  <Text style={styles.modalHeading}>Live Shipment Tracking</Text>
+                  <Text style={styles.modalHeading}>Shipment Details</Text>
                   <Text style={styles.modalSubheading}>
                     Airway Bill: {selectedTrackingOrder?.trackingNumber}
                   </Text>

@@ -69,6 +69,7 @@ interface AppContextType {
   t: (key: string) => string;
   updateUserProfile: (updates: Partial<UserProfile>) => void;
   addAddress: (address: Omit<Address, 'id'>) => void;
+  updateAddress: (id: string, updates: Partial<Address>) => void;
   deleteAddress: (id: string) => void;
   setDefaultAddress: (id: string) => void;
   formatPrice: (amountKRW: number) => string;
@@ -110,9 +111,23 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     inCart: '담김 ✓',
     expressAir: '특급 항공 배송 (3-5일)',
     customsCleared: '100% 통관 보장',
-    liveTracking: '실시간 GPS 추적',
+    fastDelivery: '빠른 배송 (3~5일)',
     halalVeg: '100% 정품 보장',
     translateBtn: '🇰🇷 한국어',
+    // Delivery Location
+    changeAddress: '변경',
+    selectDeliveryAddress: '배송지 선택',
+    addNewKoreanAddress: '+ 새 한국 주소 추가',
+    noKoreanAddress: '한국 배송지가 없습니다',
+    deliveryAddressSet: '배송지가 설정되었습니다',
+    // Promo Cards
+    fashionFromHome: '고향의 패션',
+    fashionSubtitle: '전통 & 현대 의류',
+    fashionDesc: '인도 & 네팔 패션 쇼핑',
+    shopNow: '쇼핑하기 →',
+    fragranceCollection: '향수 컬렉션',
+    fragranceDesc: '프리미엄 인도, 아랍 & 한국 향수',
+    exploreNow: '탐색하기 →',
 
     // Send Parcel
     sendParcelTitle: '국제 택배 보내기',
@@ -160,13 +175,13 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     proceedCheckout: '주문 결제하기 ✈️',
 
     // Orders & Tracking
-    ordersTitle: '주문 내역 & 실시간 배송 추적',
+    ordersTitle: '주문 내역 & 배송 현황',
     ordersSubtitle: '한국 ➔ 인도/네팔 국제 항공 배송 상태',
     filterAll: '전체 주문',
     filterActive: '배송 중 ✈️',
     filterDelivered: '배송 완료 ✓',
     airwayBill: '운송장 번호 (AWB)',
-    liveTrackingBtn: '📍 실시간 배송 조회',
+    shipmentDetailsBtn: '📋 배송 상세',
     invoiceBtn: '🧾 영수증 확인',
     reorderBtn: '🔁 재주문',
     noOrders: '주문 내역이 없습니다',
@@ -182,6 +197,7 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     profileTitle: '프로필 & 계정 설정',
     editProfile: '프로필 수정',
     totalOrders: '총 주문 건수',
+    totalSpent: '총 구매 금액',
     totalSaved: '총 절약 금액',
     savedAddresses: '등록된 배송지 목록',
     addAddress: '+ 새 배송지 추가',
@@ -220,9 +236,23 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     inCart: 'In Cart ✓',
     expressAir: 'Air Express (3-5d)',
     customsCleared: 'Customs Cleared',
-    liveTracking: 'Live GPS Tracking',
+    fastDelivery: 'Fast Delivery (3-5d)',
     halalVeg: '100% Authentic Goods',
     translateBtn: '🌐 English',
+    // Delivery Location
+    changeAddress: 'Change',
+    selectDeliveryAddress: 'Select Delivery Address',
+    addNewKoreanAddress: '+ Add New Korean Address',
+    noKoreanAddress: 'No Korean address saved',
+    deliveryAddressSet: 'Delivery address updated',
+    // Promo Cards
+    fashionFromHome: 'FASHION FROM HOME',
+    fashionSubtitle: 'Traditional & Modern Clothes',
+    fashionDesc: 'Shop Indian & Nepali Fashion',
+    shopNow: 'Shop Now →',
+    fragranceCollection: 'FRAGRANCE COLLECTION',
+    fragranceDesc: 'Premium Indian, Arabic & Korean Fragrances',
+    exploreNow: 'Explore →',
 
     // Send Parcel
     sendParcelTitle: 'Send Parcel Home',
@@ -270,13 +300,13 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     proceedCheckout: 'PROCEED TO CHECKOUT ✈️',
 
     // Orders & Tracking
-    ordersTitle: 'Orders & Live Tracking',
-    ordersSubtitle: 'Real-time cross-border airway courier status',
+    ordersTitle: 'Orders & Shipments',
+    ordersSubtitle: 'Cross-border airway courier status',
     filterAll: 'All Orders',
     filterActive: 'In Transit ✈️',
     filterDelivered: 'Delivered ✓',
     airwayBill: 'Airway Bill (AWB)',
-    liveTrackingBtn: '📍 Live Tracking',
+    shipmentDetailsBtn: '📋 Shipment Details',
     invoiceBtn: '🧾 View Invoice',
     reorderBtn: '🔁 Reorder',
     noOrders: 'No orders found',
@@ -292,6 +322,7 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     profileTitle: 'Profile & Account Settings',
     editProfile: 'Edit Profile',
     totalOrders: 'Total Orders',
+    totalSpent: 'Total Spent',
     totalSaved: 'Total Saved',
     savedAddresses: 'Saved Addresses',
     addAddress: '+ Add New Address',
@@ -330,9 +361,23 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     inCart: 'कार्ट में ✓',
     expressAir: 'एयर एक्सप्रेस (3-5 दिन)',
     customsCleared: 'कस्टम क्लीयरेंस गारंटी',
-    liveTracking: 'लाइव जीपीएस ट्रैकिंग',
+    fastDelivery: 'तेज़ डिलीवरी (3-5 दिन)',
     halalVeg: '100% असली सामान',
     translateBtn: '🇮🇳 हिंदी',
+    // Delivery Location
+    changeAddress: 'बदलें',
+    selectDeliveryAddress: 'डिलीवरी पता चुनें',
+    addNewKoreanAddress: '+ नया कोरिया पता जोड़ें',
+    noKoreanAddress: 'कोई कोरिया पता सहेजा नहीं है',
+    deliveryAddressSet: 'डिलीवरी पता अपडेट किया गया',
+    // Promo Cards
+    fashionFromHome: 'घर से फैशन',
+    fashionSubtitle: 'पारंपरिक और आधुनिक कपड़े',
+    fashionDesc: 'भारतीय और नेपाली फैशन खरीदें',
+    shopNow: 'अभी खरीदें →',
+    fragranceCollection: 'खुशबू संग्रह',
+    fragranceDesc: 'प्रीमियम भारतीय, अरबी और कोरियाई इत्र',
+    exploreNow: 'एक्सप्लोर करें →',
 
     // Send Parcel
     sendParcelTitle: 'घर पार्सल भेजें',
@@ -380,13 +425,13 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     proceedCheckout: 'चेकआउट करें ✈️',
 
     // Orders & Tracking
-    ordersTitle: 'ऑर्डर और लाइव ट्रैकिंग',
+    ordersTitle: 'ऑर्डर और शिपमेंट',
     ordersSubtitle: 'कोरिया ➔ भारत/नेपाल पार्सल स्थिति',
     filterAll: 'सभी ऑर्डर',
     filterActive: 'रास्ते में ✈️',
     filterDelivered: 'डिलीवर हुआ ✓',
     airwayBill: 'एयरवे बिल नंबर',
-    liveTrackingBtn: '📍 लाइव ट्रैकिंग',
+    shipmentDetailsBtn: '📋 शिपमेंट विवरण',
     invoiceBtn: '🧾 रसीद देखें',
     reorderBtn: '🔁 पुनः ऑर्डर',
     noOrders: 'कोई ऑर्डर नहीं मिला',
@@ -402,6 +447,7 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     profileTitle: 'प्रोफ़ाइल और सेटिंग्स',
     editProfile: 'प्रोफ़ाइल बदलें',
     totalOrders: 'कुल ऑर्डर',
+    totalSpent: 'कुल खर्च',
     totalSaved: 'कुल बचत',
     savedAddresses: 'सहेजे गए पते',
     addAddress: '+ नया पता जोड़ें',
@@ -440,9 +486,23 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     inCart: 'कार्टमा ✓',
     expressAir: 'एयर एक्सप्रेस (३-५ दिन)',
     customsCleared: '१००% भन्सार पास ग्यारेन्टी',
-    liveTracking: 'प्रत्यक्ष जीपीएस ट्र्याकिङ',
+    fastDelivery: 'छिटो डेलिभरी (३-५ दिन)',
     halalVeg: '१००% शुद्ध र ताजा',
     translateBtn: '🇳🇵 नेपाली',
+    // Delivery Location
+    changeAddress: 'परिवर्तन',
+    selectDeliveryAddress: 'डेलिभरी ठेगाना छान्नुहोस्',
+    addNewKoreanAddress: '+ नयाँ कोरिया ठेगाना थप्नुहोस्',
+    noKoreanAddress: 'कोरियाको ठेगाना सुरक्षित गरिएको छैन',
+    deliveryAddressSet: 'डेलिभरी ठेगाना अपडेट भयो',
+    // Promo Cards
+    fashionFromHome: 'घरको फेसन',
+    fashionSubtitle: 'परम्परागत र आधुनिक लुगा',
+    fashionDesc: 'भारतीय र नेपाली फेसन किन्नुहोस्',
+    shopNow: 'अहिले किन्नुहोस् →',
+    fragranceCollection: 'सुगन्ध संग्रह',
+    fragranceDesc: 'प्रिमियम भारतीय, अरबी र कोरियाली सुगन्ध',
+    exploreNow: 'हेर्नुहोस् →',
 
     // Send Parcel
     sendParcelTitle: 'घर पार्सल पठाउनुहोस्',
@@ -490,13 +550,13 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     proceedCheckout: 'अर्डर पूरा गर्नुहोस् ✈️',
 
     // Orders & Tracking
-    ordersTitle: 'अर्डर र प्रत्यक्ष ट्र्याकिङ',
+    ordersTitle: 'अर्डर र शिपमेन्ट',
     ordersSubtitle: 'कोरिया ➔ नेपाल अन्तर्राष्ट्रिय पार्सल स्थिति',
     filterAll: 'सबै अर्डर',
     filterActive: 'बाटोमा ✈️',
     filterDelivered: 'डेलिभर भयो ✓',
     airwayBill: 'एयरवे बिल (AWB)',
-    liveTrackingBtn: '📍 प्रत्यक्ष ट्र्याकिङ',
+    shipmentDetailsBtn: '📋 शिपमेन्ट विवरण',
     invoiceBtn: '🧾 रसिद हेर्नुहोस्',
     reorderBtn: '🔁 पुनः अर्डर',
     noOrders: 'कुनै अर्डर फेला परेन',
@@ -512,6 +572,7 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     profileTitle: 'प्रोफाइल र सेटिङहरू',
     editProfile: 'प्रोफाइल सम्पादन',
     totalOrders: 'कुल अर्डर',
+    totalSpent: 'कुल खर्च',
     totalSaved: 'कुल बचत',
     savedAddresses: 'सुरक्षित ठेगानाहरू',
     addAddress: '+ नयाँ ठेगाना थप्नुहोस्',
@@ -878,10 +939,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...address,
       id: `addr-${Date.now()}`,
     };
-    setUser((prev) => ({
-      ...prev,
-      savedAddresses: [...prev.savedAddresses, newAddr],
-    }));
+    setUser((prev) => {
+      const addresses = address.isDefault
+        ? prev.savedAddresses.map((a) => ({ ...a, isDefault: false }))
+        : prev.savedAddresses;
+      return {
+        ...prev,
+        savedAddresses: [...addresses, newAddr],
+      };
+    });
+  };
+
+  const updateAddress = (id: string, updates: Partial<Address>) => {
+    setUser((prev) => {
+      let addresses = prev.savedAddresses.map((a) =>
+        a.id === id ? { ...a, ...updates } : a
+      );
+      if (updates.isDefault) {
+        addresses = addresses.map((a) =>
+          a.id === id ? { ...a, isDefault: true } : { ...a, isDefault: false }
+        );
+      }
+      return {
+        ...prev,
+        savedAddresses: addresses,
+      };
+    });
   };
 
   const deleteAddress = (id: string) => {
@@ -951,6 +1034,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         t,
         updateUserProfile,
         addAddress,
+        updateAddress,
         deleteAddress,
         setDefaultAddress,
         formatPrice,

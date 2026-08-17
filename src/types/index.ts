@@ -86,11 +86,15 @@ export interface OrderItem {
 export interface Address {
   id: string;
   title: string;
-  type: 'HOME' | 'OFFICE' | 'HUB';
+  type: 'HOME' | 'OFFICE' | 'FAMILY' | 'OTHER' | 'HUB';
   recipientName: string;
   phone: string;
   fullAddress: string;
   city: string;
+  district?: string;
+  streetAddress?: string;
+  buildingApt?: string;
+  detailedAddress?: string;
   postalCode: string;
   country: 'South Korea' | 'India' | 'Nepal';
   isDefault: boolean;

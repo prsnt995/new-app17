@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Alert,
   Image,
   Modal,
   ScrollView,
@@ -39,6 +40,8 @@ export default function HomeScreen() {
     language,
     setLanguage,
     setCurrency,
+    addAddress,
+    setDefaultAddress,
     t,
     isDarkMode,
     toggleDarkMode,
@@ -49,6 +52,49 @@ export default function HomeScreen() {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [isLanguageModalOpen, setIsLanguageModalOpen] = useState(false);
+  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
+  const [isAddAddressOpen, setIsAddAddressOpen] = useState(false);
+  const [newAddrTitle, setNewAddrTitle] = useState('');
+  const [newAddrFull, setNewAddrFull] = useState('');
+  const [newAddrCity, setNewAddrCity] = useState('');
+  const [newAddrPostal, setNewAddrPostal] = useState('');
+  const [newAddrPhone, setNewAddrPhone] = useState('');
+
+  // Get Korean addresses from user's saved addresses
+  const koreanAddresses = user.savedAddresses.filter(
+    (addr) => addr.country === 'South Korea'
+  );
+  const selectedKoreanAddress =
+    koreanAddresses.find((a) => a.isDefault) || koreanAddresses[0];
+
+  const handleSelectKoreanAddress = (addrId: string) => {
+    setDefaultAddress(addrId);
+    setIsLocationModalOpen(false);
+  };
+
+  const handleAddNewKoreanAddress = () => {
+    if (!newAddrTitle.trim() || !newAddrFull.trim() || !newAddrCity.trim()) {
+      Alert.alert('Missing Info', 'Please fill in title, address and city.');
+      return;
+    }
+    addAddress({
+      title: newAddrTitle.trim(),
+      type: 'HOME',
+      recipientName: user.name,
+      phone: newAddrPhone.trim() || user.phone,
+      fullAddress: newAddrFull.trim(),
+      city: newAddrCity.trim(),
+      postalCode: newAddrPostal.trim(),
+      country: 'South Korea',
+      isDefault: koreanAddresses.length === 0,
+    });
+    setNewAddrTitle('');
+    setNewAddrFull('');
+    setNewAddrCity('');
+    setNewAddrPostal('');
+    setNewAddrPhone('');
+    setIsAddAddressOpen(false);
+  };
 
   const filteredProducts = products.filter((product) => {
     const matchesSearch =
@@ -92,21 +138,7 @@ export default function HomeScreen() {
             </View>
 
             <View style={styles.headerRight}>
-              {/* CART BUTTON */}
-              <TouchableOpacity
-                style={styles.cartButton}
-                activeOpacity={0.8}
-                onPress={() => router.push('/cart')}
-              >
-                <Text style={styles.cartIcon}>🛒</Text>
-                {cartCount > 0 && (
-                  <View style={styles.cartBadge}>
-                    <Text style={styles.cartBadgeText}>{cartCount}</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-
-              {/* TRANSLATE / LANGUAGE SWITCHER BUTTON (REPLACING LOGOUT) */}
+              {/* TRANSLATE / LANGUAGE SWITCHER BUTTON */}
               <TouchableOpacity
                 style={styles.langButton}
                 activeOpacity={0.85}
@@ -138,7 +170,7 @@ export default function HomeScreen() {
           <TouchableOpacity
             style={styles.locationCard}
             activeOpacity={0.85}
-            onPress={() => router.push('/profile')}
+            onPress={() => setIsLocationModalOpen(true)}
           >
             <View style={styles.locationCircle}>
               <Text style={{ fontSize: 18 }}>📍</Text>
@@ -146,12 +178,16 @@ export default function HomeScreen() {
 
             <View style={styles.locationInfo}>
               <Text style={styles.locationLabel}>{t('deliveringTo')}</Text>
-              <Text style={styles.location}>
-                Seoul Gangnam Hub ➔ India & Nepal
+              <Text style={styles.location} numberOfLines={1}>
+                {selectedKoreanAddress
+                  ? `${selectedKoreanAddress.city}, ${selectedKoreanAddress.fullAddress.split(',').pop()?.trim() || ''}`
+                  : t('noKoreanAddress')}
               </Text>
             </View>
 
-            <Text style={styles.chevron}>›</Text>
+            <View style={styles.changeAddressPill}>
+              <Text style={styles.changeAddressText}>{t('changeAddress')}</Text>
+            </View>
           </TouchableOpacity>
 
           {/* SEARCH */}
@@ -205,26 +241,61 @@ export default function HomeScreen() {
             <View style={styles.decorCircleTwo} />
           </View>
 
-          {/* SPECIAL PROMO OFFER */}
-          <View style={styles.specialOffer}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.specialSmall}>{t('promoSmall')}</Text>
-              <Text style={styles.specialTitle}>{t('promoTitle')}</Text>
-              <Text style={styles.specialText}>
-                {t('promoText')}
-              </Text>
-
-              <TouchableOpacity
-                style={styles.specialButton}
-                activeOpacity={0.85}
-                onPress={() => router.push('/cart')}
-              >
-                <Text style={styles.specialButtonText}>{t('claimOffer')}</Text>
-              </TouchableOpacity>
+          {/* CLOTHES PROMO CARD */}
+          <TouchableOpacity
+            style={styles.promoCardClothes}
+            activeOpacity={0.88}
+            onPress={() => router.push('/clothes')}
+          >
+            <View style={styles.promoCardInner}>
+              <View style={{ flex: 1 }}>
+                <View style={styles.promoTagPill}>
+                  <Text style={styles.promoTagText}>{t('fashionFromHome')}</Text>
+                </View>
+                <Text style={styles.promoCardTitle}>{t('fashionSubtitle')}</Text>
+                <Text style={styles.promoCardDesc}>{t('fashionDesc')}</Text>
+                <TouchableOpacity
+                  style={styles.promoCardButton}
+                  activeOpacity={0.85}
+                  onPress={() => router.push('/clothes')}
+                >
+                  <Text style={styles.promoCardBtnText}>{t('shopNow')}</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.promoCardEmojiWrap}>
+                <Text style={styles.promoCardEmoji}>👗</Text>
+                <Text style={styles.promoCardSubEmoji}>🇮🇳 🇳🇵</Text>
+              </View>
             </View>
+            <View style={styles.promoDecoCircle1} />
+          </TouchableOpacity>
 
-            <Text style={styles.deliveryEmoji}>🚚</Text>
-          </View>
+          {/* PERFUMES PROMO CARD */}
+          <TouchableOpacity
+            style={styles.promoCardPerfumes}
+            activeOpacity={0.88}
+            onPress={() => router.push('/perfumes')}
+          >
+            <View style={styles.promoCardInner}>
+              <View style={{ flex: 1 }}>
+                <View style={styles.promoTagPillPerfume}>
+                  <Text style={styles.promoTagText}>{t('fragranceCollection')}</Text>
+                </View>
+                <Text style={styles.promoCardTitlePerfume}>{t('fragranceDesc')}</Text>
+                <TouchableOpacity
+                  style={styles.promoCardButtonPerfume}
+                  activeOpacity={0.85}
+                  onPress={() => router.push('/perfumes')}
+                >
+                  <Text style={styles.promoCardBtnText}>{t('exploreNow')}</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.promoCardEmojiWrap}>
+                <Text style={styles.promoCardEmoji}>🧴✨</Text>
+              </View>
+            </View>
+            <View style={styles.promoDecoCircle2} />
+          </TouchableOpacity>
 
           {/* QUICK VALUE PROPS */}
           <View style={styles.benefitRow}>
@@ -411,9 +482,9 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.trustItem}>
-                <Text style={styles.trustIcon}>⚡</Text>
-                <Text style={styles.trustItemTitle}>{t('liveTracking')}</Text>
-                <Text style={styles.trustItemText}>Live tracking with SMS/GPS</Text>
+                <Text style={styles.trustIcon}>🚀</Text>
+                <Text style={styles.trustItemTitle}>{t('fastDelivery')}</Text>
+                <Text style={styles.trustItemText}>Express air cargo service</Text>
               </View>
 
               <View style={styles.trustItem}>
@@ -519,6 +590,154 @@ export default function HomeScreen() {
                 onPress={() => setIsLanguageModalOpen(false)}
               >
                 <Text style={styles.closeModalBtnText}>CONFIRM / 확인</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ============================================================ */}
+        {/* DELIVERY ADDRESS SELECTION MODAL                             */}
+        {/* ============================================================ */}
+        <Modal
+          visible={isLocationModalOpen}
+          transparent
+          animationType="slide"
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.locationModalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>📍 {t('selectDeliveryAddress')}</Text>
+                <TouchableOpacity onPress={() => { setIsLocationModalOpen(false); setIsAddAddressOpen(false); }}>
+                  <Text style={styles.closeText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.modalSubtitle}>
+                {language === 'KR'
+                  ? '한국 내 배송 받을 주소를 선택하세요'
+                  : language === 'HI'
+                  ? 'कोरिया में डिलीवरी का पता चुनें'
+                  : language === 'NE'
+                  ? 'कोरियामा डेलिभरी ठेगाना छान्नुहोस्'
+                  : 'Select your delivery address in Korea'}
+              </Text>
+
+              <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+                {koreanAddresses.length === 0 && !isAddAddressOpen && (
+                  <View style={styles.emptyAddrCard}>
+                    <Text style={styles.emptyAddrIcon}>🏠</Text>
+                    <Text style={styles.emptyAddrText}>{t('noKoreanAddress')}</Text>
+                  </View>
+                )}
+
+                {koreanAddresses.map((addr) => {
+                  const isSelected = selectedKoreanAddress?.id === addr.id;
+                  return (
+                    <TouchableOpacity
+                      key={addr.id}
+                      style={[styles.addrOptionCard, isSelected && styles.addrOptionCardActive]}
+                      onPress={() => handleSelectKoreanAddress(addr.id)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={styles.addrOptionLeft}>
+                        <Text style={styles.addrOptionIcon}>
+                          {addr.type === 'OFFICE' ? '🏢' : '🏠'}
+                        </Text>
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={styles.addrOptionTitle}>{addr.title}</Text>
+                        <Text style={styles.addrOptionAddress} numberOfLines={2}>
+                          {addr.fullAddress}, {addr.city} {addr.postalCode}
+                        </Text>
+                        <Text style={styles.addrOptionPhone}>{addr.phone}</Text>
+                      </View>
+                      {isSelected && <Text style={styles.checkIcon}>✓</Text>}
+                    </TouchableOpacity>
+                  );
+                })}
+
+                {/* ADD NEW ADDRESS SECTION */}
+                {!isAddAddressOpen ? (
+                  <TouchableOpacity
+                    style={styles.addNewAddrBtn}
+                    onPress={() => setIsAddAddressOpen(true)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.addNewAddrText}>{t('addNewKoreanAddress')}</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.newAddrForm}>
+                    <Text style={styles.newAddrFormTitle}>
+                      {language === 'KR' ? '새 한국 주소 추가' : 'Add New Korean Address'}
+                    </Text>
+                    <TextInput
+                      style={styles.newAddrInput}
+                      placeholder={language === 'KR' ? '주소 이름 (예: 집, 회사)' : 'Address title (e.g. Home, Office)'}
+                      placeholderTextColor="#A2A2A2"
+                      value={newAddrTitle}
+                      onChangeText={setNewAddrTitle}
+                    />
+                    <TextInput
+                      style={styles.newAddrInput}
+                      placeholder={language === 'KR' ? '상세 주소 *' : 'Full address *'}
+                      placeholderTextColor="#A2A2A2"
+                      value={newAddrFull}
+                      onChangeText={setNewAddrFull}
+                    />
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <TextInput
+                        style={[styles.newAddrInput, { flex: 1 }]}
+                        placeholder={language === 'KR' ? '도시 *' : 'City *'}
+                        placeholderTextColor="#A2A2A2"
+                        value={newAddrCity}
+                        onChangeText={setNewAddrCity}
+                      />
+                      <TextInput
+                        style={[styles.newAddrInput, { flex: 1 }]}
+                        placeholder={language === 'KR' ? '우편번호' : 'Postal code'}
+                        placeholderTextColor="#A2A2A2"
+                        value={newAddrPostal}
+                        onChangeText={setNewAddrPostal}
+                        keyboardType="numeric"
+                      />
+                    </View>
+                    <TextInput
+                      style={styles.newAddrInput}
+                      placeholder={language === 'KR' ? '연락처' : 'Phone number'}
+                      placeholderTextColor="#A2A2A2"
+                      value={newAddrPhone}
+                      onChangeText={setNewAddrPhone}
+                      keyboardType="phone-pad"
+                    />
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                      <TouchableOpacity
+                        style={styles.newAddrCancelBtn}
+                        onPress={() => setIsAddAddressOpen(false)}
+                      >
+                        <Text style={styles.newAddrCancelText}>
+                          {language === 'KR' ? '취소' : 'Cancel'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.newAddrSaveBtn}
+                        onPress={handleAddNewKoreanAddress}
+                      >
+                        <Text style={styles.newAddrSaveText}>
+                          {language === 'KR' ? '저장' : 'Save'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </ScrollView>
+
+              <TouchableOpacity
+                style={styles.closeModalBtn}
+                onPress={() => { setIsLocationModalOpen(false); setIsAddAddressOpen(false); }}
+              >
+                <Text style={styles.closeModalBtnText}>
+                  {language === 'KR' ? '확인' : 'DONE'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1490,6 +1709,290 @@ const getStyles = (isDark: boolean) => {
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.5,
+  },
+
+  // ── Change Address Pill ──
+  changeAddressPill: {
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+  },
+  changeAddressText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: accent,
+  },
+
+  // ── Promo Cards (Clothes) ──
+  promoCardClothes: {
+    marginHorizontal: 16,
+    marginTop: 14,
+    backgroundColor: '#23201C',
+    borderRadius: 20,
+    padding: 18,
+    overflow: 'hidden',
+    position: 'relative' as const,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: '#3D3425',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: isDark ? 0.4 : 0.12,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  promoCardInner: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    zIndex: 2,
+  },
+  promoTagPill: {
+    backgroundColor: 'rgba(200, 141, 43, 0.25)',
+    alignSelf: 'flex-start' as const,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  promoTagText: {
+    color: '#F0BA5A',
+    fontSize: 9,
+    fontWeight: '800' as const,
+    letterSpacing: 0.5,
+  },
+  promoCardTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '900' as const,
+    lineHeight: 20,
+  },
+  promoCardDesc: {
+    color: '#D4CEBF',
+    fontSize: 11,
+    marginTop: 4,
+    lineHeight: 15,
+  },
+  promoCardButton: {
+    marginTop: 12,
+    backgroundColor: accent,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignSelf: 'flex-start' as const,
+  },
+  promoCardBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900' as const,
+    letterSpacing: 0.5,
+  },
+  promoCardEmojiWrap: {
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    paddingLeft: 12,
+  },
+  promoCardEmoji: {
+    fontSize: 42,
+  },
+  promoCardSubEmoji: {
+    fontSize: 10,
+    marginTop: 4,
+    color: '#FFFFFF',
+    fontWeight: '700' as const,
+  },
+  promoDecoCircle1: {
+    position: 'absolute' as const,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(200, 141, 43, 0.08)',
+    top: -30,
+    right: -20,
+  },
+
+  // ── Promo Cards (Perfumes) ──
+  promoCardPerfumes: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    backgroundColor: isDark ? '#1E1A16' : '#2C2319',
+    borderRadius: 20,
+    padding: 18,
+    overflow: 'hidden',
+    position: 'relative' as const,
+    borderWidth: 1,
+    borderColor: isDark ? '#4D3B18' : '#3D3425',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: isDark ? 0.4 : 0.12,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  promoTagPillPerfume: {
+    backgroundColor: 'rgba(180, 120, 60, 0.3)',
+    alignSelf: 'flex-start' as const,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  promoCardTitlePerfume: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800' as const,
+    lineHeight: 19,
+  },
+  promoCardButtonPerfume: {
+    marginTop: 12,
+    backgroundColor: '#B47838',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignSelf: 'flex-start' as const,
+  },
+  promoDecoCircle2: {
+    position: 'absolute' as const,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(180, 120, 56, 0.06)',
+    bottom: -40,
+    right: -30,
+  },
+
+  // ── Location Modal ──
+  locationModalContent: {
+    backgroundColor: cardBg,
+    borderRadius: 22,
+    padding: 20,
+    width: '100%',
+    maxWidth: 380,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: border,
+  },
+  emptyAddrCard: {
+    alignItems: 'center' as const,
+    paddingVertical: 24,
+    backgroundColor: isDark ? '#262626' : bg,
+    borderRadius: 14,
+    marginBottom: 10,
+  },
+  emptyAddrIcon: {
+    fontSize: 32,
+    marginBottom: 6,
+  },
+  emptyAddrText: {
+    fontSize: 12,
+    color: textSub,
+    fontWeight: '600' as const,
+  },
+  addrOptionCard: {
+    backgroundColor: isDark ? '#262626' : bg,
+    borderRadius: 14,
+    padding: 12,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    borderWidth: 1.5,
+    borderColor: border,
+    marginBottom: 8,
+  },
+  addrOptionCardActive: {
+    borderColor: accent,
+    backgroundColor: activeTint,
+  },
+  addrOptionLeft: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
+    justifyContent: 'center' as const,
+    alignItems: 'center' as const,
+  },
+  addrOptionIcon: {
+    fontSize: 18,
+  },
+  addrOptionTitle: {
+    fontSize: 13,
+    fontWeight: '800' as const,
+    color: textMain,
+  },
+  addrOptionAddress: {
+    fontSize: 10,
+    color: textSub,
+    marginTop: 2,
+    lineHeight: 14,
+  },
+  addrOptionPhone: {
+    fontSize: 10,
+    color: textSub,
+    marginTop: 2,
+  },
+  addNewAddrBtn: {
+    borderWidth: 1.5,
+    borderStyle: 'dashed' as const,
+    borderColor: accent,
+    borderRadius: 14,
+    padding: 14,
+    alignItems: 'center' as const,
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  addNewAddrText: {
+    fontSize: 12,
+    fontWeight: '800' as const,
+    color: accent,
+  },
+
+  // ── New Address Form ──
+  newAddrForm: {
+    backgroundColor: isDark ? '#262626' : bg,
+    borderRadius: 14,
+    padding: 14,
+    marginTop: 4,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: border,
+  },
+  newAddrFormTitle: {
+    fontSize: 13,
+    fontWeight: '800' as const,
+    color: textMain,
+    marginBottom: 10,
+  },
+  newAddrInput: {
+    backgroundColor: cardBg,
+    borderWidth: 1,
+    borderColor: border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 12,
+    color: textMain,
+    marginBottom: 8,
+  },
+  newAddrCancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: border,
+    alignItems: 'center' as const,
+  },
+  newAddrCancelText: {
+    fontSize: 12,
+    fontWeight: '700' as const,
+    color: textSub,
+  },
+  newAddrSaveBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: isDark ? accent : textMain,
+    alignItems: 'center' as const,
+  },
+  newAddrSaveText: {
+    fontSize: 12,
+    fontWeight: '800' as const,
+    color: '#FFFFFF',
   },
 });
 };
