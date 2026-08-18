@@ -59,6 +59,10 @@ export default function HomeScreen() {
   const [isCourierVideoPlaying, setIsCourierVideoPlaying] = useState(true);
   const [flightPos, setFlightPos] = useState(10);
 
+  const [courierImgError, setCourierImgError] = useState(false);
+  const [clothesImgError, setClothesImgError] = useState(false);
+  const [perfumeImgError, setPerfumeImgError] = useState(false);
+
   useEffect(() => {
     if (!isCourierVideoPlaying) return;
     const interval = setInterval(() => {
@@ -255,14 +259,21 @@ export default function HomeScreen() {
 
             {/* MEDIA WRAPPER WITH AIRPLANE FLYING FROM KOREA TO INDIA & NEPAL */}
             <View style={[styles.adMediaWrapper, { height: 185 }]}>
-              <Image
-                source={{
-                  uri: isCourierVideoPlaying
-                    ? 'https://images.unsplash.com/photo-1524492412937-b28074a5d7da?w=800'
-                    : 'https://images.unsplash.com/photo-1544735716-392fe2489ffa?w=800',
-                }}
-                style={styles.adMediaImage}
-              />
+              {!courierImgError ? (
+                <Image
+                  source={{
+                    uri: isCourierVideoPlaying
+                      ? 'https://images.unsplash.com/photo-1524492412937-b28074a5d7da?auto=format&fit=crop&q=80&w=800'
+                      : 'https://images.unsplash.com/photo-1544735716-392fe2489ffa?auto=format&fit=crop&q=80&w=800',
+                  }}
+                  style={styles.adMediaImage}
+                  onError={() => setCourierImgError(true)}
+                />
+              ) : (
+                <View style={[styles.adMediaImage, { backgroundColor: '#1A241A', justifyContent: 'center', alignItems: 'center' }]}>
+                  <Text style={{ fontSize: 36 }}>🇰🇷 ✈️ 🇮🇳 🇳🇵</Text>
+                </View>
+              )}
 
               {/* LIVE AIRPLANE FLIGHT ROUTE TRACKER (KOREA ➔ INDIA & NEPAL) */}
               <View style={styles.flightRouteOverlay}>
@@ -357,14 +368,21 @@ export default function HomeScreen() {
 
             {/* MEDIA WRAPPER */}
             <View style={styles.adMediaWrapper}>
-              <Image
-                source={{
-                  uri: isVideoPlaying
-                    ? 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=800'
-                    : 'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=800',
-                }}
-                style={styles.adMediaImage}
-              />
+              {!clothesImgError ? (
+                <Image
+                  source={{
+                    uri: isVideoPlaying
+                      ? 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?auto=format&fit=crop&q=80&w=800'
+                      : 'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?auto=format&fit=crop&q=80&w=800',
+                  }}
+                  style={styles.adMediaImage}
+                  onError={() => setClothesImgError(true)}
+                />
+              ) : (
+                <View style={[styles.adMediaImage, { backgroundColor: '#2B231A', justifyContent: 'center', alignItems: 'center' }]}>
+                  <Text style={{ fontSize: 36 }}>👗 🇮🇳 🇳🇵</Text>
+                </View>
+              )}
 
               {/* OVERLAY GRADIENT CONTENT */}
               <View style={styles.adGradientOverlay}>
@@ -437,14 +455,21 @@ export default function HomeScreen() {
 
             {/* MEDIA WRAPPER */}
             <View style={styles.adMediaWrapper}>
-              <Image
-                source={{
-                  uri: isPerfumeVideoPlaying
-                    ? 'https://images.unsplash.com/photo-1541643600914-78b084683601?w=800'
-                    : 'https://images.unsplash.com/photo-1592945403244-b3fbafd7f539?w=800',
-                }}
-                style={styles.adMediaImage}
-              />
+              {!perfumeImgError ? (
+                <Image
+                  source={{
+                    uri: isPerfumeVideoPlaying
+                      ? 'https://images.unsplash.com/photo-1541643600914-78b084683601?auto=format&fit=crop&q=80&w=800'
+                      : 'https://images.unsplash.com/photo-1592945403244-b3fbafd7f539?auto=format&fit=crop&q=80&w=800',
+                  }}
+                  style={styles.adMediaImage}
+                  onError={() => setPerfumeImgError(true)}
+                />
+              ) : (
+                <View style={[styles.adMediaImage, { backgroundColor: '#2C2016', justifyContent: 'center', alignItems: 'center' }]}>
+                  <Text style={{ fontSize: 36 }}>🧴 ✨ 🌸</Text>
+                </View>
+              )}
 
               {/* OVERLAY GRADIENT CONTENT */}
               <View style={styles.adGradientOverlay}>
