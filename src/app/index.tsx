@@ -55,6 +55,7 @@ export default function HomeScreen() {
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isAddAddressOpen, setIsAddAddressOpen] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
+  const [isPerfumeVideoPlaying, setIsPerfumeVideoPlaying] = useState(true);
   const [newAddrTitle, setNewAddrTitle] = useState('');
   const [newAddrFull, setNewAddrFull] = useState('');
   const [newAddrCity, setNewAddrCity] = useState('');
@@ -321,31 +322,84 @@ export default function HomeScreen() {
             </View>
           </TouchableOpacity>
 
-          {/* PERFUMES PROMO CARD */}
+          {/* PERFUMES PROMO VIDEO AD BANNER */}
           <TouchableOpacity
-            style={styles.promoCardPerfumes}
-            activeOpacity={0.88}
+            style={[styles.clothingAdBanner, { marginTop: 12, borderColor: '#4D3B18' }]}
+            activeOpacity={0.92}
             onPress={() => router.push('/perfumes')}
           >
-            <View style={styles.promoCardInner}>
-              <View style={{ flex: 1 }}>
-                <View style={styles.promoTagPillPerfume}>
-                  <Text style={styles.promoTagText}>{t('fragranceCollection')}</Text>
-                </View>
-                <Text style={styles.promoCardTitlePerfume}>{t('fragranceDesc')}</Text>
-                <TouchableOpacity
-                  style={styles.promoCardButtonPerfume}
-                  activeOpacity={0.85}
-                  onPress={() => router.push('/perfumes')}
-                >
-                  <Text style={styles.promoCardBtnText}>{t('exploreNow')}</Text>
-                </TouchableOpacity>
+            {/* AD HEADER BAR */}
+            <View style={styles.adHeaderBar}>
+              <View style={styles.adLiveBadge}>
+                <View
+                  style={[
+                    styles.livePulseDot,
+                    { backgroundColor: '#FFB74D' },
+                    !isPerfumeVideoPlaying && { backgroundColor: '#888' },
+                  ]}
+                />
+                <Text style={styles.adLiveText}>
+                  {isPerfumeVideoPlaying ? '✨ FRAGRANCE SPOTLIGHT' : '⏸ PAUSED'}
+                </Text>
               </View>
-              <View style={styles.promoCardEmojiWrap}>
-                <Text style={styles.promoCardEmoji}>🧴✨</Text>
+
+              <TouchableOpacity
+                style={styles.adPlayToggle}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  setIsPerfumeVideoPlaying((prev) => !prev);
+                }}
+              >
+                <Text style={styles.adPlayToggleText}>
+                  {isPerfumeVideoPlaying ? '⏸ Pause' : '▶ Play Preview'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* MEDIA WRAPPER */}
+            <View style={styles.adMediaWrapper}>
+              <Image
+                source={{
+                  uri: isPerfumeVideoPlaying
+                    ? 'https://images.unsplash.com/photo-1541643600914-78b084683601?w=800'
+                    : 'https://images.unsplash.com/photo-1592945403244-b3fbafd7f539?w=800',
+                }}
+                style={styles.adMediaImage}
+              />
+
+              {/* OVERLAY GRADIENT CONTENT */}
+              <View style={styles.adGradientOverlay}>
+                <View style={[styles.adTagPill, { backgroundColor: '#B47838' }]}>
+                  <Text style={styles.adTagPillText}>{t('fragranceCollection')}</Text>
+                </View>
+
+                <Text style={styles.adMainTitle}>{t('fragranceDesc')}</Text>
+                <Text style={styles.adSubtitle}>Indian Attar, Arabic Oud & Korean Perfumes</Text>
+
+                <View style={styles.shopClothesActionRow}>
+                  <TouchableOpacity
+                    style={[styles.shopClothesButton, { backgroundColor: '#B47838' }]}
+                    activeOpacity={0.85}
+                    onPress={() => router.push('/perfumes')}
+                  >
+                    <Text style={styles.shopClothesBtnText}>{t('exploreNow')}</Text>
+                    <Text style={styles.shopClothesBtnArrow}>→</Text>
+                  </TouchableOpacity>
+
+                  <Text style={styles.adTapHint}>Explore luxury scents 🧴✨</Text>
+                </View>
+              </View>
+
+              {/* PROGRESS BAR TRACK */}
+              <View style={styles.adProgressBarTrack}>
+                <View
+                  style={[
+                    styles.adProgressBarActive,
+                    { backgroundColor: '#B47838', width: isPerfumeVideoPlaying ? '85%' : '40%' },
+                  ]}
+                />
               </View>
             </View>
-            <View style={styles.promoDecoCircle2} />
           </TouchableOpacity>
 
           {/* QUICK VALUE PROPS */}
