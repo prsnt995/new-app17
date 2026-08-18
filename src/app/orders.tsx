@@ -18,20 +18,49 @@ import { OrderItem } from '@/types';
 
 export default function OrdersScreen() {
   const router = useRouter();
-  const { orders, reorder, formatPrice, t, isDarkMode } = useApp();
+  const { orders, reorder, formatPrice, isDarkMode } = useApp();
 
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
-  const [activeFilter, setActiveFilter] = useState<'ALL' | 'ACTIVE' | 'DELIVERED'>('ALL');
-  const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<OrderItem | null>(null);
-  const [selectedInvoiceOrder, setSelectedInvoiceOrder] = useState<OrderItem | null>(null);
+  // Main Section Toggle: 'MY_ORDERS' (Product purchases) vs 'MY_PARCELS' (Courier shipments)
+  const [activeSection, setActiveSection] = useState<'MY_ORDERS' | 'MY_PARCELS'>('MY_ORDERS');
 
-  const filteredOrders = orders.filter((order) => {
-    if (activeFilter === 'ACTIVE') {
+  // Sub-filter tabs
+  const [productFilter, setProductFilter] = useState<'ALL' | 'ACTIVE' | 'DELIVERED'>('ALL');
+  const [parcelFilter, setParcelFilter] = useState<'ALL' | 'IN_TRANSIT' | 'DELIVERED'>('ALL');
+
+  // Modals state
+  const [selectedParcel, setSelectedParcel] = useState<OrderItem | null>(null);
+  const [selectedProductOrder, setSelectedProductOrder] = useState<OrderItem | null>(null);
+
+  // Filter Product Orders vs Parcel Shipments
+  const productOrders = orders.filter(
+    (o) => o.orderType === 'PRODUCT' || o.destinationCountry === 'South Korea'
+  );
+  const parcelOrders = orders.filter(
+    (o) =>
+      o.orderType === 'PARCEL' ||
+      o.destinationCountry === 'India' ||
+      o.destinationCountry === 'Nepal'
+  );
+
+  // Filtered lists based on active sub-tabs
+  const filteredProductOrders = productOrders.filter((order) => {
+    if (productFilter === 'ACTIVE') {
       return order.status === 'IN_TRANSIT' || order.status === 'ORDER_PLACED' || order.status === 'PICKED_UP';
     }
-    if (activeFilter === 'DELIVERED') {
+    if (productFilter === 'DELIVERED') {
       return order.status === 'DELIVERED';
+    }
+    return true;
+  });
+
+  const filteredParcelOrders = parcelOrders.filter((parcel) => {
+    if (parcelFilter === 'IN_TRANSIT') {
+      return parcel.status === 'IN_TRANSIT' || parcel.status === 'ORDER_PLACED' || parcel.status === 'PICKED_UP';
+    }
+    if (parcelFilter === 'DELIVERED') {
+      return parcel.status === 'DELIVERED';
     }
     return true;
   });
@@ -49,28 +78,18 @@ export default function OrdersScreen() {
   const getStatusBadge = (status: OrderItem['status']) => {
     switch (status) {
       case 'IN_TRANSIT':
+      case 'PICKED_UP':
+      case 'ORDER_PLACED':
         return {
-          label: 'IN TRANSIT ✈️',
+          label: 'In Transit ✈️',
           bg: isDarkMode ? '#2D271E' : '#FFF3E0',
           text: isDarkMode ? '#FFB74D' : '#E65100',
         };
-      case 'ORDER_PLACED':
-        return {
-          label: 'ORDER PLACED 📦',
-          bg: isDarkMode ? '#1E2838' : '#E3F2FD',
-          text: isDarkMode ? '#90CAF9' : '#1565C0',
-        };
       case 'DELIVERED':
         return {
-          label: 'DELIVERED ✓',
+          label: 'Delivered ✓',
           bg: isDarkMode ? '#1E2D1E' : '#E8F5E9',
           text: isDarkMode ? '#81C784' : '#2E7D32',
-        };
-      case 'CANCELLED':
-        return {
-          label: 'CANCELLED',
-          bg: isDarkMode ? '#3E1F1F' : '#FFEBEE',
-          text: isDarkMode ? '#FF8A80' : '#C62828',
         };
       default:
         return {
@@ -79,6 +98,30 @@ export default function OrdersScreen() {
           text: isDarkMode ? '#B0B0B0' : '#616161',
         };
     }
+  };
+
+  const parcelTimelineSteps = [
+    { key: 'CREATED', label: 'Parcel Created', desc: 'Order registered & payment verified' },
+    { key: 'PICKED_UP', label: 'Picked Up', desc: 'Package picked up by courier' },
+    { key: 'SEOUL_HUB', label: 'Seoul Hub', desc: 'Air sorting & export clearance complete' },
+    { key: 'IN_TRANSIT', label: 'In Transit', desc: 'Cargo flight in transit to destination' },
+    { key: 'ARRIVED', label: 'Arrived at Destination', desc: 'Import customs clearance' },
+    { key: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', desc: 'Dispatched with local courier' },
+    { key: 'DELIVERED', label: 'Delivered', desc: 'Handed over to recipient' },
+  ];
+
+  const getStepStatus = (parcel: OrderItem, index: number) => {
+    if (parcel.status === 'DELIVERED') return 'COMPLETED';
+    if (parcel.status === 'IN_TRANSIT') {
+      if (index <= 3) return index === 3 ? 'CURRENT' : 'COMPLETED';
+      return 'PENDING';
+    }
+    if (parcel.status === 'PICKED_UP') {
+      if (index <= 1) return index === 1 ? 'CURRENT' : 'COMPLETED';
+      return 'PENDING';
+    }
+    if (index === 0) return 'CURRENT';
+    return 'PENDING';
   };
 
   return (
@@ -98,1014 +141,993 @@ export default function OrdersScreen() {
           </TouchableOpacity>
 
           <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.headerTitle}>{t('ordersTitle')}</Text>
-            <Text style={styles.headerSubtitle}>
-              {t('ordersSubtitle')}
-            </Text>
+            <Text style={styles.headerTitle}>Orders</Text>
+            <Text style={styles.headerSubtitle}>Manage your orders & shipments</Text>
           </View>
 
-          <TouchableOpacity
-            style={styles.newShipmentBtn}
-            onPress={() => router.push('/cart')}
-          >
-            <Text style={styles.newShipmentText}>+ Ship</Text>
-          </TouchableOpacity>
+          {activeSection === 'MY_PARCELS' && (
+            <TouchableOpacity
+              style={styles.sendParcelBtn}
+              activeOpacity={0.85}
+              onPress={() => router.push('/send-parcel')}
+            >
+              <Text style={styles.sendParcelBtnText}>+ Send Parcel</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        {/* FILTER TABS */}
-        <View style={styles.filterTabsRow}>
-          {[
-            { id: 'ALL', label: `${t('filterAll')} (${orders.length})` },
-            {
-              id: 'ACTIVE',
-              label: `${t('filterActive')} (${
-                orders.filter(
-                  (o) =>
-                    o.status === 'IN_TRANSIT' ||
-                    o.status === 'ORDER_PLACED' ||
-                    o.status === 'PICKED_UP'
-                ).length
-              })`,
-            },
-            {
-              id: 'DELIVERED',
-              label: `${t('filterDelivered')} (${
-                orders.filter((o) => o.status === 'DELIVERED').length
-              })`,
-            },
-          ].map((tab) => {
-            const isSelected = activeFilter === tab.id;
-            return (
-              <TouchableOpacity
-                key={tab.id}
-                style={[styles.filterTab, isSelected && styles.filterTabActive]}
-                onPress={() => setActiveFilter(tab.id as any)}
-              >
-                <Text
-                  style={[
-                    styles.filterTabText,
-                    isSelected && styles.filterTabTextActive,
-                  ]}
-                >
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          {/* TOP 2 LARGE SELECTION CARDS */}
+          <View style={styles.selectionCardsRow}>
+            {/* MY ORDERS CARD */}
+            <TouchableOpacity
+              style={[
+                styles.selectionCard,
+                activeSection === 'MY_ORDERS' && styles.selectionCardActive,
+              ]}
+              activeOpacity={0.88}
+              onPress={() => setActiveSection('MY_ORDERS')}
+            >
+              <View style={styles.selectionIconWrap}>
+                <Text style={styles.selectionIcon}>🛍️</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.selectionCardTitle}>My Orders</Text>
+                <Text style={styles.selectionCardDesc}>Products you purchased</Text>
+              </View>
+              <View style={styles.countBadge}>
+                <Text style={styles.countBadgeText}>{productOrders.length} Orders</Text>
+              </View>
+            </TouchableOpacity>
 
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
-        >
-          {filteredOrders.length === 0 ? (
-            <View style={styles.emptyOrders}>
-              <Text style={styles.emptyIcon}>📦</Text>
-              <Text style={styles.emptyTitle}>No orders in this category</Text>
-              <Text style={styles.emptySubtitle}>
-                You do not have any shipments matching this filter.
-              </Text>
-              <TouchableOpacity
-                style={styles.sendParcelBtn}
-                onPress={() => router.replace('/')}
-              >
-                <Text style={styles.sendParcelBtnText}>CREATE SHIPMENT →</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            filteredOrders.map((order) => {
-              const statusBadge = getStatusBadge(order.status);
-              return (
-                <View key={order.id} style={styles.orderCard}>
-                  {/* CARD HEADER */}
-                  <View style={styles.cardHeader}>
-                    <View>
-                      <Text style={styles.orderNumber}>{order.orderNumber}</Text>
-                      <Text style={styles.orderDate}>Placed on {order.date}</Text>
-                    </View>
+            {/* MY PARCELS CARD */}
+            <TouchableOpacity
+              style={[
+                styles.selectionCard,
+                activeSection === 'MY_PARCELS' && styles.selectionCardActive,
+              ]}
+              activeOpacity={0.88}
+              onPress={() => setActiveSection('MY_PARCELS')}
+            >
+              <View style={styles.selectionIconWrap}>
+                <Text style={styles.selectionIcon}>📦</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.selectionCardTitle}>My Parcels</Text>
+                <Text style={styles.selectionCardDesc}>Parcels you send to home</Text>
+              </View>
+              <View style={styles.countBadge}>
+                <Text style={styles.countBadgeText}>{parcelOrders.length} Parcels</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
 
-                    <View
+          {/* SECTION 1: MY ORDERS (PRODUCT PURCHASES) */}
+          {activeSection === 'MY_ORDERS' && (
+            <View>
+              {/* FILTER TABS FOR MY ORDERS */}
+              <View style={styles.subFilterRow}>
+                {(['ALL', 'ACTIVE', 'DELIVERED'] as const).map((tab) => (
+                  <TouchableOpacity
+                    key={tab}
+                    style={[
+                      styles.subTabButton,
+                      productFilter === tab && styles.subTabActive,
+                    ]}
+                    onPress={() => setProductFilter(tab)}
+                  >
+                    <Text
                       style={[
-                        styles.statusBadge,
-                        { backgroundColor: statusBadge.bg },
+                        styles.subTabText,
+                        productFilter === tab && styles.subTabTextActive,
                       ]}
                     >
-                      <Text
-                        style={[
-                          styles.statusText,
-                          { color: statusBadge.text },
-                        ]}
-                      >
-                        {statusBadge.label}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* ROUTE INFO */}
-                  <View style={styles.routeBox}>
-                    <View style={styles.routeEndpoint}>
-                      <Text style={styles.routeCity}>🇰🇷 Seoul Hub</Text>
-                      <Text style={styles.routeSub}>Origin Collection</Text>
-                    </View>
-
-                    <View style={styles.routeTransit}>
-                      <Text style={styles.routeArrow}>✈️ ➔</Text>
-                      <Text style={styles.shippingSpeed}>
-                        {order.shippingMethod} Air
-                      </Text>
-                    </View>
-
-                    <View style={styles.routeEndpoint}>
-                      <Text style={styles.routeCity}>
-                        {order.destinationCountry === 'Nepal' ? '🇳🇵' : '🇮🇳'}{' '}
-                        {order.destinationCity}
-                      </Text>
-                      <Text style={styles.routeSub}>
-                        {order.recipient.name}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* TRACKING NUMBER BAR */}
-                  <View style={styles.trackingBar}>
-                    <Text style={styles.trackingLabel}>Airway Bill / Tracking:</Text>
-                    <Text style={styles.trackingNumber}>{order.trackingNumber}</Text>
-                    <Text style={styles.etaText}>ETA: {order.estimatedDelivery}</Text>
-                  </View>
-
-                  {/* ITEMS PREVIEW */}
-                  <View style={styles.itemsPreview}>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      {order.items.map((item, idx) => (
-                        <View key={idx} style={styles.itemThumbWrapper}>
-                          <Image
-                            source={{ uri: item.product.image }}
-                            style={styles.itemThumb}
-                          />
-                          <View style={styles.itemThumbQty}>
-                            <Text style={styles.itemThumbQtyText}>
-                              x{item.quantity}
-                            </Text>
-                          </View>
-                        </View>
-                      ))}
-                    </ScrollView>
-
-                    <View style={styles.itemCountTextWrapper}>
-                      <Text style={styles.itemSummaryText}>
-                        {order.items.reduce((s, i) => s + i.quantity, 0)} items (
-                        {order.totalWeightKg} kg)
-                      </Text>
-                      <Text style={styles.orderTotal}>
-                        {formatPrice(order.totalKRW)}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* ACTION BUTTONS */}
-                  <View style={styles.cardActions}>
-                    <TouchableOpacity
-                      style={styles.trackBtn}
-                      activeOpacity={0.85}
-                      onPress={() => setSelectedTrackingOrder(order)}
-                    >
-                      <Text style={styles.trackBtnText}>{t('shipmentDetailsBtn')}</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.invoiceBtn}
-                      activeOpacity={0.85}
-                      onPress={() => setSelectedInvoiceOrder(order)}
-                    >
-                      <Text style={styles.invoiceBtnText}>{t('invoiceBtn')}</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.reorderBtn}
-                      activeOpacity={0.85}
-                      onPress={() => handleReorder(order.id)}
-                    >
-                      <Text style={styles.reorderBtnText}>{t('reorderBtn')}</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            })
-          )}
-
-          <View style={{ height: 100 }} />
-        </ScrollView>
-
-        {/* SHIPMENT DETAILS TIMELINE MODAL */}
-        <Modal
-          visible={!!selectedTrackingOrder}
-          transparent
-          animationType="slide"
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.trackingModalContent}>
-              <View style={styles.modalHeader}>
-                <View>
-                  <Text style={styles.modalHeading}>Shipment Details</Text>
-                  <Text style={styles.modalSubheading}>
-                    Airway Bill: {selectedTrackingOrder?.trackingNumber}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.closeModalBtn}
-                  onPress={() => setSelectedTrackingOrder(null)}
-                >
-                  <Text style={styles.closeModalText}>✕</Text>
-                </TouchableOpacity>
+                      {tab === 'ALL' ? 'All Orders' : tab === 'ACTIVE' ? 'Active' : 'Delivered'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
               </View>
 
-              {selectedTrackingOrder && (
-                <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
-                  {/* ROUTE BANNER */}
-                  <View style={styles.modalRouteBanner}>
-                    <Text style={styles.modalRouteText}>
-                      🇰🇷 Seoul ➔{' '}
-                      {selectedTrackingOrder.destinationCountry === 'Nepal' ? '🇳🇵' : '🇮🇳'}{' '}
-                      {selectedTrackingOrder.destinationCity}
+              {/* LIST OF PRODUCT ORDERS */}
+              {filteredProductOrders.length === 0 ? (
+                <View style={styles.emptyCard}>
+                  <Text style={styles.emptyEmoji}>🛍️</Text>
+                  <Text style={styles.emptyTitle}>No Product Orders Found</Text>
+                  <Text style={styles.emptySubtitle}>
+                    You haven't placed any grocery or shop product orders in this category yet.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.emptyButton}
+                    onPress={() => router.push('/')}
+                  >
+                    <Text style={styles.emptyButtonText}>Explore Products</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                filteredProductOrders.map((order) => {
+                  const statusBadge = getStatusBadge(order.status);
+
+                  return (
+                    <View key={order.id} style={styles.orderCard}>
+                      <View style={styles.orderCardHeader}>
+                        <View>
+                          <Text style={styles.orderNumberText}>{order.orderNumber}</Text>
+                          <Text style={styles.orderDateText}>{order.date}</Text>
+                        </View>
+                        <View style={[styles.statusBadge, { backgroundColor: statusBadge.bg }]}>
+                          <Text style={[styles.statusBadgeText, { color: statusBadge.text }]}>
+                            {statusBadge.label}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* PRODUCTS THUMBNAIL SUMMARY */}
+                      <View style={styles.productsRow}>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                          {order.items.map((item, idx) => (
+                            <View key={idx} style={styles.productThumbWrap}>
+                              <Image
+                                source={{ uri: item.product.image }}
+                                style={styles.productThumb}
+                              />
+                              <Text style={styles.productQtyBadge}>x{item.quantity}</Text>
+                            </View>
+                          ))}
+                        </ScrollView>
+                      </View>
+
+                      {/* TOTAL PRICE & ACTIONS */}
+                      <View style={styles.orderCardFooter}>
+                        <View>
+                          <Text style={styles.totalPriceLabel}>Total Amount</Text>
+                          <Text style={styles.totalPriceVal}>
+                            {formatPrice(order.totalKRW)}
+                          </Text>
+                        </View>
+
+                        <View style={styles.actionBtnGroup}>
+                          <TouchableOpacity
+                            style={styles.reorderBtn}
+                            onPress={() => handleReorder(order.id)}
+                          >
+                            <Text style={styles.reorderBtnText}>Reorder 🛒</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={styles.detailsBtn}
+                            onPress={() => setSelectedProductOrder(order)}
+                          >
+                            <Text style={styles.detailsBtnText}>View Details →</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          )}
+
+          {/* SECTION 2: MY PARCELS (COURIER SHIPMENTS TO HOME) */}
+          {activeSection === 'MY_PARCELS' && (
+            <View>
+              {/* FILTER TABS FOR MY PARCELS */}
+              <View style={styles.subFilterRow}>
+                {(['ALL', 'IN_TRANSIT', 'DELIVERED'] as const).map((tab) => (
+                  <TouchableOpacity
+                    key={tab}
+                    style={[
+                      styles.subTabButton,
+                      parcelFilter === tab && styles.subTabActive,
+                    ]}
+                    onPress={() => setParcelFilter(tab)}
+                  >
+                    <Text
+                      style={[
+                        styles.subTabText,
+                        parcelFilter === tab && styles.subTabTextActive,
+                      ]}
+                    >
+                      {tab === 'ALL' ? 'All Parcels' : tab === 'IN_TRANSIT' ? 'In Transit' : 'Delivered'}
                     </Text>
-                    <Text style={styles.modalEta}>
-                      Est. Arrival: {selectedTrackingOrder.estimatedDelivery}
-                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* LIST OF PARCELS */}
+              {filteredParcelOrders.length === 0 ? (
+                <View style={styles.emptyCard}>
+                  <Text style={styles.emptyEmoji}>📦</Text>
+                  <Text style={styles.emptyTitle}>No Parcels Found</Text>
+                  <Text style={styles.emptySubtitle}>
+                    You haven't sent any courier parcels to India or Nepal yet.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.emptyButton}
+                    onPress={() => router.push('/send-parcel')}
+                  >
+                    <Text style={styles.emptyButtonText}>+ Send Parcel Now</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                filteredParcelOrders.map((parcel) => {
+                  const statusBadge = getStatusBadge(parcel.status);
+                  const isIndia = parcel.destinationCountry === 'India';
+                  const destFlag = isIndia ? '🇮🇳' : '🇳🇵';
+                  const destCity = parcel.destinationCity || (isIndia ? 'New Delhi' : 'Kathmandu');
+
+                  return (
+                    <View key={parcel.id} style={styles.parcelCard}>
+                      {/* CARD TOP ROW */}
+                      <View style={styles.parcelCardHeader}>
+                        <View>
+                          <Text style={styles.parcelNumber}>{parcel.orderNumber}</Text>
+                          <Text style={styles.routeText}>
+                            🇰🇷 Seoul → {destFlag} {destCity}
+                          </Text>
+                        </View>
+
+                        <View style={[styles.statusBadge, { backgroundColor: statusBadge.bg }]}>
+                          <Text style={[styles.statusBadgeText, { color: statusBadge.text }]}>
+                            {statusBadge.label}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* PARCEL METRICS ROW */}
+                      <View style={styles.metricsRow}>
+                        <View style={styles.metricItem}>
+                          <Text style={styles.metricLabel}>Weight & Items</Text>
+                          <Text style={styles.metricValue}>
+                            {parcel.totalWeightKg || 8.0} kg · {parcel.items.length} items
+                          </Text>
+                        </View>
+
+                        <View style={styles.metricItem}>
+                          <Text style={styles.metricLabel}>Shipping Method</Text>
+                          <Text style={styles.metricValue}>
+                            {parcel.shippingMethod === 'Express' ? 'Express Air' : 'Standard Air'}
+                          </Text>
+                        </View>
+
+                        <View style={styles.metricItem}>
+                          <Text style={styles.metricLabel}>
+                            {parcel.status === 'DELIVERED' ? 'Delivered Date' : 'ETA'}
+                          </Text>
+                          <Text style={styles.metricValueHighlight}>
+                            {parcel.status === 'DELIVERED'
+                              ? `Delivered: ${parcel.estimatedDelivery || parcel.date}`
+                              : `ETA: ${parcel.estimatedDelivery || 'Aug 19, 2026'}`}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* ACTION BUTTON */}
+                      <View style={styles.actionRow}>
+                        <TouchableOpacity
+                          style={styles.trackButton}
+                          activeOpacity={0.85}
+                          onPress={() => setSelectedParcel(parcel)}
+                        >
+                          <Text style={styles.trackBtnText}>
+                            {parcel.status === 'DELIVERED' ? 'View Details →' : 'Track Parcel →'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          )}
+        </ScrollView>
+
+        {/* PARCEL DETAILS / TRACKING MODAL */}
+        <Modal
+          visible={!!selectedParcel}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setSelectedParcel(null)}
+        >
+          {selectedParcel && (
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContainer}>
+                {/* MODAL HEADER */}
+                <View style={styles.modalHeader}>
+                  <View>
+                    <Text style={styles.modalTitle}>Parcel {selectedParcel.orderNumber}</Text>
+                    <Text style={styles.modalSubtitle}>Tracking Number: {selectedParcel.trackingNumber || 'AWB987654321'}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.closeBtn}
+                    onPress={() => setSelectedParcel(null)}
+                  >
+                    <Text style={styles.closeBtnText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView contentContainerStyle={{ padding: 18 }}>
+                  {/* PARCEL SUMMARY GRID */}
+                  <View style={styles.summaryGrid}>
+                    <View style={styles.gridCell}>
+                      <Text style={styles.gridLabel}>Origin</Text>
+                      <Text style={styles.gridVal}>🇰🇷 {selectedParcel.originHub || 'Seoul Hub'}</Text>
+                    </View>
+                    <View style={styles.gridCell}>
+                      <Text style={styles.gridLabel}>Destination</Text>
+                      <Text style={styles.gridVal}>
+                        {selectedParcel.destinationCountry === 'India' ? '🇮🇳' : '🇳🇵'}{' '}
+                        {selectedParcel.destinationCity}
+                      </Text>
+                    </View>
+                    <View style={styles.gridCell}>
+                      <Text style={styles.gridLabel}>Recipient</Text>
+                      <Text style={styles.gridVal}>{selectedParcel.recipient.name}</Text>
+                    </View>
+                    <View style={styles.gridCell}>
+                      <Text style={styles.gridLabel}>Shipping Method</Text>
+                      <Text style={styles.gridVal}>
+                        {selectedParcel.shippingMethod === 'Express' ? 'Express Air' : 'Standard Air'}
+                      </Text>
+                    </View>
+                    <View style={styles.gridCell}>
+                      <Text style={styles.gridLabel}>Weight & Items</Text>
+                      <Text style={styles.gridVal}>
+                        {selectedParcel.totalWeightKg || 8.0} kg · {selectedParcel.items.length} items
+                      </Text>
+                    </View>
+                    <View style={styles.gridCell}>
+                      <Text style={styles.gridLabel}>ETA / Delivery</Text>
+                      <Text style={[styles.gridVal, { color: '#C88D2B', fontWeight: '800' }]}>
+                        {selectedParcel.estimatedDelivery || 'Aug 19, 2026'}
+                      </Text>
+                    </View>
                   </View>
 
-                  {/* TIMELINE STEPS */}
+                  {/* SHIPMENT TIMELINE */}
+                  <Text style={styles.timelineTitle}>Shipment Progress Timeline</Text>
                   <View style={styles.timelineContainer}>
-                    {selectedTrackingOrder.timeline.map((step, index) => {
-                      const isLast = index === selectedTrackingOrder.timeline.length - 1;
+                    {parcelTimelineSteps.map((step, idx) => {
+                      const status = getStepStatus(selectedParcel, idx);
+                      const isCompleted = status === 'COMPLETED';
+                      const isCurrent = status === 'CURRENT';
+
                       return (
-                        <View key={index} style={styles.timelineStep}>
-                          {/* Dot & Line */}
-                          <View style={styles.timelineGraphic}>
+                        <View key={step.key} style={styles.timelineRow}>
+                          <View style={styles.nodeColumn}>
                             <View
                               style={[
-                                styles.timelineDot,
-                                step.completed && styles.timelineDotCompleted,
-                                step.current && styles.timelineDotCurrent,
+                                styles.nodeCircle,
+                                isCompleted && styles.nodeCompleted,
+                                isCurrent && styles.nodeCurrent,
                               ]}
                             >
-                              {step.completed && (
-                                <Text style={styles.timelineCheck}>✓</Text>
-                              )}
+                              <Text style={styles.nodeIcon}>
+                                {isCompleted ? '✓' : isCurrent ? '●' : '○'}
+                              </Text>
                             </View>
-                            {!isLast && (
+                            {idx < parcelTimelineSteps.length - 1 && (
                               <View
                                 style={[
                                   styles.timelineLine,
-                                  step.completed && styles.timelineLineCompleted,
+                                  isCompleted && styles.timelineLineCompleted,
                                 ]}
                               />
                             )}
                           </View>
 
-                          {/* Details */}
-                          <View style={styles.timelineDetails}>
-                            <View style={styles.timelineTitleRow}>
-                              <Text
-                                style={[
-                                  styles.timelineTitle,
-                                  step.current && styles.timelineTitleCurrent,
-                                ]}
-                              >
-                                {step.title}
-                              </Text>
-                              <Text style={styles.timelineTime}>
-                                {step.timestamp}
-                              </Text>
-                            </View>
-
-                            <Text style={styles.timelineLocation}>
-                              📍 {step.location}
+                          <View style={styles.stepInfo}>
+                            <Text
+                              style={[
+                                styles.stepTitle,
+                                (isCompleted || isCurrent) && styles.stepTitleActive,
+                              ]}
+                            >
+                              {step.label}
                             </Text>
-
-                            <Text style={styles.timelineDesc}>
-                              {step.description}
-                            </Text>
+                            <Text style={styles.stepDesc}>{step.desc}</Text>
                           </View>
                         </View>
                       );
                     })}
                   </View>
-
-                  {/* RECIPIENT CARD */}
-                  <View style={styles.modalRecipientCard}>
-                    <Text style={styles.modalRecipientTitle}>
-                      Recipient Delivery Address:
-                    </Text>
-                    <Text style={styles.modalRecipientName}>
-                      {selectedTrackingOrder.recipient.name} (
-                      {selectedTrackingOrder.recipient.phone})
-                    </Text>
-                    <Text style={styles.modalRecipientAddress}>
-                      {selectedTrackingOrder.recipient.address},{' '}
-                      {selectedTrackingOrder.recipient.city}{' '}
-                      {selectedTrackingOrder.recipient.postalCode},{' '}
-                      {selectedTrackingOrder.recipient.country}
-                    </Text>
-                  </View>
                 </ScrollView>
-              )}
-
-              <TouchableOpacity
-                style={styles.doneTrackingBtn}
-                onPress={() => setSelectedTrackingOrder(null)}
-              >
-                <Text style={styles.doneTrackingBtnText}>DONE</Text>
-              </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          )}
         </Modal>
 
-        {/* INVOICE / RECEIPT MODAL */}
+        {/* PRODUCT ORDER DETAILS MODAL */}
         <Modal
-          visible={!!selectedInvoiceOrder}
+          visible={!!selectedProductOrder}
+          animationType="slide"
           transparent
-          animationType="fade"
+          onRequestClose={() => setSelectedProductOrder(null)}
         >
-          <View style={styles.modalOverlay}>
-            <View style={styles.invoiceModalContent}>
-              <View style={styles.modalHeader}>
-                <View>
-                  <Text style={styles.modalHeading}>Shipment Tax Invoice</Text>
-                  <Text style={styles.modalSubheading}>
-                    {selectedInvoiceOrder?.orderNumber}
-                  </Text>
+          {selectedProductOrder && (
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContainer}>
+                <View style={styles.modalHeader}>
+                  <View>
+                    <Text style={styles.modalTitle}>Order {selectedProductOrder.orderNumber}</Text>
+                    <Text style={styles.modalSubtitle}>Placed on {selectedProductOrder.date}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.closeBtn}
+                    onPress={() => setSelectedProductOrder(null)}
+                  >
+                    <Text style={styles.closeBtnText}>✕</Text>
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity
-                  style={styles.closeModalBtn}
-                  onPress={() => setSelectedInvoiceOrder(null)}
-                >
-                  <Text style={styles.closeModalText}>✕</Text>
-                </TouchableOpacity>
-              </View>
 
-              {selectedInvoiceOrder && (
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  <View style={styles.invoiceSection}>
-                    <Text style={styles.invoiceLabel}>Date:</Text>
-                    <Text style={styles.invoiceValue}>{selectedInvoiceOrder.date}</Text>
-                  </View>
-
-                  <View style={styles.invoiceSection}>
-                    <Text style={styles.invoiceLabel}>Payment Method:</Text>
-                    <Text style={styles.invoiceValue}>
-                      {selectedInvoiceOrder.paymentMethod}
-                    </Text>
-                  </View>
-
-                  <View style={styles.invoiceDivider} />
-
-                  <Text style={styles.invoiceTableTitle}>Items Breakdown:</Text>
-                  {selectedInvoiceOrder.items.map((it, idx) => (
-                    <View key={idx} style={styles.invoiceItemRow}>
-                      <Text style={styles.invoiceItemName} numberOfLines={1}>
-                        {it.product.name} (x{it.quantity})
-                      </Text>
-                      <Text style={styles.invoiceItemPrice}>
-                        {formatPrice(it.product.priceKRW * it.quantity)}
+                <ScrollView contentContainerStyle={{ padding: 18 }}>
+                  <Text style={styles.timelineTitle}>Purchased Products</Text>
+                  {selectedProductOrder.items.map((item, idx) => (
+                    <View key={idx} style={styles.modalItemRow}>
+                      <Image source={{ uri: item.product.image }} style={styles.modalItemImg} />
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text style={styles.modalItemTitle}>{item.product.name}</Text>
+                        <Text style={styles.modalItemSub}>
+                          Quantity: {item.quantity} · {formatPrice(item.product.priceKRW)} each
+                        </Text>
+                      </View>
+                      <Text style={styles.modalItemPrice}>
+                        {formatPrice(item.product.priceKRW * item.quantity)}
                       </Text>
                     </View>
                   ))}
 
-                  <View style={styles.invoiceDivider} />
-
-                  <View style={styles.invoiceRow}>
-                    <Text style={styles.invoiceRowLabel}>Subtotal:</Text>
-                    <Text style={styles.invoiceRowVal}>
-                      {formatPrice(selectedInvoiceOrder.subtotalKRW)}
-                    </Text>
-                  </View>
-
-                  <View style={styles.invoiceRow}>
-                    <Text style={styles.invoiceRowLabel}>Shipping Fee:</Text>
-                    <Text style={styles.invoiceRowVal}>
-                      {selectedInvoiceOrder.shippingFeeKRW === 0
-                        ? 'FREE'
-                        : formatPrice(selectedInvoiceOrder.shippingFeeKRW)}
-                    </Text>
-                  </View>
-
-                  {selectedInvoiceOrder.discountKRW > 0 && (
-                    <View style={styles.invoiceRow}>
-                      <Text style={styles.invoiceDiscountLabel}>Discount:</Text>
-                      <Text style={styles.invoiceDiscountVal}>
-                        −{formatPrice(selectedInvoiceOrder.discountKRW)}
-                      </Text>
-                    </View>
-                  )}
-
-                  <View style={styles.invoiceDivider} />
-
-                  <View style={styles.invoiceTotalRow}>
-                    <Text style={styles.invoiceTotalLabel}>Total Paid:</Text>
-                    <Text style={styles.invoiceTotalAmount}>
-                      {formatPrice(selectedInvoiceOrder.totalKRW)}
+                  <View style={styles.modalTotalRow}>
+                    <Text style={styles.modalTotalLabel}>Total Paid</Text>
+                    <Text style={styles.modalTotalVal}>
+                      {formatPrice(selectedProductOrder.totalKRW)}
                     </Text>
                   </View>
                 </ScrollView>
-              )}
-
-              <TouchableOpacity
-                style={styles.doneTrackingBtn}
-                onPress={() => setSelectedInvoiceOrder(null)}
-              >
-                <Text style={styles.doneTrackingBtnText}>CLOSE RECEIPT</Text>
-              </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          )}
         </Modal>
 
-        {/* BOTTOM NAV */}
         <BottomNav currentTab="orders" />
       </SafeAreaView>
     </>
   );
 }
 
-const getStyles = (isDark: boolean) => {
-  const bg = isDark ? '#121212' : '#F8F7F3';
-  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
-  const cardBgElevated = isDark ? '#262626' : '#F8F7F3';
-  const textMain = isDark ? '#FFFFFF' : '#212121';
-  const textSub = isDark ? '#A0A0A0' : '#8A857A';
-  const border = isDark ? '#333333' : '#EFEBE4';
-  const accent = isDark ? '#D4AF37' : '#C88D2B';
-  const activeTint = isDark ? '#2D271E' : '#FFF9ED';
-  const borderLight = isDark ? '#262626' : '#F5F5F5';
+function getStyles(isDarkMode: boolean) {
+  const bg = isDarkMode ? '#121212' : '#F8F7F3';
+  const cardBg = isDarkMode ? '#1E1E1E' : '#FFFFFF';
+  const text = isDarkMode ? '#FFFFFF' : '#1A1A1A';
+  const subText = isDarkMode ? '#A0A0A0' : '#666666';
+  const border = isDarkMode ? '#2C2C2C' : '#EAE6DF';
+  const accent = isDarkMode ? '#D4AF37' : '#C88D2B';
 
   return StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: bg,
-  },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 14,
-    backgroundColor: cardBg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: border,
-  },
-  backButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  backArrow: {
-    fontSize: 18,
-    color: textMain,
-    fontWeight: '800',
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: textMain,
-  },
-  headerSubtitle: {
-    fontSize: 10,
-    color: textSub,
-    marginTop: 2,
-  },
-  newShipmentBtn: {
-    backgroundColor: accent,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  newShipmentText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  filterTabsRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    gap: 8,
-    backgroundColor: cardBg,
-  },
-  filterTab: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-  },
-  filterTabActive: {
-    backgroundColor: isDark ? accent : '#212121',
-  },
-  filterTabText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: textSub,
-  },
-  filterTabTextActive: {
-    color: isDark ? '#121212' : '#FFFFFF',
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 20,
-  },
-  emptyOrders: {
-    padding: 40,
-    alignItems: 'center',
-    backgroundColor: cardBg,
-    borderRadius: 20,
-    marginTop: 20,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  emptyIcon: {
-    fontSize: 50,
-    marginBottom: 10,
-  },
-  emptyTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: textMain,
-  },
-  emptySubtitle: {
-    fontSize: 12,
-    color: textSub,
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 16,
-  },
-  sendParcelBtn: {
-    backgroundColor: accent,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  sendParcelBtnText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  orderCard: {
-    backgroundColor: cardBg,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: isDark ? 0.3 : 0.04,
-    shadowRadius: 5,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  orderNumber: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: textMain,
-  },
-  orderDate: {
-    fontSize: 10,
-    color: textSub,
-    marginTop: 2,
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  statusText: {
-    fontSize: 9,
-    fontWeight: '800',
-  },
-  routeBox: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 12,
-    padding: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  routeEndpoint: {
-    flex: 1,
-  },
-  routeCity: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: textMain,
-  },
-  routeSub: {
-    fontSize: 9,
-    color: textSub,
-    marginTop: 2,
-  },
-  routeTransit: {
-    alignItems: 'center',
-    paddingHorizontal: 6,
-  },
-  routeArrow: {
-    fontSize: 14,
-    color: accent,
-  },
-  shippingSpeed: {
-    fontSize: 8,
-    fontWeight: '800',
-    color: accent,
-  },
-  trackingBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: borderLight,
-  },
-  trackingLabel: {
-    fontSize: 10,
-    color: textSub,
-  },
-  trackingNumber: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: accent,
-  },
-  etaText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: isDark ? '#81C784' : '#2E7D32',
-  },
-  itemsPreview: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
-  },
-  itemThumbWrapper: {
-    position: 'relative',
-    marginRight: 8,
-  },
-  itemThumb: {
-    width: 44,
-    height: 44,
-    borderRadius: 8,
-    backgroundColor: cardBgElevated,
-  },
-  itemThumbQty: {
-    position: 'absolute',
-    bottom: -3,
-    right: -3,
-    backgroundColor: isDark ? accent : '#212121',
-    borderRadius: 6,
-    paddingHorizontal: 3,
-    paddingVertical: 1,
-  },
-  itemThumbQtyText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 8,
-    fontWeight: '800',
-  },
-  itemCountTextWrapper: {
-    alignItems: 'flex-end',
-    marginLeft: 8,
-  },
-  itemSummaryText: {
-    fontSize: 10,
-    color: textSub,
-  },
-  orderTotal: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: textMain,
-    marginTop: 2,
-  },
-  cardActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  trackBtn: {
-    flex: 1.4,
-    backgroundColor: isDark ? accent : '#212121',
-    paddingVertical: 9,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  trackBtnText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  invoiceBtn: {
-    flex: 1,
-    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
-    paddingVertical: 9,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  invoiceBtnText: {
-    color: accent,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  reorderBtn: {
-    flex: 1,
-    backgroundColor: cardBg,
-    borderWidth: 1,
-    borderColor: border,
-    paddingVertical: 9,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  reorderBtnText: {
-    color: textMain,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
-  },
-  trackingModalContent: {
-    backgroundColor: cardBg,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: '85%',
-    borderWidth: isDark ? 1 : 0,
-    borderColor: border,
-  },
-  invoiceModalContent: {
-    backgroundColor: cardBg,
-    margin: 20,
-    borderRadius: 20,
-    padding: 20,
-    maxHeight: '80%',
-    alignSelf: 'center',
-    width: '90%',
-    borderWidth: isDark ? 1 : 0,
-    borderColor: border,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 14,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: border,
-  },
-  modalHeading: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: textMain,
-  },
-  modalSubheading: {
-    fontSize: 10,
-    color: textSub,
-    marginTop: 2,
-  },
-  closeModalBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  closeModalText: {
-    fontSize: 14,
-    color: textSub,
-    fontWeight: '800',
-  },
-  modalRouteBanner: {
-    backgroundColor: isDark ? '#2D271E' : '#FFF9ED',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: isDark ? '#4D3B18' : '#F3E1BA',
-  },
-  modalRouteText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: textMain,
-  },
-  modalEta: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: accent,
-    marginTop: 2,
-  },
-  timelineContainer: {
-    paddingLeft: 6,
-    marginBottom: 16,
-  },
-  timelineStep: {
-    flexDirection: 'row',
-    marginBottom: 16,
-  },
-  timelineGraphic: {
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  timelineDot: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: isDark ? '#262626' : '#EFEBE4',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: isDark ? 1 : 0,
-    borderColor: border,
-  },
-  timelineDotCompleted: {
-    backgroundColor: accent,
-  },
-  timelineDotCurrent: {
-    backgroundColor: isDark ? '#D4AF37' : '#E65100',
-    borderWidth: 3,
-    borderColor: isDark ? '#4D3B18' : '#FFE0B2',
-  },
-  timelineCheck: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  timelineLine: {
-    width: 2,
-    flex: 1,
-    backgroundColor: border,
-    marginTop: 2,
-  },
-  timelineLineCompleted: {
-    backgroundColor: accent,
-  },
-  timelineDetails: {
-    flex: 1,
-  },
-  timelineTitleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  timelineTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: textSub,
-  },
-  timelineTitleCurrent: {
-    color: isDark ? accent : '#E65100',
-    fontWeight: '800',
-  },
-  timelineTime: {
-    fontSize: 9,
-    color: textSub,
-  },
-  timelineLocation: {
-    fontSize: 10,
-    color: textMain,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  timelineDesc: {
-    fontSize: 10,
-    color: textSub,
-    marginTop: 2,
-    lineHeight: 14,
-  },
-  modalRecipientCard: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  modalRecipientTitle: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: textSub,
-  },
-  modalRecipientName: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: textMain,
-    marginTop: 2,
-  },
-  modalRecipientAddress: {
-    fontSize: 10,
-    color: textSub,
-    marginTop: 2,
-  },
-  doneTrackingBtn: {
-    backgroundColor: isDark ? accent : '#212121',
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  doneTrackingBtnText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  invoiceSection: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  invoiceLabel: {
-    fontSize: 11,
-    color: textSub,
-  },
-  invoiceValue: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: textMain,
-  },
-  invoiceDivider: {
-    height: 1,
-    backgroundColor: borderLight,
-    marginVertical: 10,
-  },
-  invoiceTableTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: textMain,
-    marginBottom: 6,
-  },
-  invoiceItemRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  invoiceItemName: {
-    fontSize: 11,
-    color: textMain,
-    flex: 1,
-    marginRight: 8,
-  },
-  invoiceItemPrice: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: textMain,
-  },
-  invoiceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  invoiceRowLabel: {
-    fontSize: 11,
-    color: textSub,
-  },
-  invoiceRowVal: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: textMain,
-  },
-  invoiceDiscountLabel: {
-    fontSize: 11,
-    color: isDark ? '#81C784' : '#2E7D32',
-  },
-  invoiceDiscountVal: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: isDark ? '#81C784' : '#2E7D32',
-  },
-  invoiceTotalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 4,
-    marginBottom: 10,
-  },
-  invoiceTotalLabel: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: textMain,
-  },
-  invoiceTotalAmount: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: accent,
-  },
-});
-};
+    container: {
+      flex: 1,
+      backgroundColor: bg,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 14,
+      backgroundColor: cardBg,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+    },
+    backButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: isDarkMode ? '#2A2A2A' : '#F0ECE1',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    backArrow: {
+      fontSize: 18,
+      fontWeight: '700',
+      color: text,
+    },
+    headerTitle: {
+      fontSize: 20,
+      fontWeight: '900',
+      color: text,
+    },
+    headerSubtitle: {
+      fontSize: 12,
+      color: subText,
+      marginTop: 2,
+    },
+    sendParcelBtn: {
+      backgroundColor: accent,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 10,
+    },
+    sendParcelBtnText: {
+      color: '#FFFFFF',
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    scrollContent: {
+      padding: 20,
+      paddingBottom: 90,
+    },
+    selectionCardsRow: {
+      flexDirection: 'column',
+      gap: 12,
+      marginBottom: 20,
+    },
+    selectionCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 16,
+      borderWidth: 1.5,
+      borderColor: border,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.05,
+      shadowRadius: 6,
+      elevation: 2,
+    },
+    selectionCardActive: {
+      borderColor: accent,
+      backgroundColor: isDarkMode ? '#282218' : '#FFF9EE',
+    },
+    selectionIconWrap: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: isDarkMode ? '#2C2A24' : '#FAF4E8',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: 12,
+    },
+    selectionIcon: {
+      fontSize: 22,
+    },
+    selectionCardTitle: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: text,
+    },
+    selectionCardDesc: {
+      fontSize: 12,
+      color: subText,
+      marginTop: 2,
+    },
+    countBadge: {
+      backgroundColor: isDarkMode ? '#383020' : '#F4ECE0',
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 12,
+    },
+    countBadgeText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: accent,
+    },
+    subFilterRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 16,
+    },
+    subTabButton: {
+      flex: 1,
+      paddingVertical: 8,
+      borderRadius: 10,
+      backgroundColor: cardBg,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: border,
+    },
+    subTabActive: {
+      backgroundColor: accent,
+      borderColor: accent,
+    },
+    subTabText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: subText,
+    },
+    subTabTextActive: {
+      color: '#FFFFFF',
+    },
+    emptyCard: {
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 30,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: border,
+    },
+    emptyEmoji: {
+      fontSize: 44,
+      marginBottom: 10,
+    },
+    emptyTitle: {
+      fontSize: 16,
+      fontWeight: '800',
+      color: text,
+    },
+    emptySubtitle: {
+      fontSize: 12,
+      color: subText,
+      textAlign: 'center',
+      marginTop: 4,
+      paddingHorizontal: 20,
+    },
+    emptyButton: {
+      marginTop: 16,
+      backgroundColor: accent,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 10,
+    },
+    emptyButtonText: {
+      color: '#FFFFFF',
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    orderCard: {
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 16,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    orderCardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      marginBottom: 12,
+    },
+    orderNumberText: {
+      fontSize: 15,
+      fontWeight: '900',
+      color: text,
+    },
+    orderDateText: {
+      fontSize: 11,
+      color: subText,
+      marginTop: 2,
+    },
+    statusBadge: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 8,
+    },
+    statusBadgeText: {
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    productsRow: {
+      marginVertical: 10,
+    },
+    productThumbWrap: {
+      marginRight: 10,
+      position: 'relative',
+    },
+    productThumb: {
+      width: 50,
+      height: 50,
+      borderRadius: 8,
+      backgroundColor: isDarkMode ? '#2C2C2C' : '#F5F5F5',
+    },
+    productQtyBadge: {
+      position: 'absolute',
+      bottom: -4,
+      right: -4,
+      backgroundColor: accent,
+      color: '#FFFFFF',
+      fontSize: 9,
+      fontWeight: '800',
+      paddingHorizontal: 5,
+      paddingVertical: 1,
+      borderRadius: 6,
+    },
+    orderCardFooter: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 10,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: border,
+    },
+    totalPriceLabel: {
+      fontSize: 10,
+      color: subText,
+      textTransform: 'uppercase',
+      fontWeight: '600',
+    },
+    totalPriceVal: {
+      fontSize: 15,
+      fontWeight: '900',
+      color: accent,
+      marginTop: 2,
+    },
+    actionBtnGroup: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    reorderBtn: {
+      backgroundColor: isDarkMode ? '#2C2C2C' : '#F0ECE1',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 8,
+    },
+    reorderBtnText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: text,
+    },
+    detailsBtn: {
+      backgroundColor: accent,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 8,
+    },
+    detailsBtnText: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: '#FFFFFF',
+    },
+    parcelCard: {
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 16,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: border,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.05,
+      shadowRadius: 6,
+      elevation: 2,
+    },
+    parcelCardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      paddingBottom: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+    },
+    parcelNumber: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: text,
+    },
+    routeText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: accent,
+      marginTop: 4,
+    },
+    metricsRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingVertical: 12,
+    },
+    metricItem: {
+      flex: 1,
+    },
+    metricLabel: {
+      fontSize: 10,
+      color: subText,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+    },
+    metricValue: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: text,
+      marginTop: 4,
+    },
+    metricValueHighlight: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: accent,
+      marginTop: 4,
+    },
+    actionRow: {
+      alignItems: 'flex-end',
+      paddingTop: 8,
+    },
+    trackButton: {
+      backgroundColor: isDarkMode ? '#2D271E' : '#FFF9EE',
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: accent,
+    },
+    trackBtnText: {
+      color: accent,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      justifyContent: 'flex-end',
+    },
+    modalContainer: {
+      backgroundColor: cardBg,
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      maxHeight: '85%',
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 18,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: '900',
+      color: text,
+    },
+    modalSubtitle: {
+      fontSize: 12,
+      color: subText,
+      marginTop: 2,
+    },
+    closeBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: isDarkMode ? '#2C2C2C' : '#F0ECE1',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    closeBtnText: {
+      fontSize: 14,
+      color: text,
+      fontWeight: '800',
+    },
+    summaryGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      backgroundColor: isDarkMode ? '#181818' : '#FAF8F4',
+      borderRadius: 14,
+      padding: 12,
+      marginBottom: 18,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    gridCell: {
+      width: '50%',
+      marginBottom: 10,
+    },
+    gridLabel: {
+      fontSize: 10,
+      color: subText,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+    },
+    gridVal: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: text,
+      marginTop: 2,
+    },
+    timelineTitle: {
+      fontSize: 15,
+      fontWeight: '800',
+      color: text,
+      marginBottom: 14,
+    },
+    timelineContainer: {
+      paddingLeft: 6,
+    },
+    timelineRow: {
+      flexDirection: 'row',
+      marginBottom: 16,
+    },
+    nodeColumn: {
+      alignItems: 'center',
+      marginRight: 14,
+    },
+    nodeCircle: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: isDarkMode ? '#2C2C2C' : '#E0E0E0',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    nodeCompleted: {
+      backgroundColor: '#2E7D32',
+    },
+    nodeCurrent: {
+      backgroundColor: accent,
+    },
+    nodeIcon: {
+      color: '#FFFFFF',
+      fontSize: 11,
+      fontWeight: '900',
+    },
+    timelineLine: {
+      width: 2,
+      flex: 1,
+      backgroundColor: border,
+      marginTop: 4,
+    },
+    timelineLineCompleted: {
+      backgroundColor: '#2E7D32',
+    },
+    stepInfo: {
+      flex: 1,
+    },
+    stepTitle: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: subText,
+    },
+    stepTitleActive: {
+      color: text,
+      fontWeight: '900',
+    },
+    stepDesc: {
+      fontSize: 11,
+      color: subText,
+      marginTop: 2,
+    },
+    modalItemRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+    },
+    modalItemImg: {
+      width: 44,
+      height: 44,
+      borderRadius: 8,
+    },
+    modalItemTitle: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: text,
+    },
+    modalItemSub: {
+      fontSize: 11,
+      color: subText,
+      marginTop: 2,
+    },
+    modalItemPrice: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: accent,
+    },
+    modalTotalRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 16,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: border,
+    },
+    modalTotalLabel: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: text,
+    },
+    modalTotalVal: {
+      fontSize: 18,
+      fontWeight: '900',
+      color: accent,
+    },
+  });
+}

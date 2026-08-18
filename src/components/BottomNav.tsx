@@ -18,7 +18,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab }) => {
 
   const getActiveTab = (): NavTab => {
     if (currentTab) return currentTab;
-    if (pathname === '/orders') return 'orders';
+    if (pathname === '/orders' || pathname === '/parcels') return 'orders';
     if (pathname === '/cart') return 'cart';
     if (pathname === '/wishlist') return 'wishlist';
     if (pathname === '/profile') return 'profile';

@@ -58,6 +58,7 @@ export interface OrderItem {
   discountKRW: number;
   totalKRW: number;
   totalWeightKg: number;
+  orderType?: 'PRODUCT' | 'PARCEL';
   status: OrderStatus;
   originHub: string;
   destinationCity: string;
