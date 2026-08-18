@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Image,
@@ -57,6 +57,15 @@ export default function HomeScreen() {
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
   const [isPerfumeVideoPlaying, setIsPerfumeVideoPlaying] = useState(true);
   const [isCourierVideoPlaying, setIsCourierVideoPlaying] = useState(true);
+  const [flightPos, setFlightPos] = useState(10);
+
+  useEffect(() => {
+    if (!isCourierVideoPlaying) return;
+    const interval = setInterval(() => {
+      setFlightPos((prev) => (prev >= 80 ? 10 : prev + 14));
+    }, 700);
+    return () => clearInterval(interval);
+  }, [isCourierVideoPlaying]);
   const [newAddrTitle, setNewAddrTitle] = useState('');
   const [newAddrFull, setNewAddrFull] = useState('');
   const [newAddrCity, setNewAddrCity] = useState('');
@@ -244,8 +253,8 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* MEDIA WRAPPER */}
-            <View style={styles.adMediaWrapper}>
+            {/* MEDIA WRAPPER WITH AIRPLANE FLYING FROM KOREA TO INDIA & NEPAL */}
+            <View style={[styles.adMediaWrapper, { height: 185 }]}>
               <Image
                 source={{
                   uri: isCourierVideoPlaying
@@ -254,6 +263,29 @@ export default function HomeScreen() {
                 }}
                 style={styles.adMediaImage}
               />
+
+              {/* LIVE AIRPLANE FLIGHT ROUTE TRACKER (KOREA ➔ INDIA & NEPAL) */}
+              <View style={styles.flightRouteOverlay}>
+                <View style={styles.flightOriginBadge}>
+                  <Text style={styles.flightFlagText}>🇰🇷 Seoul</Text>
+                </View>
+
+                <View style={styles.flightTrackLineContainer}>
+                  <View style={styles.flightTrackDottedLine} />
+                  <View style={[styles.airplaneContainer, { left: `${flightPos}%` }]}>
+                    <Text style={styles.airplaneEmoji}>✈️</Text>
+                  </View>
+                </View>
+
+                <View style={styles.flightDestBadgeGroup}>
+                  <View style={styles.flightDestBadge}>
+                    <Text style={styles.flightFlagText}>🇮🇳 India</Text>
+                  </View>
+                  <View style={styles.flightDestBadge}>
+                    <Text style={styles.flightFlagText}>🇳🇵 Nepal</Text>
+                  </View>
+                </View>
+              </View>
 
               {/* OVERLAY GRADIENT CONTENT */}
               <View style={styles.adGradientOverlay}>
@@ -274,7 +306,7 @@ export default function HomeScreen() {
                     <Text style={styles.shopClothesBtnArrow}>→</Text>
                   </TouchableOpacity>
 
-                  <Text style={styles.adTapHint}>Korea ➔ India & Nepal 📦 ✈️</Text>
+                  <Text style={styles.adTapHint}>Express Cargo Flight NM-808 ✈️</Text>
                 </View>
               </View>
 
@@ -283,7 +315,7 @@ export default function HomeScreen() {
                 <View
                   style={[
                     styles.adProgressBarActive,
-                    { backgroundColor: '#C88D2B', width: isCourierVideoPlaying ? '90%' : '50%' },
+                    { backgroundColor: '#C88D2B', width: `${flightPos + 10}%` },
                   ]}
                 />
               </View>
@@ -1429,6 +1461,74 @@ const getStyles = (isDark: boolean) => {
     width: '70%',
     height: '100%',
     backgroundColor: accent,
+  },
+  flightRouteOverlay: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    right: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    zIndex: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  flightOriginBadge: {
+    backgroundColor: '#1E2D1E',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#81C784',
+  },
+  flightFlagText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  flightTrackLineContainer: {
+    flex: 1,
+    marginHorizontal: 8,
+    height: 18,
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  flightTrackDottedLine: {
+    position: 'absolute',
+    top: 8,
+    left: 0,
+    right: 0,
+    height: 2,
+    borderRadius: 1,
+    borderWidth: 1,
+    borderColor: '#FFD54F',
+    borderStyle: 'dashed',
+  },
+  airplaneContainer: {
+    position: 'absolute',
+    top: -2,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  airplaneEmoji: {
+    fontSize: 16,
+  },
+  flightDestBadgeGroup: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  flightDestBadge: {
+    backgroundColor: '#1E2838',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#90CAF9',
   },
   benefitRow: {
     flexDirection: 'row',
