@@ -56,6 +56,7 @@ export default function HomeScreen() {
   const [isAddAddressOpen, setIsAddAddressOpen] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
   const [isPerfumeVideoPlaying, setIsPerfumeVideoPlaying] = useState(true);
+  const [isCourierVideoPlaying, setIsCourierVideoPlaying] = useState(true);
   const [newAddrTitle, setNewAddrTitle] = useState('');
   const [newAddrFull, setNewAddrFull] = useState('');
   const [newAddrCity, setNewAddrCity] = useState('');
@@ -209,39 +210,85 @@ export default function HomeScreen() {
             )}
           </View>
 
-          {/* HERO BANNER */}
-          <View style={styles.hero}>
-            <View style={styles.heroLeft}>
-              <View style={styles.offerBadge}>
-                <Text style={styles.offerText}>{t('heroBadge')}</Text>
+          {/* COURIER & GROCERIES PROMO VIDEO AD BANNER */}
+          <TouchableOpacity
+            style={[styles.clothingAdBanner, { marginTop: 16, borderColor: '#C88D2B' }]}
+            activeOpacity={0.92}
+            onPress={() => router.push('/send-parcel')}
+          >
+            {/* AD HEADER BAR */}
+            <View style={styles.adHeaderBar}>
+              <View style={styles.adLiveBadge}>
+                <View
+                  style={[
+                    styles.livePulseDot,
+                    { backgroundColor: '#4CAF50' },
+                    !isCourierVideoPlaying && { backgroundColor: '#888' },
+                  ]}
+                />
+                <Text style={styles.adLiveText}>
+                  {isCourierVideoPlaying ? '✈️ DIRECT AIR CARGO SPOTLIGHT' : '⏸ PAUSED'}
+                </Text>
               </View>
 
-              <Text style={styles.heroTitle}>
-                {t('heroTitle')}
-              </Text>
-
-              <Text style={styles.heroSubtitle}>
-                {t('heroSubtitle')}
-              </Text>
-
               <TouchableOpacity
-                style={styles.heroButton}
-                activeOpacity={0.85}
-                onPress={() => router.push('/send-parcel')}
+                style={styles.adPlayToggle}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  setIsCourierVideoPlaying((prev) => !prev);
+                }}
               >
-                <Text style={styles.heroButtonText}>{t('sendParcelBtn')}</Text>
-                <Text style={styles.heroArrow}>→</Text>
+                <Text style={styles.adPlayToggleText}>
+                  {isCourierVideoPlaying ? '⏸ Pause' : '▶ Play Preview'}
+                </Text>
               </TouchableOpacity>
             </View>
 
-            <View style={styles.heroRight}>
-              <Text style={styles.heroEmoji}>📦 ✈️</Text>
-              <Text style={styles.heroFlag}>🇰🇷 ➔ 🇮🇳 🇳🇵</Text>
-            </View>
+            {/* MEDIA WRAPPER */}
+            <View style={styles.adMediaWrapper}>
+              <Image
+                source={{
+                  uri: isCourierVideoPlaying
+                    ? 'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?w=800'
+                    : 'https://images.unsplash.com/photo-1578575437130-527eed3abbec?w=800',
+                }}
+                style={styles.adMediaImage}
+              />
 
-            <View style={styles.decorCircleOne} />
-            <View style={styles.decorCircleTwo} />
-          </View>
+              {/* OVERLAY GRADIENT CONTENT */}
+              <View style={styles.adGradientOverlay}>
+                <View style={[styles.adTagPill, { backgroundColor: '#C88D2B' }]}>
+                  <Text style={styles.adTagPillText}>{t('heroBadge')}</Text>
+                </View>
+
+                <Text style={styles.adMainTitle}>{t('heroTitle')}</Text>
+                <Text style={styles.adSubtitle}>{t('heroSubtitle')}</Text>
+
+                <View style={styles.shopClothesActionRow}>
+                  <TouchableOpacity
+                    style={[styles.shopClothesButton, { backgroundColor: '#C88D2B' }]}
+                    activeOpacity={0.85}
+                    onPress={() => router.push('/send-parcel')}
+                  >
+                    <Text style={styles.shopClothesBtnText}>{t('sendParcelBtn')}</Text>
+                    <Text style={styles.shopClothesBtnArrow}>→</Text>
+                  </TouchableOpacity>
+
+                  <Text style={styles.adTapHint}>Korea ➔ India & Nepal 📦 ✈️</Text>
+                </View>
+              </View>
+
+              {/* PROGRESS BAR TRACK */}
+              <View style={styles.adProgressBarTrack}>
+                <View
+                  style={[
+                    styles.adProgressBarActive,
+                    { backgroundColor: '#C88D2B', width: isCourierVideoPlaying ? '90%' : '50%' },
+                  ]}
+                />
+              </View>
+            </View>
+          </TouchableOpacity>
 
           {/* CLOTHES PROMO VIDEO AD BANNER */}
           <TouchableOpacity
