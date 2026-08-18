@@ -258,8 +258,8 @@ export default function HomeScreen() {
               <Image
                 source={{
                   uri: isCourierVideoPlaying
-                    ? 'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?w=800'
-                    : 'https://images.unsplash.com/photo-1578575437130-527eed3abbec?w=800',
+                    ? 'https://images.unsplash.com/photo-1524492412937-b28074a5d7da?w=800'
+                    : 'https://images.unsplash.com/photo-1544735716-392fe2489ffa?w=800',
                 }}
                 style={styles.adMediaImage}
               />
