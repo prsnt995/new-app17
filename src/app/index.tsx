@@ -54,6 +54,7 @@ export default function HomeScreen() {
   const [isLanguageModalOpen, setIsLanguageModalOpen] = useState(false);
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isAddAddressOpen, setIsAddAddressOpen] = useState(false);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(true);
   const [newAddrTitle, setNewAddrTitle] = useState('');
   const [newAddrFull, setNewAddrFull] = useState('');
   const [newAddrCity, setNewAddrCity] = useState('');
@@ -241,33 +242,83 @@ export default function HomeScreen() {
             <View style={styles.decorCircleTwo} />
           </View>
 
-          {/* CLOTHES PROMO CARD */}
+          {/* CLOTHES PROMO VIDEO AD BANNER */}
           <TouchableOpacity
-            style={styles.promoCardClothes}
-            activeOpacity={0.88}
+            style={styles.clothingAdBanner}
+            activeOpacity={0.92}
             onPress={() => router.push('/clothes')}
           >
-            <View style={styles.promoCardInner}>
-              <View style={{ flex: 1 }}>
-                <View style={styles.promoTagPill}>
-                  <Text style={styles.promoTagText}>{t('fashionFromHome')}</Text>
-                </View>
-                <Text style={styles.promoCardTitle}>{t('fashionSubtitle')}</Text>
-                <Text style={styles.promoCardDesc}>{t('fashionDesc')}</Text>
-                <TouchableOpacity
-                  style={styles.promoCardButton}
-                  activeOpacity={0.85}
-                  onPress={() => router.push('/clothes')}
-                >
-                  <Text style={styles.promoCardBtnText}>{t('shopNow')}</Text>
-                </TouchableOpacity>
+            {/* AD HEADER BAR */}
+            <View style={styles.adHeaderBar}>
+              <View style={styles.adLiveBadge}>
+                <View
+                  style={[
+                    styles.livePulseDot,
+                    !isVideoPlaying && { backgroundColor: '#888' },
+                  ]}
+                />
+                <Text style={styles.adLiveText}>
+                  {isVideoPlaying ? '🔴 FEATURED VIDEO AD' : '⏸ PAUSED'}
+                </Text>
               </View>
-              <View style={styles.promoCardEmojiWrap}>
-                <Text style={styles.promoCardEmoji}>👗</Text>
-                <Text style={styles.promoCardSubEmoji}>🇮🇳 🇳🇵</Text>
+
+              <TouchableOpacity
+                style={styles.adPlayToggle}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  setIsVideoPlaying((prev) => !prev);
+                }}
+              >
+                <Text style={styles.adPlayToggleText}>
+                  {isVideoPlaying ? '⏸ Pause' : '▶ Play Preview'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* MEDIA WRAPPER */}
+            <View style={styles.adMediaWrapper}>
+              <Image
+                source={{
+                  uri: isVideoPlaying
+                    ? 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=800'
+                    : 'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=800',
+                }}
+                style={styles.adMediaImage}
+              />
+
+              {/* OVERLAY GRADIENT CONTENT */}
+              <View style={styles.adGradientOverlay}>
+                <View style={styles.adTagPill}>
+                  <Text style={styles.adTagPillText}>{t('fashionFromHome')}</Text>
+                </View>
+
+                <Text style={styles.adMainTitle}>{t('fashionSubtitle')}</Text>
+                <Text style={styles.adSubtitle}>{t('fashionDesc')}</Text>
+
+                <View style={styles.shopClothesActionRow}>
+                  <TouchableOpacity
+                    style={styles.shopClothesButton}
+                    activeOpacity={0.85}
+                    onPress={() => router.push('/clothes')}
+                  >
+                    <Text style={styles.shopClothesBtnText}>{t('shopNow')}</Text>
+                    <Text style={styles.shopClothesBtnArrow}>→</Text>
+                  </TouchableOpacity>
+
+                  <Text style={styles.adTapHint}>Tap to view collection 👗</Text>
+                </View>
+              </View>
+
+              {/* PROGRESS BAR TRACK */}
+              <View style={styles.adProgressBarTrack}>
+                <View
+                  style={[
+                    styles.adProgressBarActive,
+                    !isVideoPlaying && { width: '30%', backgroundColor: '#888' },
+                  ]}
+                />
               </View>
             </View>
-            <View style={styles.promoDecoCircle1} />
           </TouchableOpacity>
 
           {/* PERFUMES PROMO CARD */}
