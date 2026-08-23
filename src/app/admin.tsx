@@ -1,3 +1,6 @@
+import { useApp } from '@/context/AppContext';
+import { OrderItem, OrderStatus, Product } from '@/types';
+import { useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import {
   Alert,
@@ -13,9 +16,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { useApp } from '@/context/AppContext';
-import { OrderItem, OrderStatus, Product } from '@/types';
 
 const ADMIN_DEFAULT_PIN = '8064';
 
@@ -30,6 +30,7 @@ const PRODUCT_CATEGORIES = [
   'Dal',
   'Snacks',
   'Drinks',
+  ' New',
 ];
 
 export default function AdminScreen() {
@@ -75,6 +76,7 @@ export default function AdminScreen() {
 
   // 4. ORDER DETAIL MODAL STATE
   const [selectedOrder, setSelectedOrder] = useState<OrderItem | null>(null);
+  const [adminProofPreview, setAdminProofPreview] = useState<string | null>(null);
 
   // 5. PULL-TO-REFRESH STATE
   const [refreshing, setRefreshing] = useState(false);
@@ -505,7 +507,7 @@ export default function AdminScreen() {
                         <View style={styles.bankVerifyRow}>
                           <Text style={styles.bankVerifyLabel}>Account Number:</Text>
                           <Text style={styles.bankVerifyVal}>
-                            {order.bankAccount?.accountNumber || '806402-00-121099'} (PARSHANT)
+                            {order.bankAccount?.accountNumber || '1002364650197'} (PARSHANT)
                           </Text>
                         </View>
                         <View style={styles.bankVerifyRow}>
@@ -520,6 +522,27 @@ export default function AdminScreen() {
                             ₩{order.totalKRW.toLocaleString('en-KR')}
                           </Text>
                         </View>
+
+                        {/* PAYMENT SCREENSHOT PROOF */}
+                        {order.paymentScreenshot ? (
+                          <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: isDarkMode ? '#4D3B18' : '#F3E1BA' }}>
+                            <Text style={styles.bankVerifyLabel}>Uploaded Receipt Proof:</Text>
+                            <TouchableOpacity
+                              style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6 }}
+                              onPress={() => setAdminProofPreview(order.paymentScreenshot || null)}
+                              activeOpacity={0.8}
+                            >
+                              <Image source={{ uri: order.paymentScreenshot }} style={{ width: 50, height: 50, borderRadius: 6 }} />
+                              <View style={{ backgroundColor: '#2E7D32', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+                                <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '900' }}>📸 View Screenshot Receipt 🔍</Text>
+                              </View>
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          <View style={{ marginTop: 6 }}>
+                            <Text style={[styles.bankVerifyLabel, { color: '#FFA000' }]}>⚠️ No Screenshot Attached (Manual Verification Needed)</Text>
+                          </View>
+                        )}
                       </View>
 
                       {/* RECIPIENT & DELIVERY DETAILS */}
@@ -898,6 +921,26 @@ export default function AdminScreen() {
             </View>
           </View>
         </Modal>
+
+        {/* ADMIN SCREENSHOT RECEIPT PROOF MODAL */}
+        <Modal
+          visible={!!adminProofPreview}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setAdminProofPreview(null)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+            <TouchableOpacity
+              style={{ position: 'absolute', top: 50, right: 20, backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 }}
+              onPress={() => setAdminProofPreview(null)}
+            >
+              <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '900' }}>✕ Close Preview</Text>
+            </TouchableOpacity>
+            {adminProofPreview && (
+              <Image source={{ uri: adminProofPreview }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />
+            )}
+          </View>
+        </Modal>
       </SafeAreaView>
     </>
   );
@@ -915,705 +958,705 @@ const getStyles = (isDark: boolean) => {
   const borderLight = isDark ? '#262626' : '#F5F5F5';
 
   return StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: bg,
-  },
-  lockContainer: {
-    flex: 1,
-    backgroundColor: bg,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  lockCard: {
-    backgroundColor: cardBg,
-    borderRadius: 24,
-    padding: 26,
-    width: '100%',
-    maxWidth: 380,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: isDark ? 0.4 : 0.25,
-    shadowRadius: 12,
-    elevation: 8,
-    borderWidth: isDark ? 1 : 0,
-    borderColor: border,
-  },
-  lockIcon: {
-    fontSize: 48,
-    marginBottom: 10,
-  },
-  lockTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: textMain,
-    textAlign: 'center',
-  },
-  lockSubtitle: {
-    fontSize: 11,
-    color: textSub,
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 16,
-    lineHeight: 16,
-  },
-  pinInput: {
-    width: '100%',
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: textMain,
-    borderWidth: 1.5,
-    borderColor: border,
-    textAlign: 'center',
-    fontWeight: '800',
-    letterSpacing: 4,
-  },
-  errorText: {
-    color: '#E53935',
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 6,
-    textAlign: 'center',
-  },
-  unlockBtn: {
-    backgroundColor: isDark ? accent : '#212121',
-    width: '100%',
-    borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 14,
-  },
-  unlockBtnText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  backStoreBtn: {
-    marginTop: 14,
-    padding: 8,
-  },
-  backStoreText: {
-    color: textSub,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    backgroundColor: cardBg,
-    borderBottomWidth: 1,
-    borderBottomColor: border,
-  },
-  backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  backArrow: {
-    fontSize: 18,
-    color: textMain,
-    fontWeight: '700',
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: textMain,
-  },
-  headerSubtitle: {
-    fontSize: 10,
-    color: textSub,
-    marginTop: 1,
-  },
-  liveBadge: {
-    backgroundColor: isDark ? '#1E2D1E' : '#E8F5E9',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  liveBadgeText: {
-    color: isDark ? '#81C784' : '#2E7D32',
-    fontSize: 8,
-    fontWeight: '900',
-  },
-  exitAdminBtn: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  exitAdminText: {
-    fontSize: 11,
-    color: '#E53935',
-    fontWeight: '800',
-  },
-  metricsRow: {
-    flexDirection: 'row',
-    padding: 16,
-    gap: 8,
-  },
-  metricCard: {
-    flex: 1,
-    backgroundColor: cardBg,
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  metricLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: textSub,
-    textTransform: 'uppercase',
-  },
-  metricValue: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: textMain,
-    marginTop: 4,
-  },
-  metricValueGold: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: accent,
-    marginTop: 4,
-  },
-  tabBar: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    gap: 8,
-  },
-  tabBtn: {
-    flex: 1,
-    backgroundColor: cardBg,
-    borderRadius: 10,
-    paddingVertical: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#EFEBE4',
-  },
-  tabBtnActive: {
-    backgroundColor: isDark ? accent : '#212121',
-    borderColor: isDark ? accent : '#212121',
-  },
-  tabBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: textSub,
-  },
-  tabBtnTextActive: {
-    color: isDark ? '#121212' : '#FFFFFF',
-  },
-  scrollContent: {
-    padding: 16,
-    paddingTop: 8,
-  },
-  subFilterRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginBottom: 12,
-    flexWrap: 'wrap',
-  },
-  subFilterChip: {
-    backgroundColor: cardBg,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  subFilterChipActive: {
-    backgroundColor: activeTint,
-    borderColor: accent,
-  },
-  subFilterText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: textSub,
-  },
-  subFilterTextActive: {
-    color: accent,
-    fontWeight: '900',
-  },
-  adminOrderCard: {
-    backgroundColor: cardBg,
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1.5,
-    borderColor: border,
-  },
-  orderTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: border,
-  },
-  orderIdText: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: textMain,
-  },
-  orderDateText: {
-    fontSize: 10,
-    color: textSub,
-    marginTop: 2,
-  },
-  orderStatusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  orderStatusBadgeText: {
-    fontSize: 9,
-    fontWeight: '900',
-  },
-  bankVerifyCard: {
-    backgroundColor: isDark ? '#2D271E' : '#FFFDF9',
-    borderRadius: 12,
-    padding: 10,
-    marginVertical: 8,
-    borderWidth: 1,
-    borderColor: isDark ? '#4D3B18' : '#F3E1BA',
-  },
-  bankVerifyHeader: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: accent,
-    marginBottom: 6,
-  },
-  bankVerifyRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  bankVerifyLabel: {
-    fontSize: 10,
-    color: textSub,
-  },
-  bankVerifyVal: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: textMain,
-  },
-  bankVerifyNameHighlight: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: isDark ? '#81C784' : '#2E7D32',
-    backgroundColor: isDark ? '#1E2D1E' : '#E8F5E9',
-    paddingHorizontal: 4,
-    borderRadius: 4,
-  },
-  bankVerifyAmountGold: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: accent,
-  },
-  deliveryDetailsCard: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 10,
-    padding: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  deliveryDetailsLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: textMain,
-  },
-  deliveryDetailsAddress: {
-    fontSize: 10,
-    color: textSub,
-    marginTop: 2,
-  },
-  itemsSummaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-    paddingTop: 4,
-  },
-  itemsSummaryCount: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: textSub,
-  },
-  itemsSummaryTotal: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: textMain,
-  },
-  orderActionsRow: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  approvePaymentBtn: {
-    flex: 2,
-    backgroundColor: '#2E7D32',
-    borderRadius: 10,
-    paddingVertical: 9,
-    alignItems: 'center',
-  },
-  approvePaymentBtnText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '900',
-  },
-  markDeliveredBtn: {
-    flex: 2,
-    backgroundColor: '#1565C0',
-    borderRadius: 10,
-    paddingVertical: 9,
-    alignItems: 'center',
-  },
-  markDeliveredBtnText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '900',
-  },
-  viewDetailsBtn: {
-    flex: 1,
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 10,
-    paddingVertical: 9,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: border,
-  },
-  viewDetailsBtnText: {
-    color: textMain,
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  productHeaderRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
-  },
-  searchProductInput: {
-    flex: 1,
-    backgroundColor: cardBg,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 12,
-    borderWidth: 1,
-    borderColor: border,
-    fontWeight: '700',
-    color: textMain,
-  },
-  addProductMainBtn: {
-    backgroundColor: accent,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  addProductMainBtnText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  adminProductCard: {
-    backgroundColor: cardBg,
-    borderRadius: 14,
-    padding: 10,
-    marginBottom: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: border,
-  },
-  adminProductImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 8,
-    backgroundColor: cardBgElevated,
-  },
-  adminProductInfo: {
-    flex: 1,
-    marginLeft: 10,
-  },
-  adminProductName: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: textMain,
-  },
-  adminProductMeta: {
-    fontSize: 9,
-    color: textSub,
-    marginTop: 2,
-  },
-  adminProductPrice: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: accent,
-    marginTop: 2,
-  },
-  adminProductActions: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  editProductBtn: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  editProductBtnText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: textMain,
-  },
-  deleteProductBtn: {
-    backgroundColor: isDark ? '#3E1F1F' : '#FFEBEE',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  deleteProductBtnText: {
-    fontSize: 10,
-    color: isDark ? '#FF8A80' : '#C62828',
-    fontWeight: '800',
-  },
-  usersList: {
-    gap: 10,
-  },
-  userCardAdmin: {
-    backgroundColor: cardBg,
-    borderRadius: 16,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: border,
-  },
-  userAvatarAdmin: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-  },
-  userNameAdmin: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: textMain,
-  },
-  userEmailAdmin: {
-    fontSize: 11,
-    color: textSub,
-    marginTop: 2,
-  },
-  userPhoneAdmin: {
-    fontSize: 11,
-    color: textMain,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  userTierAdmin: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: accent,
-    marginTop: 4,
-  },
-  userAddressesTitle: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: textMain,
-    marginTop: 6,
-  },
-  userAddrCard: {
-    backgroundColor: isDark ? '#262626' : '#FFFFFF',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  userAddrTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: textMain,
-  },
-  userAddrStreet: {
-    fontSize: 11,
-    color: textSub,
-    marginTop: 2,
-  },
-  userAddrMeta: {
-    fontSize: 10,
-    color: textSub,
-    marginTop: 4,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: cardBg,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: '90%',
-    borderWidth: isDark ? 1 : 0,
-    borderColor: border,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 14,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: border,
-  },
-  modalTitle: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: textMain,
-  },
-  closeText: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: textSub,
-  },
-  formLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: textMain,
-    marginBottom: 4,
-  },
-  formInput: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 12,
-    color: textMain,
-    borderWidth: 1,
-    borderColor: border,
-    fontWeight: '700',
-  },
-  categoryChipsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  catChip: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  catChipActive: {
-    backgroundColor: activeTint,
-    borderColor: accent,
-  },
-  catChipText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: textSub,
-  },
-  catChipTextActive: {
-    color: accent,
-    fontWeight: '900',
-  },
-  saveProductModalBtn: {
-    backgroundColor: isDark ? accent : '#212121',
-    borderRadius: 14,
-    paddingVertical: 13,
-    alignItems: 'center',
-    marginTop: 16,
-    marginBottom: 20,
-  },
-  saveProductModalBtnText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  orderDetailSub: {
-    fontSize: 11,
-    color: textSub,
-    marginBottom: 10,
-  },
-  invoiceSection: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 12,
-    padding: 10,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  invoiceSectionTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: textMain,
-    marginBottom: 6,
-  },
-  itemDetailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  itemDetailName: {
-    fontSize: 10,
-    color: textMain,
-  },
-  itemDetailPrice: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: accent,
-  },
-  invoiceDetailText: {
-    fontSize: 10,
-    color: textSub,
-    marginBottom: 2,
-  },
-  invoiceDetailTextBold: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: textMain,
-    marginTop: 4,
-  },
-  closeDetailBtn: {
-    backgroundColor: isDark ? accent : '#212121',
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 20,
-  },
-  closeDetailBtnText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  emptyTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: textSub,
-  },
-});
+    container: {
+      flex: 1,
+      backgroundColor: bg,
+    },
+    lockContainer: {
+      flex: 1,
+      backgroundColor: bg,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    lockCard: {
+      backgroundColor: cardBg,
+      borderRadius: 24,
+      padding: 26,
+      width: '100%',
+      maxWidth: 380,
+      alignItems: 'center',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: isDark ? 0.4 : 0.25,
+      shadowRadius: 12,
+      elevation: 8,
+      borderWidth: isDark ? 1 : 0,
+      borderColor: border,
+    },
+    lockIcon: {
+      fontSize: 48,
+      marginBottom: 10,
+    },
+    lockTitle: {
+      fontSize: 18,
+      fontWeight: '900',
+      color: textMain,
+      textAlign: 'center',
+    },
+    lockSubtitle: {
+      fontSize: 11,
+      color: textSub,
+      textAlign: 'center',
+      marginTop: 4,
+      marginBottom: 16,
+      lineHeight: 16,
+    },
+    pinInput: {
+      width: '100%',
+      backgroundColor: isDark ? '#262626' : '#F8F7F3',
+      borderRadius: 14,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      fontSize: 16,
+      color: textMain,
+      borderWidth: 1.5,
+      borderColor: border,
+      textAlign: 'center',
+      fontWeight: '800',
+      letterSpacing: 4,
+    },
+    errorText: {
+      color: '#E53935',
+      fontSize: 11,
+      fontWeight: '700',
+      marginTop: 6,
+      textAlign: 'center',
+    },
+    unlockBtn: {
+      backgroundColor: isDark ? accent : '#212121',
+      width: '100%',
+      borderRadius: 14,
+      paddingVertical: 14,
+      alignItems: 'center',
+      marginTop: 14,
+    },
+    unlockBtnText: {
+      color: isDark ? '#121212' : '#FFFFFF',
+      fontSize: 12,
+      fontWeight: '900',
+      letterSpacing: 0.5,
+    },
+    backStoreBtn: {
+      marginTop: 14,
+      padding: 8,
+    },
+    backStoreText: {
+      color: textSub,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 14,
+      backgroundColor: cardBg,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+    },
+    backButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: isDark ? '#262626' : '#F8F7F3',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    backArrow: {
+      fontSize: 18,
+      color: textMain,
+      fontWeight: '700',
+    },
+    headerTitle: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: textMain,
+    },
+    headerSubtitle: {
+      fontSize: 10,
+      color: textSub,
+      marginTop: 1,
+    },
+    liveBadge: {
+      backgroundColor: isDark ? '#1E2D1E' : '#E8F5E9',
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4,
+    },
+    liveBadgeText: {
+      color: isDark ? '#81C784' : '#2E7D32',
+      fontSize: 8,
+      fontWeight: '900',
+    },
+    exitAdminBtn: {
+      backgroundColor: isDark ? '#262626' : '#F8F7F3',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    exitAdminText: {
+      fontSize: 11,
+      color: '#E53935',
+      fontWeight: '800',
+    },
+    metricsRow: {
+      flexDirection: 'row',
+      padding: 16,
+      gap: 8,
+    },
+    metricCard: {
+      flex: 1,
+      backgroundColor: cardBg,
+      borderRadius: 14,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    metricLabel: {
+      fontSize: 9,
+      fontWeight: '800',
+      color: textSub,
+      textTransform: 'uppercase',
+    },
+    metricValue: {
+      fontSize: 13,
+      fontWeight: '900',
+      color: textMain,
+      marginTop: 4,
+    },
+    metricValueGold: {
+      fontSize: 13,
+      fontWeight: '900',
+      color: accent,
+      marginTop: 4,
+    },
+    tabBar: {
+      flexDirection: 'row',
+      paddingHorizontal: 16,
+      paddingBottom: 8,
+      gap: 8,
+    },
+    tabBtn: {
+      flex: 1,
+      backgroundColor: cardBg,
+      borderRadius: 10,
+      paddingVertical: 8,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: '#EFEBE4',
+    },
+    tabBtnActive: {
+      backgroundColor: isDark ? accent : '#212121',
+      borderColor: isDark ? accent : '#212121',
+    },
+    tabBtnText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: textSub,
+    },
+    tabBtnTextActive: {
+      color: isDark ? '#121212' : '#FFFFFF',
+    },
+    scrollContent: {
+      padding: 16,
+      paddingTop: 8,
+    },
+    subFilterRow: {
+      flexDirection: 'row',
+      gap: 6,
+      marginBottom: 12,
+      flexWrap: 'wrap',
+    },
+    subFilterChip: {
+      backgroundColor: cardBg,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    subFilterChipActive: {
+      backgroundColor: activeTint,
+      borderColor: accent,
+    },
+    subFilterText: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: textSub,
+    },
+    subFilterTextActive: {
+      color: accent,
+      fontWeight: '900',
+    },
+    adminOrderCard: {
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 14,
+      marginBottom: 12,
+      borderWidth: 1.5,
+      borderColor: border,
+    },
+    orderTopRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingBottom: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+    },
+    orderIdText: {
+      fontSize: 13,
+      fontWeight: '900',
+      color: textMain,
+    },
+    orderDateText: {
+      fontSize: 10,
+      color: textSub,
+      marginTop: 2,
+    },
+    orderStatusBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 6,
+    },
+    orderStatusBadgeText: {
+      fontSize: 9,
+      fontWeight: '900',
+    },
+    bankVerifyCard: {
+      backgroundColor: isDark ? '#2D271E' : '#FFFDF9',
+      borderRadius: 12,
+      padding: 10,
+      marginVertical: 8,
+      borderWidth: 1,
+      borderColor: isDark ? '#4D3B18' : '#F3E1BA',
+    },
+    bankVerifyHeader: {
+      fontSize: 10,
+      fontWeight: '900',
+      color: accent,
+      marginBottom: 6,
+    },
+    bankVerifyRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: 4,
+    },
+    bankVerifyLabel: {
+      fontSize: 10,
+      color: textSub,
+    },
+    bankVerifyVal: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: textMain,
+    },
+    bankVerifyNameHighlight: {
+      fontSize: 11,
+      fontWeight: '900',
+      color: isDark ? '#81C784' : '#2E7D32',
+      backgroundColor: isDark ? '#1E2D1E' : '#E8F5E9',
+      paddingHorizontal: 4,
+      borderRadius: 4,
+    },
+    bankVerifyAmountGold: {
+      fontSize: 12,
+      fontWeight: '900',
+      color: accent,
+    },
+    deliveryDetailsCard: {
+      backgroundColor: isDark ? '#262626' : '#F8F7F3',
+      borderRadius: 10,
+      padding: 8,
+      marginBottom: 8,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    deliveryDetailsLabel: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: textMain,
+    },
+    deliveryDetailsAddress: {
+      fontSize: 10,
+      color: textSub,
+      marginTop: 2,
+    },
+    itemsSummaryRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+      paddingTop: 4,
+    },
+    itemsSummaryCount: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: textSub,
+    },
+    itemsSummaryTotal: {
+      fontSize: 11,
+      fontWeight: '900',
+      color: textMain,
+    },
+    orderActionsRow: {
+      flexDirection: 'row',
+      gap: 6,
+    },
+    approvePaymentBtn: {
+      flex: 2,
+      backgroundColor: '#2E7D32',
+      borderRadius: 10,
+      paddingVertical: 9,
+      alignItems: 'center',
+    },
+    approvePaymentBtnText: {
+      color: '#FFFFFF',
+      fontSize: 10,
+      fontWeight: '900',
+    },
+    markDeliveredBtn: {
+      flex: 2,
+      backgroundColor: '#1565C0',
+      borderRadius: 10,
+      paddingVertical: 9,
+      alignItems: 'center',
+    },
+    markDeliveredBtnText: {
+      color: '#FFFFFF',
+      fontSize: 10,
+      fontWeight: '900',
+    },
+    viewDetailsBtn: {
+      flex: 1,
+      backgroundColor: isDark ? '#262626' : '#F8F7F3',
+      borderRadius: 10,
+      paddingVertical: 9,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: border,
+    },
+    viewDetailsBtnText: {
+      color: textMain,
+      fontSize: 10,
+      fontWeight: '800',
+    },
+    productHeaderRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 12,
+    },
+    searchProductInput: {
+      flex: 1,
+      backgroundColor: cardBg,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      fontSize: 12,
+      borderWidth: 1,
+      borderColor: border,
+      fontWeight: '700',
+      color: textMain,
+    },
+    addProductMainBtn: {
+      backgroundColor: accent,
+      paddingHorizontal: 14,
+      borderRadius: 12,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    addProductMainBtnText: {
+      color: isDark ? '#121212' : '#FFFFFF',
+      fontSize: 11,
+      fontWeight: '900',
+    },
+    adminProductCard: {
+      backgroundColor: cardBg,
+      borderRadius: 14,
+      padding: 10,
+      marginBottom: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: border,
+    },
+    adminProductImage: {
+      width: 50,
+      height: 50,
+      borderRadius: 8,
+      backgroundColor: cardBgElevated,
+    },
+    adminProductInfo: {
+      flex: 1,
+      marginLeft: 10,
+    },
+    adminProductName: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: textMain,
+    },
+    adminProductMeta: {
+      fontSize: 9,
+      color: textSub,
+      marginTop: 2,
+    },
+    adminProductPrice: {
+      fontSize: 12,
+      fontWeight: '900',
+      color: accent,
+      marginTop: 2,
+    },
+    adminProductActions: {
+      flexDirection: 'row',
+      gap: 4,
+    },
+    editProductBtn: {
+      backgroundColor: isDark ? '#262626' : '#F8F7F3',
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    editProductBtnText: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: textMain,
+    },
+    deleteProductBtn: {
+      backgroundColor: isDark ? '#3E1F1F' : '#FFEBEE',
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+      borderRadius: 6,
+    },
+    deleteProductBtnText: {
+      fontSize: 10,
+      color: isDark ? '#FF8A80' : '#C62828',
+      fontWeight: '800',
+    },
+    usersList: {
+      gap: 10,
+    },
+    userCardAdmin: {
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: border,
+    },
+    userAvatarAdmin: {
+      width: 60,
+      height: 60,
+      borderRadius: 30,
+    },
+    userNameAdmin: {
+      fontSize: 14,
+      fontWeight: '900',
+      color: textMain,
+    },
+    userEmailAdmin: {
+      fontSize: 11,
+      color: textSub,
+      marginTop: 2,
+    },
+    userPhoneAdmin: {
+      fontSize: 11,
+      color: textMain,
+      fontWeight: '700',
+      marginTop: 2,
+    },
+    userTierAdmin: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: accent,
+      marginTop: 4,
+    },
+    userAddressesTitle: {
+      fontSize: 12,
+      fontWeight: '900',
+      color: textMain,
+      marginTop: 6,
+    },
+    userAddrCard: {
+      backgroundColor: isDark ? '#262626' : '#FFFFFF',
+      borderRadius: 12,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    userAddrTitle: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: textMain,
+    },
+    userAddrStreet: {
+      fontSize: 11,
+      color: textSub,
+      marginTop: 2,
+    },
+    userAddrMeta: {
+      fontSize: 10,
+      color: textSub,
+      marginTop: 4,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.65)',
+      justifyContent: 'flex-end',
+    },
+    modalContent: {
+      backgroundColor: cardBg,
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      padding: 20,
+      maxHeight: '90%',
+      borderWidth: isDark ? 1 : 0,
+      borderColor: border,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 14,
+      paddingBottom: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+    },
+    modalTitle: {
+      fontSize: 15,
+      fontWeight: '900',
+      color: textMain,
+    },
+    closeText: {
+      fontSize: 18,
+      fontWeight: '800',
+      color: textSub,
+    },
+    formLabel: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: textMain,
+      marginBottom: 4,
+    },
+    formInput: {
+      backgroundColor: isDark ? '#262626' : '#F8F7F3',
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      fontSize: 12,
+      color: textMain,
+      borderWidth: 1,
+      borderColor: border,
+      fontWeight: '700',
+    },
+    categoryChipsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+    },
+    catChip: {
+      backgroundColor: isDark ? '#262626' : '#F8F7F3',
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    catChipActive: {
+      backgroundColor: activeTint,
+      borderColor: accent,
+    },
+    catChipText: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: textSub,
+    },
+    catChipTextActive: {
+      color: accent,
+      fontWeight: '900',
+    },
+    saveProductModalBtn: {
+      backgroundColor: isDark ? accent : '#212121',
+      borderRadius: 14,
+      paddingVertical: 13,
+      alignItems: 'center',
+      marginTop: 16,
+      marginBottom: 20,
+    },
+    saveProductModalBtnText: {
+      color: isDark ? '#121212' : '#FFFFFF',
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    orderDetailSub: {
+      fontSize: 11,
+      color: textSub,
+      marginBottom: 10,
+    },
+    invoiceSection: {
+      backgroundColor: isDark ? '#262626' : '#F8F7F3',
+      borderRadius: 12,
+      padding: 10,
+      marginBottom: 10,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    invoiceSectionTitle: {
+      fontSize: 11,
+      fontWeight: '900',
+      color: textMain,
+      marginBottom: 6,
+    },
+    itemDetailRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: 4,
+    },
+    itemDetailName: {
+      fontSize: 10,
+      color: textMain,
+    },
+    itemDetailPrice: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: accent,
+    },
+    invoiceDetailText: {
+      fontSize: 10,
+      color: textSub,
+      marginBottom: 2,
+    },
+    invoiceDetailTextBold: {
+      fontSize: 11,
+      fontWeight: '900',
+      color: textMain,
+      marginTop: 4,
+    },
+    closeDetailBtn: {
+      backgroundColor: isDark ? accent : '#212121',
+      borderRadius: 12,
+      paddingVertical: 12,
+      alignItems: 'center',
+      marginTop: 10,
+      marginBottom: 20,
+    },
+    closeDetailBtnText: {
+      color: isDark ? '#121212' : '#FFFFFF',
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    emptyState: {
+      alignItems: 'center',
+      paddingVertical: 40,
+    },
+    emptyTitle: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: textSub,
+    },
+  });
 };

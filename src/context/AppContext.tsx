@@ -62,6 +62,7 @@ interface AppContextType {
       accountHolder: string;
     };
     senderName?: string;
+    paymentScreenshot?: string;
   }) => OrderItem;
   reorder: (orderId: string) => boolean;
   setCurrency: (currency: CurrencyCode) => void;
@@ -816,6 +817,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       accountHolder: string;
     };
     senderName?: string;
+    paymentScreenshot?: string;
   }): OrderItem => {
     const newOrderId = `order-${Date.now()}`;
     const trackingNum =
@@ -879,6 +881,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       paymentMethod: orderPayload.paymentMethod,
       bankAccount: orderPayload.bankAccount,
       senderName: orderPayload.senderName,
+      paymentScreenshot: orderPayload.paymentScreenshot,
       trackingNumber: `AWB${Math.floor(100000000 + Math.random() * 900000000)}`,
       timeline: [
         {

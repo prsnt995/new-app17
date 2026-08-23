@@ -15,6 +15,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useApp } from '@/context/AppContext';
 import { BottomNav } from '@/components/BottomNav';
+import { BankTransferCard } from '@/components/BankTransferCard';
+import { BankAccountInfo, getRandomBankAccount } from '@/data/mockData';
 import { OrderItem } from '@/types';
 
 export default function CartScreen() {
@@ -49,7 +51,10 @@ export default function CartScreen() {
   const [selectedAddressId, setSelectedAddressId] = useState(
     user.savedAddresses[0]?.id || ''
   );
-  const [paymentMethod, setPaymentMethod] = useState('Kakao Pay');
+  const [paymentMethod, setPaymentMethod] = useState('Bank Transfer');
+  const [selectedBank, setSelectedBank] = useState<BankAccountInfo>(() => getRandomBankAccount());
+  const [senderName, setSenderName] = useState(user?.name || 'PARSHANT');
+  const [paymentScreenshot, setPaymentScreenshot] = useState<string | null>(null);
   const [isSuccessModalVisible, setIsSuccessModalVisible] = useState(false);
   const [createdOrderData, setCreatedOrderData] = useState<OrderItem | null>(null);
 
@@ -84,7 +89,14 @@ export default function CartScreen() {
       destinationCity: selectedAddress.city,
       destinationCountry: selectedAddress.country === 'Nepal' ? 'Nepal' : 'India',
       shippingMethod,
-      paymentMethod,
+      paymentMethod: paymentMethod === 'Bank Transfer' ? `Bank Transfer (${selectedBank.bankNameKr})` : paymentMethod,
+      bankAccount: paymentMethod === 'Bank Transfer' ? {
+        bankName: `${selectedBank.bankName} (${selectedBank.bankNameKr})`,
+        accountNumber: selectedBank.accountNumber,
+        accountHolder: selectedBank.accountHolder,
+      } : undefined,
+      senderName: paymentMethod === 'Bank Transfer' ? senderName : undefined,
+      paymentScreenshot: paymentMethod === 'Bank Transfer' ? (paymentScreenshot || undefined) : undefined,
       recipient: {
         name: selectedAddress.recipientName,
         phone: selectedAddress.phone,
@@ -454,6 +466,7 @@ export default function CartScreen() {
 
                 <View style={styles.paymentGrid}>
                   {[
+                    { id: 'Bank Transfer', label: 'Bank Transfer (계좌이체) 🏦', icon: '🏦' },
                     { id: 'Kakao Pay', label: 'Kakao Pay 🇰🇷', icon: '🟡' },
                     { id: 'Credit Card', label: 'Cards (Visa/MC) 💳', icon: '💳' },
                     { id: 'UPI India', label: 'UPI / GPay (India) 🇮🇳', icon: '⚡' },
@@ -484,6 +497,18 @@ export default function CartScreen() {
                     );
                   })}
                 </View>
+
+                {paymentMethod === 'Bank Transfer' && (
+                  <BankTransferCard
+                    selectedBank={selectedBank}
+                    onSelectBank={setSelectedBank}
+                    senderName={senderName}
+                    onChangeSenderName={setSenderName}
+                    paymentScreenshot={paymentScreenshot}
+                    onSelectScreenshot={setPaymentScreenshot}
+                    isDarkMode={isDarkMode}
+                  />
+                )}
               </View>
 
               {/* BILL SUMMARY */}

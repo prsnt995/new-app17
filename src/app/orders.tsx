@@ -578,10 +578,29 @@ export default function OrdersScreen() {
                   ))}
 
                   <View style={styles.modalTotalRow}>
-                    <Text style={styles.modalTotalLabel}>Total Paid</Text>
+                    <Text style={styles.modalTotalLabel}>Total Amount</Text>
                     <Text style={styles.modalTotalVal}>
                       {formatPrice(selectedProductOrder.totalKRW)}
                     </Text>
+                  </View>
+
+                  {/* BANK TRANSFER & SCREENSHOT DETAILS */}
+                  <View style={{ marginTop: 14, padding: 12, borderRadius: 12, backgroundColor: isDarkMode ? '#262626' : '#F8F7F3', borderWidth: 1, borderColor: isDarkMode ? '#333' : '#EFEBE4' }}>
+                    <Text style={{ fontSize: 11, fontWeight: '900', color: isDarkMode ? '#FFF' : '#212121', marginBottom: 4 }}>💳 Payment & Transfer Details</Text>
+                    <Text style={{ fontSize: 10, color: isDarkMode ? '#A0A0A0' : '#706D65' }}>Method: {selectedProductOrder.paymentMethod}</Text>
+                    {selectedProductOrder.bankAccount && (
+                      <Text style={{ fontSize: 10, color: isDarkMode ? '#A0A0A0' : '#706D65', marginTop: 2 }}>
+                        Bank: {selectedProductOrder.bankAccount.bankName} • Account: {selectedProductOrder.bankAccount.accountNumber} ({selectedProductOrder.bankAccount.accountHolder})
+                      </Text>
+                    )}
+                    {selectedProductOrder.paymentScreenshot ? (
+                      <View style={{ marginTop: 8 }}>
+                        <Text style={{ fontSize: 10, fontWeight: '800', color: '#2E7D32', marginBottom: 4 }}>✓ Payment Screenshot Attached</Text>
+                        <Image source={{ uri: selectedProductOrder.paymentScreenshot }} style={{ width: 80, height: 80, borderRadius: 8 }} />
+                      </View>
+                    ) : (
+                      <Text style={{ fontSize: 10, color: '#FFA000', marginTop: 4 }}>⚠️ Screenshot Not Attached</Text>
+                    )}
                   </View>
                 </ScrollView>
               </View>

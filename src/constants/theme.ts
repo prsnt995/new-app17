@@ -41,7 +41,7 @@ export const getThemeColors = (isDark: boolean) => {
     borderStrong: isDark ? '#444444' : '#E0DDD5',
     accent: isDark ? '#D4AF37' : '#C88D2B',
     accentLight: isDark ? '#2D271E' : '#FFF9ED',
-    accentBorder: isDark ? '#4D3B18' : '#F3E1BA',
+    accentBorder: isDark ? '#654c1cff' : '#F3E1BA',
     badgeBg: isDark ? '#2A2A2A' : 'rgba(255, 255, 255, 0.92)',
     inputBg: isDark ? '#262626' : '#FFFFFF',
     inputBorder: isDark ? '#3A3A3A' : '#E0DDD5',

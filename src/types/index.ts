@@ -82,12 +82,13 @@ export interface OrderItem {
     accountHolder: string;
   };
   senderName?: string;
+  paymentScreenshot?: string;
 }
 
 export interface Address {
   id: string;
   title: string;
-  type: 'HOME' | 'OFFICE' | 'FAMILY' | 'OTHER' | 'HUB';
+  type: 'HOME' | 'OFFICE' | 'FAMILY' | 'OTHER' | 'PARCEL';
   recipientName: string;
   phone: string;
   fullAddress: string;

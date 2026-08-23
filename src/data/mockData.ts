@@ -673,6 +673,60 @@ export const SWEET_CATEGORIES = [
   { id: 'festive', title: 'Nepali Lakhamari & Sel Roti', icon: '🌾' },
 ];
 
+export interface BankAccountInfo {
+  id: string;
+  bankName: string;
+  bankNameKr: string;
+  accountNumber: string;
+  accountHolder: string;
+  logo: string;
+  color: string;
+}
+
+export const KOREA_BANK_ACCOUNTS: BankAccountInfo[] = [
+  {
+    id: 'woori',
+    bankName: 'Woori Bank',
+    bankNameKr: '우리은행',
+    accountNumber: '1002364650197',
+    accountHolder: 'PARSHANT',
+    logo: '🔵',
+    color: '#0067AC',
+  },
+  {
+    id: 'kb',
+    bankName: 'KB Kookmin Bank',
+    bankNameKr: '국민은행',
+    accountNumber: '80640200121099',
+    accountHolder: 'PARSHANT',
+    logo: '🟡',
+    color: '#F4B000',
+  },
+  {
+    id: 'shinhan',
+    bankName: 'Shinhan Bank',
+    bankNameKr: '신한은행',
+    accountNumber: '110623385560',
+    accountHolder: 'PARSHANT',
+    logo: '🔷',
+    color: '#0046FF',
+  },
+  {
+    id: 'toss',
+    bankName: 'Toss Bank',
+    bankNameKr: '토스뱅크',
+    accountNumber: '1002-7078-9681',
+    accountHolder: 'PARSHANT',
+    logo: '⚡',
+    color: '#0052F5',
+  },
+];
+
+export function getRandomBankAccount(): BankAccountInfo {
+  const randomIndex = Math.floor(Math.random() * KOREA_BANK_ACCOUNTS.length);
+  return KOREA_BANK_ACCOUNTS[randomIndex];
+}
+
 export const INITIAL_SAVED_ADDRESSES: Address[] = [
   {
     id: 'addr-korea',

@@ -15,6 +15,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useApp } from '@/context/AppContext';
 import { BottomNav } from '@/components/BottomNav';
+import { BankTransferCard } from '@/components/BankTransferCard';
+import { BankAccountInfo, getRandomBankAccount } from '@/data/mockData';
 import { OrderItem } from '@/types';
 
 interface ParcelItem {
@@ -177,6 +179,9 @@ export default function SendParcelScreen() {
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
   const [bookedOrder, setBookedOrder] = useState<OrderItem | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedBank, setSelectedBank] = useState<BankAccountInfo>(() => getRandomBankAccount());
+  const [senderName, setSenderName] = useState(user?.name || 'PARSHANT');
+  const [paymentScreenshot, setPaymentScreenshot] = useState<string | null>(null);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -246,7 +251,14 @@ export default function SendParcelScreen() {
       destinationCity: recipientCity,
       destinationCountry,
       shippingMethod: 'Express',
-      paymentMethod: 'Direct Bank Transfer',
+      paymentMethod: `Direct Bank Transfer (${selectedBank.bankNameKr})`,
+      bankAccount: {
+        bankName: `${selectedBank.bankName} (${selectedBank.bankNameKr})`,
+        accountNumber: selectedBank.accountNumber,
+        accountHolder: selectedBank.accountHolder,
+      },
+      senderName: senderName || user.name,
+      paymentScreenshot: paymentScreenshot || undefined,
       recipient: {
         name: recipientName,
         phone: recipientPhone,
@@ -750,27 +762,16 @@ export default function SendParcelScreen() {
             </View>
           </View>
 
-          {/* SIMPLIFIED PAYMENT CHOICE: DIRECT BANK TRANSFER */}
-          <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Payment Method</Text>
-
-            <View style={styles.paymentOptionsContainer}>
-              <View style={[styles.paymentChoiceCard, styles.paymentChoiceCardActive]}>
-                <View style={styles.paymentChoiceRadio}>
-                  <View style={styles.paymentChoiceRadioDot} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.paymentChoiceTitle}>
-                    Direct Bank Transfer
-                  </Text>
-                  <Text style={styles.paymentChoiceDesc}>
-                    국민/신한은행 계좌이체
-                  </Text>
-                </View>
-                <Text style={styles.paymentChoiceCheck}>✓</Text>
-              </View>
-            </View>
-          </View>
+          {/* BANK TRANSFER & SCREENSHOT UPLOADER */}
+          <BankTransferCard
+            selectedBank={selectedBank}
+            onSelectBank={setSelectedBank}
+            senderName={senderName}
+            onChangeSenderName={setSenderName}
+            paymentScreenshot={paymentScreenshot}
+            onSelectScreenshot={setPaymentScreenshot}
+            isDarkMode={false}
+          />
 
           {/* PRICE QUOTE BREAKDOWN */}
           <View style={styles.billSummaryCard}>
