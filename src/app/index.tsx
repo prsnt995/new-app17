@@ -227,289 +227,114 @@ export default function HomeScreen() {
             )}
           </View>
 
-          {/* COURIER & GROCERIES PROMO VIDEO AD BANNER */}
-          <TouchableOpacity
-            style={[styles.clothingAdBanner, { marginTop: 16, borderColor: '#C88D2B' }]}
-            activeOpacity={0.92}
-            onPress={() => router.push('/send-parcel')}
-          >
-            {/* AD HEADER BAR */}
-            <View style={styles.adHeaderBar}>
-              <View style={styles.adLiveBadge}>
-                <View
-                  style={[
-                    styles.livePulseDot,
-                    { backgroundColor: '#4CAF50' },
-                    !isCourierVideoPlaying && { backgroundColor: '#888' },
-                  ]}
-                />
-                <Text style={styles.adLiveText}>
-                  {isCourierVideoPlaying ? '✈️ DIRECT AIR CARGO SPOTLIGHT' : '⏸ PAUSED'}
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                style={styles.adPlayToggle}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  setIsCourierVideoPlaying((prev) => !prev);
-                }}
-              >
-                <Text style={styles.adPlayToggleText}>
-                  {isCourierVideoPlaying ? '⏸ Pause' : '▶ Play Preview'}
-                </Text>
-              </TouchableOpacity>
+          {/* THREE FEATURED SIDE BOXES CAROUSEL */}
+          <View style={styles.threeSideBoxesHeaderRow}>
+            <Text style={styles.threeSideBoxesHeaderTitle}>✨ Featured Highlights</Text>
+            <View style={styles.threeSideBoxesBadge}>
+              <Text style={styles.threeSideBoxesBadgeText}>3 SPECIAL OFFERS</Text>
             </View>
+          </View>
 
-            {/* MEDIA WRAPPER WITH AIRPLANE FLYING FROM KOREA TO INDIA & NEPAL */}
-            <View style={[styles.adMediaWrapper, { height: 185 }]}>
-              {!courierImgError ? (
-                <Image
-                  source={{
-                    uri: isCourierVideoPlaying
-                      ? 'https://images.unsplash.com/photo-1524492412937-b28074a5d7da?auto=format&fit=crop&q=80&w=800'
-                      : 'https://images.unsplash.com/photo-1544735716-392fe2489ffa?auto=format&fit=crop&q=80&w=800',
-                  }}
-                  style={styles.adMediaImage}
-                  onError={() => setCourierImgError(true)}
-                />
-              ) : (
-                <View style={[styles.adMediaImage, { backgroundColor: '#1A241A', justifyContent: 'center', alignItems: 'center' }]}>
-                  <Text style={{ fontSize: 36 }}>🇰🇷 ✈️ 🇮🇳 🇳🇵</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.threeSideBoxesScrollContainer}
+            decelerationRate="fast"
+            snapToInterval={294}
+          >
+            {/* SIDE BOX 1: COURIER & AIR CARGO */}
+            <TouchableOpacity
+              style={[styles.sideBoxCard, { borderColor: '#C88D2B' }]}
+              activeOpacity={0.92}
+              onPress={() => router.push('/send-parcel')}
+            >
+              <Image
+                source={{
+                  uri: 'https://images.unsplash.com/photo-1524492412937-b28074a5d7da?auto=format&fit=crop&q=80&w=800',
+                }}
+                style={styles.sideBoxMediaImage}
+              />
+              <View style={styles.sideBoxGradientOverlay}>
+                <View style={[styles.sideBoxTagPill, { backgroundColor: '#C88D2B' }]}>
+                  <Text style={styles.sideBoxTagText}>AIR CARGO ✈️</Text>
                 </View>
-              )}
-
-              {/* LIVE AIRPLANE FLIGHT ROUTE TRACKER (KOREA ➔ INDIA & NEPAL) */}
-              <View style={styles.flightRouteOverlay}>
-                <View style={styles.flightOriginBadge}>
-                  <Text style={styles.flightFlagText}>🇰🇷 Seoul</Text>
-                </View>
-
-                <View style={styles.flightTrackLineContainer}>
-                  <View style={styles.flightTrackDottedLine} />
-                  <View style={[styles.airplaneContainer, { left: `${flightPos}%` }]}>
-                    <Text style={styles.airplaneEmoji}>✈️</Text>
-                  </View>
-                </View>
-
-                <View style={styles.flightDestBadgeGroup}>
-                  <View style={styles.flightDestBadge}>
-                    <Text style={styles.flightFlagText}>🇮🇳 India</Text>
-                  </View>
-                  <View style={styles.flightDestBadge}>
-                    <Text style={styles.flightFlagText}>🇳🇵 Nepal</Text>
-                  </View>
-                </View>
-              </View>
-
-              {/* OVERLAY GRADIENT CONTENT */}
-              <View style={styles.adGradientOverlay}>
-                <View style={[styles.adTagPill, { backgroundColor: '#C88D2B' }]}>
-                  <Text style={styles.adTagPillText}>{t('heroBadge')}</Text>
-                </View>
-
-                <Text style={styles.adMainTitle}>{t('heroTitle')}</Text>
-                <Text style={styles.adSubtitle}>{t('heroSubtitle')}</Text>
-
-                <View style={styles.shopClothesActionRow}>
+                <Text style={styles.sideBoxMainTitle}>Send Parcel to Home</Text>
+                <Text style={styles.sideBoxSubtitle}>Direct Express Air Korea ➔ India & Nepal</Text>
+                <View style={styles.sideBoxActionRow}>
                   <TouchableOpacity
-                    style={[styles.shopClothesButton, { backgroundColor: '#C88D2B' }]}
+                    style={[styles.sideBoxButton, { backgroundColor: '#C88D2B' }]}
                     activeOpacity={0.85}
                     onPress={() => router.push('/send-parcel')}
                   >
-                    <Text style={styles.shopClothesBtnText}>{t('sendParcelBtn')}</Text>
-                    <Text style={styles.shopClothesBtnArrow}>→</Text>
+                    <Text style={styles.sideBoxBtnText}>Send Now ✈️</Text>
                   </TouchableOpacity>
-
-                  <Text style={styles.adTapHint}>Express Cargo Flight NM-808 ✈️</Text>
+                  <Text style={styles.sideBoxBadgeMini}>3-5 Days</Text>
                 </View>
               </View>
+            </TouchableOpacity>
 
-              {/* PROGRESS BAR TRACK */}
-              <View style={styles.adProgressBarTrack}>
-                <View
-                  style={[
-                    styles.adProgressBarActive,
-                    { backgroundColor: '#C88D2B', width: `${flightPos + 10}%` },
-                  ]}
-                />
-              </View>
-            </View>
-          </TouchableOpacity>
-
-          {/* FRESH SWEETS FESTIVAL PROMO BANNER */}
-          <TouchableOpacity
-            style={[styles.clothingAdBanner, { borderColor: '#D97706' }]}
-            activeOpacity={0.92}
-            onPress={() => setSelectedCategory('Sweets')}
-          >
-            {/* AD HEADER BAR */}
-            <View style={styles.adHeaderBar}>
-              <View style={styles.adLiveBadge}>
-                <View
-                  style={[
-                    styles.livePulseDot,
-                    { backgroundColor: '#F59E0B' },
-                    !isVideoPlaying && { backgroundColor: '#888' },
-                  ]}
-                />
-                <Text style={styles.adLiveText}>
-                  {isVideoPlaying ? '🎉 FESTIVAL SPECIAL: FRESH SWEETS' : '⏸ PAUSED'}
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                style={styles.adPlayToggle}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  setIsVideoPlaying((prev) => !prev);
+            {/* SIDE BOX 2: FRESH SWEETS */}
+            <TouchableOpacity
+              style={[styles.sideBoxCard, { borderColor: '#D97706' }]}
+              activeOpacity={0.92}
+              onPress={() => setSelectedCategory('Sweets')}
+            >
+              <Image
+                source={{
+                  uri: 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&q=80&w=800',
                 }}
-              >
-                <Text style={styles.adPlayToggleText}>
-                  {isVideoPlaying ? '⏸ Pause' : '▶ Play Preview'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* MEDIA WRAPPER */}
-            <View style={styles.adMediaWrapper}>
-              {!clothesImgError ? (
-                <Image
-                  source={{
-                    uri: isVideoPlaying
-                      ? 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&q=80&w=800'
-                      : 'https://images.unsplash.com/photo-1541781774459-bb2af2f05b55?auto=format&fit=crop&q=80&w=800',
-                  }}
-                  style={styles.adMediaImage}
-                  onError={() => setClothesImgError(true)}
-                />
-              ) : (
-                <View style={[styles.adMediaImage, { backgroundColor: '#2B1A0A', justifyContent: 'center', alignItems: 'center' }]}>
-                  <Text style={{ fontSize: 36 }}>🍬 🪔 🍨</Text>
+                style={styles.sideBoxMediaImage}
+              />
+              <View style={styles.sideBoxGradientOverlay}>
+                <View style={[styles.sideBoxTagPill, { backgroundColor: '#D97706' }]}>
+                  <Text style={styles.sideBoxTagText}>FRESH MITHAI 🍬</Text>
                 </View>
-              )}
-
-              {/* OVERLAY GRADIENT CONTENT */}
-              <View style={styles.adGradientOverlay}>
-                <View style={[styles.adTagPill, { backgroundColor: '#D97706' }]}>
-                  <Text style={styles.adTagPillText}>FRESH & AUTHENTIC MITHAI 🍬</Text>
-                </View>
-
-                <Text style={styles.adMainTitle}>Fresh Festival Sweets & Mithai</Text>
-                <Text style={styles.adSubtitle}>Desi Ghee Gulab Jamun, Kaju Katli, Rasgulla & Nepali Lakhamari</Text>
-
-                <View style={styles.shopClothesActionRow}>
+                <Text style={styles.sideBoxMainTitle}>Fresh Sweets & Mithai</Text>
+                <Text style={styles.sideBoxSubtitle}>Gulab Jamun, Kaju Katli & Lakhamari</Text>
+                <View style={styles.sideBoxActionRow}>
                   <TouchableOpacity
-                    style={[styles.shopClothesButton, { backgroundColor: '#D97706' }]}
+                    style={[styles.sideBoxButton, { backgroundColor: '#D97706' }]}
                     activeOpacity={0.85}
                     onPress={() => setSelectedCategory('Sweets')}
                   >
-                    <Text style={styles.shopClothesBtnText}>Shop Sweets 🍬</Text>
-                    <Text style={styles.shopClothesBtnArrow}>→</Text>
+                    <Text style={styles.sideBoxBtnText}>Shop Sweets 🍬</Text>
                   </TouchableOpacity>
-
-                  <Text style={styles.adTapHint}>Fresh Batch Delivered Daily 🍬✨</Text>
+                  <Text style={styles.sideBoxBadgeMini}>Fresh Daily</Text>
                 </View>
               </View>
+            </TouchableOpacity>
 
-              {/* PROGRESS BAR TRACK */}
-              <View style={styles.adProgressBarTrack}>
-                <View
-                  style={[
-                    styles.adProgressBarActive,
-                    { backgroundColor: '#D97706', width: isVideoPlaying ? '90%' : '35%' },
-                  ]}
-                />
-              </View>
-            </View>
-          </TouchableOpacity>
-
-          {/* NEW FESTIVAL JEWELRY & ORNAMENTS PROMO BANNER */}
-          <TouchableOpacity
-            style={[styles.clothingAdBanner, { marginTop: 12, borderColor: '#B45309' }]}
-            activeOpacity={0.92}
-            onPress={() => setSelectedCategory('Jewelry')}
-          >
-            {/* AD HEADER BAR */}
-            <View style={styles.adHeaderBar}>
-              <View style={styles.adLiveBadge}>
-                <View
-                  style={[
-                    styles.livePulseDot,
-                    { backgroundColor: '#F59E0B' },
-                    !isPerfumeVideoPlaying && { backgroundColor: '#888' },
-                  ]}
-                />
-                <Text style={styles.adLiveText}>
-                  {isPerfumeVideoPlaying ? '✨ NEW ARRIVALS: FESTIVAL JEWELRY' : '⏸ PAUSED'}
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                style={styles.adPlayToggle}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  setIsPerfumeVideoPlaying((prev) => !prev);
+            {/* SIDE BOX 3: FESTIVAL JEWELRY */}
+            <TouchableOpacity
+              style={[styles.sideBoxCard, { borderColor: '#B45309' }]}
+              activeOpacity={0.92}
+              onPress={() => setSelectedCategory('Jewelry')}
+            >
+              <Image
+                source={{
+                  uri: 'https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&q=80&w=800',
                 }}
-              >
-                <Text style={styles.adPlayToggleText}>
-                  {isPerfumeVideoPlaying ? '⏸ Pause' : '▶ Play Preview'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* MEDIA WRAPPER */}
-            <View style={styles.adMediaWrapper}>
-              {!perfumeImgError ? (
-                <Image
-                  source={{
-                    uri: isPerfumeVideoPlaying
-                      ? 'https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&q=80&w=800'
-                      : 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&q=80&w=800',
-                  }}
-                  style={styles.adMediaImage}
-                  onError={() => setPerfumeImgError(true)}
-                />
-              ) : (
-                <View style={[styles.adMediaImage, { backgroundColor: '#2C1D0F', justifyContent: 'center', alignItems: 'center' }]}>
-                  <Text style={{ fontSize: 36 }}>💎 👑 📿</Text>
+                style={styles.sideBoxMediaImage}
+              />
+              <View style={styles.sideBoxGradientOverlay}>
+                <View style={[styles.sideBoxTagPill, { backgroundColor: '#B45309' }]}>
+                  <Text style={styles.sideBoxTagText}>NEW ARRIVALS 💎</Text>
                 </View>
-              )}
-
-              {/* OVERLAY GRADIENT CONTENT */}
-              <View style={styles.adGradientOverlay}>
-                <View style={[styles.adTagPill, { backgroundColor: '#B45309' }]}>
-                  <Text style={styles.adTagPillText}>ROYAL KUNDAN & GOLD PLATED 💎</Text>
-                </View>
-
-                <Text style={styles.adMainTitle}>Royal Festival Jewelry Collection</Text>
-                <Text style={styles.adSubtitle}>24K Gold Kundan Chokers, Temple Jhumkas & Traditional Nepali Tilhari</Text>
-
-                <View style={styles.shopClothesActionRow}>
+                <Text style={styles.sideBoxMainTitle}>Royal Festival Jewelry</Text>
+                <Text style={styles.sideBoxSubtitle}>24K Kundan Chokers & Tilhari Sets</Text>
+                <View style={styles.sideBoxActionRow}>
                   <TouchableOpacity
-                    style={[styles.shopClothesButton, { backgroundColor: '#B45309' }]}
+                    style={[styles.sideBoxButton, { backgroundColor: '#B45309' }]}
                     activeOpacity={0.85}
                     onPress={() => setSelectedCategory('Jewelry')}
                   >
-                    <Text style={styles.shopClothesBtnText}>Explore Jewelry 💎</Text>
-                    <Text style={styles.shopClothesBtnArrow}>→</Text>
+                    <Text style={styles.sideBoxBtnText}>Explore Jewelry 💎</Text>
                   </TouchableOpacity>
-
-                  <Text style={styles.adTapHint}>Browse New Arrival Jewelry 💎✨</Text>
+                  <Text style={styles.sideBoxBadgeMini}>New In</Text>
                 </View>
               </View>
-
-              {/* PROGRESS BAR TRACK */}
-              <View style={styles.adProgressBarTrack}>
-                <View
-                  style={[
-                    styles.adProgressBarActive,
-                    { backgroundColor: '#B45309', width: isPerfumeVideoPlaying ? '85%' : '40%' },
-                  ]}
-                />
-              </View>
-            </View>
-          </TouchableOpacity>
+            </TouchableOpacity>
+          </ScrollView>
 
           {/* QUICK VALUE PROPS */}
           <View style={styles.benefitRow}>
@@ -1422,6 +1247,113 @@ const getStyles = (isDark: boolean) => {
     right: 0,
     backgroundColor: 'rgba(0,0,0,0.68)',
     padding: 12,
+  },
+  // ── Three Side Boxes Carousel ──
+  threeSideBoxesHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 18,
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
+  threeSideBoxesHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: isDark ? '#F3F4F6' : '#1F2937',
+  },
+  threeSideBoxesBadge: {
+    backgroundColor: isDark ? '#374151' : '#E5E7EB',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  threeSideBoxesBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: isDark ? '#F3F4F6' : '#374151',
+  },
+  threeSideBoxesScrollContainer: {
+    paddingRight: 16,
+    gap: 14,
+  },
+  sideBoxCard: {
+    width: 280,
+    height: 200,
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    backgroundColor: isDark ? '#1F2937' : '#F9FAFB',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+  },
+  sideBoxMediaImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  sideBoxGradientOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    top: 0,
+    backgroundColor: 'rgba(0,0,0,0.52)',
+    justifyContent: 'flex-end',
+    padding: 14,
+  },
+  sideBoxTagPill: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  sideBoxTagText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  sideBoxMainTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+    lineHeight: 20,
+  },
+  sideBoxSubtitle: {
+    color: '#E5E7EB',
+    fontSize: 11,
+    marginTop: 3,
+    lineHeight: 15,
+  },
+  sideBoxActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+  },
+  sideBoxButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  sideBoxBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  sideBoxBadgeMini: {
+    color: '#F3F4F6',
+    fontSize: 10,
+    fontWeight: '600',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
   },
   adTagPill: {
     backgroundColor: accent,
