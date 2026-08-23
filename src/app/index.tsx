@@ -19,12 +19,16 @@ import { CurrencyCode, LanguageCode } from '@/types';
 
 const categories = [
   { name: 'All', icon: '✨', count: 'All items' },
+  { name: 'Jewelry', icon: '💎', count: 'Gold & Kundan' },
+  { name: 'Sweets', icon: '🍬', count: 'Mithai & Desserts' },
   { name: 'Rice', icon: '🍚', count: 'Basmati & Sona' },
   { name: 'Atta', icon: '🌾', count: 'Chakki Fresh' },
   { name: 'Masala', icon: '🌶️', count: 'Spices & Herbs' },
   { name: 'Dal', icon: '🫘', count: 'Pulses & Lentils' },
-  { name: 'Snacks', icon: '🍿', count: 'Namkeen & Sweets' },
+  { name: 'Snacks', icon: '🍿', count: 'Namkeen & Chips' },
   { name: 'Drinks', icon: '🥤', count: 'Tea & Beverages' },
+  { name: 'Clothes', icon: '👗', count: 'Sarees & Apparel' },
+  { name: 'Perfumes', icon: '🪔', count: 'Attar & Oils' },
 ];
 
 export default function HomeScreen() {
@@ -333,11 +337,11 @@ export default function HomeScreen() {
             </View>
           </TouchableOpacity>
 
-          {/* CLOTHES PROMO VIDEO AD BANNER */}
+          {/* FRESH SWEETS FESTIVAL PROMO BANNER */}
           <TouchableOpacity
-            style={styles.clothingAdBanner}
+            style={[styles.clothingAdBanner, { borderColor: '#D97706' }]}
             activeOpacity={0.92}
-            onPress={() => router.push('/clothes')}
+            onPress={() => setSelectedCategory('Sweets')}
           >
             {/* AD HEADER BAR */}
             <View style={styles.adHeaderBar}>
@@ -345,11 +349,12 @@ export default function HomeScreen() {
                 <View
                   style={[
                     styles.livePulseDot,
+                    { backgroundColor: '#F59E0B' },
                     !isVideoPlaying && { backgroundColor: '#888' },
                   ]}
                 />
                 <Text style={styles.adLiveText}>
-                  {isVideoPlaying ? '🔴 FEATURED VIDEO AD' : '⏸ PAUSED'}
+                  {isVideoPlaying ? '🎉 FESTIVAL SPECIAL: FRESH SWEETS' : '⏸ PAUSED'}
                 </Text>
               </View>
 
@@ -372,38 +377,38 @@ export default function HomeScreen() {
                 <Image
                   source={{
                     uri: isVideoPlaying
-                      ? 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?auto=format&fit=crop&q=80&w=800'
-                      : 'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?auto=format&fit=crop&q=80&w=800',
+                      ? 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&q=80&w=800'
+                      : 'https://images.unsplash.com/photo-1541781774459-bb2af2f05b55?auto=format&fit=crop&q=80&w=800',
                   }}
                   style={styles.adMediaImage}
                   onError={() => setClothesImgError(true)}
                 />
               ) : (
-                <View style={[styles.adMediaImage, { backgroundColor: '#2B231A', justifyContent: 'center', alignItems: 'center' }]}>
-                  <Text style={{ fontSize: 36 }}>👗 🇮🇳 🇳🇵</Text>
+                <View style={[styles.adMediaImage, { backgroundColor: '#2B1A0A', justifyContent: 'center', alignItems: 'center' }]}>
+                  <Text style={{ fontSize: 36 }}>🍬 🪔 🍨</Text>
                 </View>
               )}
 
               {/* OVERLAY GRADIENT CONTENT */}
               <View style={styles.adGradientOverlay}>
-                <View style={styles.adTagPill}>
-                  <Text style={styles.adTagPillText}>{t('fashionFromHome')}</Text>
+                <View style={[styles.adTagPill, { backgroundColor: '#D97706' }]}>
+                  <Text style={styles.adTagPillText}>FRESH & AUTHENTIC MITHAI 🍬</Text>
                 </View>
 
-                <Text style={styles.adMainTitle}>{t('fashionSubtitle')}</Text>
-                <Text style={styles.adSubtitle}>{t('fashionDesc')}</Text>
+                <Text style={styles.adMainTitle}>Fresh Festival Sweets & Mithai</Text>
+                <Text style={styles.adSubtitle}>Desi Ghee Gulab Jamun, Kaju Katli, Rasgulla & Nepali Lakhamari</Text>
 
                 <View style={styles.shopClothesActionRow}>
                   <TouchableOpacity
-                    style={styles.shopClothesButton}
+                    style={[styles.shopClothesButton, { backgroundColor: '#D97706' }]}
                     activeOpacity={0.85}
-                    onPress={() => router.push('/clothes')}
+                    onPress={() => setSelectedCategory('Sweets')}
                   >
-                    <Text style={styles.shopClothesBtnText}>{t('shopNow')}</Text>
+                    <Text style={styles.shopClothesBtnText}>Shop Sweets 🍬</Text>
                     <Text style={styles.shopClothesBtnArrow}>→</Text>
                   </TouchableOpacity>
 
-                  <Text style={styles.adTapHint}>Tap to view collection 👗</Text>
+                  <Text style={styles.adTapHint}>Fresh Batch Delivered Daily 🍬✨</Text>
                 </View>
               </View>
 
@@ -412,18 +417,18 @@ export default function HomeScreen() {
                 <View
                   style={[
                     styles.adProgressBarActive,
-                    !isVideoPlaying && { width: '30%', backgroundColor: '#888' },
+                    { backgroundColor: '#D97706', width: isVideoPlaying ? '90%' : '35%' },
                   ]}
                 />
               </View>
             </View>
           </TouchableOpacity>
 
-          {/* PERFUMES PROMO VIDEO AD BANNER */}
+          {/* NEW FESTIVAL JEWELRY & ORNAMENTS PROMO BANNER */}
           <TouchableOpacity
-            style={[styles.clothingAdBanner, { marginTop: 12, borderColor: '#4D3B18' }]}
+            style={[styles.clothingAdBanner, { marginTop: 12, borderColor: '#B45309' }]}
             activeOpacity={0.92}
-            onPress={() => router.push('/perfumes')}
+            onPress={() => setSelectedCategory('Jewelry')}
           >
             {/* AD HEADER BAR */}
             <View style={styles.adHeaderBar}>
@@ -431,12 +436,12 @@ export default function HomeScreen() {
                 <View
                   style={[
                     styles.livePulseDot,
-                    { backgroundColor: '#FFB74D' },
+                    { backgroundColor: '#F59E0B' },
                     !isPerfumeVideoPlaying && { backgroundColor: '#888' },
                   ]}
                 />
                 <Text style={styles.adLiveText}>
-                  {isPerfumeVideoPlaying ? '✨ FRAGRANCE SPOTLIGHT' : '⏸ PAUSED'}
+                  {isPerfumeVideoPlaying ? '✨ NEW ARRIVALS: FESTIVAL JEWELRY' : '⏸ PAUSED'}
                 </Text>
               </View>
 
@@ -459,38 +464,38 @@ export default function HomeScreen() {
                 <Image
                   source={{
                     uri: isPerfumeVideoPlaying
-                      ? 'https://images.unsplash.com/photo-1541643600914-78b084683601?auto=format&fit=crop&q=80&w=800'
-                      : 'https://images.unsplash.com/photo-1592945403244-b3fbafd7f539?auto=format&fit=crop&q=80&w=800',
+                      ? 'https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&q=80&w=800'
+                      : 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&q=80&w=800',
                   }}
                   style={styles.adMediaImage}
                   onError={() => setPerfumeImgError(true)}
                 />
               ) : (
-                <View style={[styles.adMediaImage, { backgroundColor: '#2C2016', justifyContent: 'center', alignItems: 'center' }]}>
-                  <Text style={{ fontSize: 36 }}>🧴 ✨ 🌸</Text>
+                <View style={[styles.adMediaImage, { backgroundColor: '#2C1D0F', justifyContent: 'center', alignItems: 'center' }]}>
+                  <Text style={{ fontSize: 36 }}>💎 👑 📿</Text>
                 </View>
               )}
 
               {/* OVERLAY GRADIENT CONTENT */}
               <View style={styles.adGradientOverlay}>
-                <View style={[styles.adTagPill, { backgroundColor: '#B47838' }]}>
-                  <Text style={styles.adTagPillText}>{t('fragranceCollection')}</Text>
+                <View style={[styles.adTagPill, { backgroundColor: '#B45309' }]}>
+                  <Text style={styles.adTagPillText}>ROYAL KUNDAN & GOLD PLATED 💎</Text>
                 </View>
 
-                <Text style={styles.adMainTitle}>{t('fragranceDesc')}</Text>
-                <Text style={styles.adSubtitle}>Indian Attar, Arabic Oud & Korean Perfumes</Text>
+                <Text style={styles.adMainTitle}>Royal Festival Jewelry Collection</Text>
+                <Text style={styles.adSubtitle}>24K Gold Kundan Chokers, Temple Jhumkas & Traditional Nepali Tilhari</Text>
 
                 <View style={styles.shopClothesActionRow}>
                   <TouchableOpacity
-                    style={[styles.shopClothesButton, { backgroundColor: '#B47838' }]}
+                    style={[styles.shopClothesButton, { backgroundColor: '#B45309' }]}
                     activeOpacity={0.85}
-                    onPress={() => router.push('/perfumes')}
+                    onPress={() => setSelectedCategory('Jewelry')}
                   >
-                    <Text style={styles.shopClothesBtnText}>{t('exploreNow')}</Text>
+                    <Text style={styles.shopClothesBtnText}>Explore Jewelry 💎</Text>
                     <Text style={styles.shopClothesBtnArrow}>→</Text>
                   </TouchableOpacity>
 
-                  <Text style={styles.adTapHint}>Explore luxury scents 🧴✨</Text>
+                  <Text style={styles.adTapHint}>Browse New Arrival Jewelry 💎✨</Text>
                 </View>
               </View>
 
@@ -499,7 +504,7 @@ export default function HomeScreen() {
                 <View
                   style={[
                     styles.adProgressBarActive,
-                    { backgroundColor: '#B47838', width: isPerfumeVideoPlaying ? '85%' : '40%' },
+                    { backgroundColor: '#B45309', width: isPerfumeVideoPlaying ? '85%' : '40%' },
                   ]}
                 />
               </View>

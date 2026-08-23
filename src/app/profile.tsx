@@ -1,3 +1,7 @@
+import { BottomNav } from '@/components/BottomNav';
+import { useApp } from '@/context/AppContext';
+import { Address, CurrencyCode, LanguageCode } from '@/types';
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
   Alert,
@@ -13,10 +17,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { useApp } from '@/context/AppContext';
-import { BottomNav } from '@/components/BottomNav';
-import { Address, CurrencyCode, LanguageCode } from '@/types';
 
 const PRESET_AVATARS = [
   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400',
@@ -645,10 +645,10 @@ export default function ProfileScreen() {
                   {language === 'KR'
                     ? '한국어 (Korean)'
                     : language === 'HI'
-                    ? 'हिंदी (Hindi)'
-                    : language === 'NE'
-                    ? 'नेपाली (Nepali)'
-                    : 'English'}
+                      ? 'हिंदी (Hindi)'
+                      : language === 'NE'
+                        ? 'नेपाली (Nepali)'
+                        : 'English'}
                 </Text>
               </View>
               <Text style={styles.menuArrow}>›</Text>
@@ -966,10 +966,10 @@ export default function ProfileScreen() {
                         {typ === 'HOME'
                           ? '🏠 Home'
                           : typ === 'OFFICE'
-                          ? '🏢 Work'
-                          : typ === 'FAMILY'
-                          ? '👨‍👩‍👧 Family'
-                          : '📍 Other'}
+                            ? '🏢 Work'
+                            : typ === 'FAMILY'
+                              ? '👨‍👩‍👧 Family'
+                              : '📍 Other'}
                       </Text>
                     </TouchableOpacity>
                   ))}

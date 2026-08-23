@@ -20,6 +20,8 @@ import { OrderItem, OrderStatus, Product } from '@/types';
 const ADMIN_DEFAULT_PIN = '8064';
 
 const PRODUCT_CATEGORIES = [
+  'Jewelry',
+  'Sweets',
   'Clothes',
   'Perfumes',
   'Rice',
