@@ -89,14 +89,14 @@ export default function CartScreen() {
       destinationCity: selectedAddress.city,
       destinationCountry: selectedAddress.country === 'Nepal' ? 'Nepal' : 'India',
       shippingMethod,
-      paymentMethod: paymentMethod === 'Bank Transfer' ? `Bank Transfer (${selectedBank.bankNameKr})` : paymentMethod,
-      bankAccount: paymentMethod === 'Bank Transfer' ? {
+      paymentMethod: `Direct Bank Transfer (${selectedBank.bankNameKr})`,
+      bankAccount: {
         bankName: `${selectedBank.bankName} (${selectedBank.bankNameKr})`,
         accountNumber: selectedBank.accountNumber,
         accountHolder: selectedBank.accountHolder,
-      } : undefined,
-      senderName: paymentMethod === 'Bank Transfer' ? senderName : undefined,
-      paymentScreenshot: paymentMethod === 'Bank Transfer' ? (paymentScreenshot || undefined) : undefined,
+      },
+      senderName: senderName || user.name,
+      paymentScreenshot: paymentScreenshot || undefined,
       recipient: {
         name: selectedAddress.recipientName,
         phone: selectedAddress.phone,
@@ -460,55 +460,19 @@ export default function CartScreen() {
                 )}
               </View>
 
-              {/* PAYMENT METHOD SELECTOR */}
+              {/* PAYMENT METHOD SECTION - DIRECT BANK TRANSFER ONLY */}
               <View style={styles.section}>
-                <Text style={styles.sectionHeading}>Select Payment Method</Text>
+                <Text style={styles.sectionHeading}>Payment Method</Text>
 
-                <View style={styles.paymentGrid}>
-                  {[
-                    { id: 'Bank Transfer', label: 'Bank Transfer (계좌이체) 🏦', icon: '🏦' },
-                    { id: 'Kakao Pay', label: 'Kakao Pay 🇰🇷', icon: '🟡' },
-                    { id: 'Credit Card', label: 'Cards (Visa/MC) 💳', icon: '💳' },
-                    { id: 'UPI India', label: 'UPI / GPay (India) 🇮🇳', icon: '⚡' },
-                    { id: 'eSewa / Nepal', label: 'eSewa / Khalti (Nepal) 🇳🇵', icon: '🟢' },
-                    { id: 'Cash on Pickup', label: 'Cash at Hub 💵', icon: '🤝' },
-                  ].map((method) => {
-                    const isSelected = paymentMethod === method.id;
-                    return (
-                      <TouchableOpacity
-                        key={method.id}
-                        style={[
-                          styles.paymentCard,
-                          isSelected && styles.paymentCardSelected,
-                        ]}
-                        onPress={() => setPaymentMethod(method.id)}
-                      >
-                        <Text style={styles.paymentIcon}>{method.icon}</Text>
-                        <Text
-                          style={[
-                            styles.paymentLabel,
-                            isSelected && styles.paymentLabelSelected,
-                          ]}
-                        >
-                          {method.label}
-                        </Text>
-                        {isSelected && <Text style={styles.checkMark}>✓</Text>}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-
-                {paymentMethod === 'Bank Transfer' && (
-                  <BankTransferCard
-                    selectedBank={selectedBank}
-                    onSelectBank={setSelectedBank}
-                    senderName={senderName}
-                    onChangeSenderName={setSenderName}
-                    paymentScreenshot={paymentScreenshot}
-                    onSelectScreenshot={setPaymentScreenshot}
-                    isDarkMode={isDarkMode}
-                  />
-                )}
+                <BankTransferCard
+                  selectedBank={selectedBank}
+                  onSelectBank={setSelectedBank}
+                  senderName={senderName}
+                  onChangeSenderName={setSenderName}
+                  paymentScreenshot={paymentScreenshot}
+                  onSelectScreenshot={setPaymentScreenshot}
+                  isDarkMode={isDarkMode}
+                />
               </View>
 
               {/* BILL SUMMARY */}
