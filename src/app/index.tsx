@@ -49,6 +49,7 @@ export default function HomeScreen() {
     t,
     isDarkMode,
     toggleDarkMode,
+    banners,
   } = useApp();
 
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
@@ -117,9 +118,12 @@ export default function HomeScreen() {
   };
 
   const filteredProducts = products.filter((product) => {
+    if (product.isHidden) return false; // Admin-hidden products not shown
     const matchesSearch =
       product.name.toLowerCase().includes(search.toLowerCase()) ||
-      product.category.toLowerCase().includes(search.toLowerCase());
+      product.category.toLowerCase().includes(search.toLowerCase()) ||
+      (product.brand && product.brand.toLowerCase().includes(search.toLowerCase())) ||
+      (product.tags && product.tags.some(t => t.toLowerCase().includes(search.toLowerCase())));
     const matchesCategory =
       selectedCategory === 'All' || product.category.toLowerCase() === selectedCategory.toLowerCase();
     return matchesSearch && matchesCategory;
@@ -158,6 +162,18 @@ export default function HomeScreen() {
             </View>
 
             <View style={styles.headerRight}>
+              {/* GOOGLE LOGIN BUTTON */}
+              <TouchableOpacity
+                style={styles.langButton}
+                activeOpacity={0.85}
+                onPress={() => router.push('/login')}
+              >
+                <Text style={{ fontSize: 13 }}>🌐</Text>
+                <Text style={styles.langButtonText}>
+                  {user?.isLoggedIn ? 'Google Account' : 'Login'}
+                </Text>
+              </TouchableOpacity>
+
               {/* TRANSLATE / LANGUAGE SWITCHER BUTTON */}
               <TouchableOpacity
                 style={styles.langButton}

@@ -8,20 +8,28 @@ export interface Product {
   size: string;
   priceKRW: number;
   oldPriceKRW: number;
+  mrp?: number;
   rating: number;
   reviews: number;
   discount: string;
   image: string;
+  videoUrl?: string;
   weightKg: number;
   origin: string;
   description: string;
   isBestSeller?: boolean;
+  isHidden?: boolean;
+  brand?: string;
+  tags?: string[];
+  stock?: number;
   keywords?: {
     KR?: string[];
     HI?: string[];
     NE?: string[];
     EN?: string[];
   };
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface CartItem {
@@ -32,6 +40,7 @@ export interface CartItem {
 
 export type OrderStatus =
   | 'ORDER_PLACED'
+  | 'PACKED'
   | 'PICKED_UP'
   | 'IN_TRANSIT'
   | 'CUSTOMS_CLEARANCE'
@@ -83,6 +92,10 @@ export interface OrderItem {
   };
   senderName?: string;
   paymentScreenshot?: string;
+  customerUid?: string;
+  customerPushToken?: string;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface Address {
@@ -107,6 +120,8 @@ export interface UserProfile {
   name: string;
   email: string;
   phone: string;
+  phoneCountryCode?: string;
+  phoneNumber?: string;
   avatar: string;
   memberTier: 'Gold Member' | 'Silver Member';
   savedAddresses: Address[];
@@ -115,6 +130,12 @@ export interface UserProfile {
   preferredCurrency: CurrencyCode;
   preferredLanguage: string;
   notificationsEnabled: boolean;
+  isLoggedIn?: boolean;
+  emailVerified?: boolean;
+  authProvider?: 'google' | 'email' | 'guest';
+  onboardingComplete?: boolean;
+  pushToken?: string;
+  isAdmin?: boolean;
 }
 
 export interface Coupon {
@@ -124,4 +145,46 @@ export interface Coupon {
   fixedDiscountKRW?: number;
   minOrderKRW: number;
   maxDiscountKRW: number;
+}
+
+export interface Review {
+  id: string;
+  productId: string;
+  userId: string;
+  userName: string;
+  userAvatar?: string;
+  rating: number; // 1–5
+  text: string;
+  photoUrl?: string;
+  isVerifiedPurchase?: boolean;
+  createdAt: number;
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  icon: string;
+  description?: string;
+  displayOrder: number;
+  isActive: boolean;
+  productCount?: number;
+}
+
+export interface Banner {
+  id: string;
+  imageUrl: string;
+  title?: string;
+  subtitle?: string;
+  linkTarget?: string; // category name or product id
+  displayOrder: number;
+  isActive: boolean;
+}
+
+export interface AnalyticsData {
+  totalOrders: number;
+  totalRevenueKRW: number;
+  totalCustomers: number;
+  outOfStockCount: number;
+  dailySales: { date: string; revenueKRW: number; orders: number }[];
+  topProducts: { productId: string; name: string; soldCount: number; revenueKRW: number }[];
 }

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState, useCallback } from 'react';
+import React, { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import {
   AVAILABLE_COUPONS,
   EXCHANGE_RATES,
@@ -8,7 +8,9 @@ import {
 } from '@/data/mockData';
 import {
   Address,
+  Banner,
   CartItem,
+  Category,
   Coupon,
   CurrencyCode,
   LanguageCode,
@@ -79,6 +81,11 @@ interface AppContextType {
   deleteProduct: (id: string) => void;
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
   toggleDarkMode: () => void;
+  setPhoneNumber: (countryCode: string, phone: string) => void;
+  setEmailVerified: (verified: boolean) => void;
+  completeOnboarding: () => void;
+  categories: Category[];
+  banners: Banner[];
 }
 
 const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
@@ -599,6 +606,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [language, setLanguage] = useState<LanguageCode>('EN');
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [banners, setBanners] = useState<Banner[]>([]);
+
+  // ── FIRESTORE REAL-TIME SUBSCRIPTIONS ─────────────────────────────────
+  useEffect(() => {
+    const unsubscribers: (() => void)[] = [];
+
+    // Lazy import to avoid circular deps and allow graceful degradation
+    import('@/services/firestore').then((firestoreService) => {
+      // Products
+      const unsubProducts = firestoreService.subscribeToProducts(
+        (firestoreProducts) => {
+          if (firestoreProducts.length > 0) setProducts(firestoreProducts);
+        },
+        () => {} // Silently keep using mock data on error
+      );
+      unsubscribers.push(unsubProducts);
+
+      // Orders
+      const unsubOrders = firestoreService.subscribeToOrders(
+        (firestoreOrders) => {
+          if (firestoreOrders.length > 0) setOrders(firestoreOrders);
+        },
+        true // adminMode to subscribe to all orders
+      );
+      unsubscribers.push(unsubOrders);
+
+      // Categories
+      const unsubCats = firestoreService.subscribeToCategories((cats) => {
+        if (cats.length > 0) setCategories(cats);
+      });
+      unsubscribers.push(unsubCats);
+
+      // Banners
+      const unsubBanners = firestoreService.subscribeToBanners((b) => {
+        setBanners(b);
+      });
+      unsubscribers.push(unsubBanners);
+
+      // Seed default data once (no-op if already seeded)
+      firestoreService.seedDefaultCategories().catch(() => {});
+      firestoreService.seedDefaultBanners().catch(() => {});
+    }).catch(() => {
+      // Firestore not configured, continue with mock data
+    });
+
+    return () => unsubscribers.forEach((unsub) => unsub());
+  }, []);
+
 
   // Cart Totals
   const toggleDarkMode = useCallback(() => {
@@ -917,8 +973,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       clearCart();
     }
 
+    // Persist to Firestore + decrement stock (non-blocking, graceful)
+    import('@/services/firestore').then((fs) => {
+      // Save order to Firestore
+      fs.addOrderToFirestore({
+        ...newOrder,
+        customerUid: user?.id || 'guest',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }).catch(() => {});
+
+      // Atomically decrement stock for each ordered item
+      const stockDecrements = itemsToOrder.map((item) => ({
+        productId: item.product.id,
+        quantity: item.quantity,
+      }));
+      fs.decrementStockForOrder(stockDecrements).catch(() => {});
+
+      // Update local product stock immediately
+      setProducts((prev) =>
+        prev.map((p) => {
+          const ordered = itemsToOrder.find((item) => item.product.id === p.id);
+          if (ordered && p.stock !== undefined) {
+            return { ...p, stock: Math.max(0, p.stock - ordered.quantity) };
+          }
+          return p;
+        })
+      );
+    }).catch(() => {});
+
     return newOrder;
   };
+
 
   const reorder = (orderId: string) => {
     const order = orders.find((o) => o.id === orderId);
@@ -935,6 +1021,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateUserProfile = (updates: Partial<UserProfile>) => {
     setUser((prev) => ({ ...prev, ...updates }));
+  };
+
+  const setPhoneNumber = (countryCode: string, phone: string) => {
+    setUser((prev) => ({
+      ...prev,
+      phoneCountryCode: countryCode,
+      phoneNumber: phone,
+      phone: `${countryCode} ${phone}`,
+    }));
+  };
+
+  const setEmailVerified = (verified: boolean) => {
+    setUser((prev) => ({ ...prev, emailVerified: verified }));
+  };
+
+  const completeOnboarding = () => {
+    setUser((prev) => ({ ...prev, onboardingComplete: true }));
   };
 
   const addAddress = (address: Omit<Address, 'id'>) => {
@@ -1046,6 +1149,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteProduct,
         updateOrderStatus,
         toggleDarkMode,
+        setPhoneNumber,
+        setEmailVerified,
+        completeOnboarding,
+        categories,
+        banners,
       }}
     >
       {children}
