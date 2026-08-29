@@ -168,9 +168,8 @@ export default function HomeScreen() {
                 activeOpacity={0.85}
                 onPress={() => router.push('/login')}
               >
-                <Text style={{ fontSize: 13 }}>🌐</Text>
                 <Text style={styles.langButtonText}>
-                  {user?.isLoggedIn ? 'Google Account' : 'Login'}
+                  {user?.isLoggedIn ? (user.name ? user.name.split(' ')[0] : 'My Account') : 'Login'}
                 </Text>
               </TouchableOpacity>
 
@@ -438,11 +437,13 @@ export default function HomeScreen() {
           <View style={styles.productGrid}>
             {filteredProducts.map((product) => {
               const isFav = wishlist.includes(product.id);
+              const isOutOfStock = (product.stock !== undefined && product.stock <= 0) || product.available === false;
               return (
                 <TouchableOpacity
                   key={product.id}
                   style={styles.productCard}
                   activeOpacity={0.9}
+                  onPress={() => router.push({ pathname: '/product-detail', params: { id: product.id } })}
                 >
                   <View style={styles.productImageContainer}>
                     <Image
@@ -450,9 +451,28 @@ export default function HomeScreen() {
                       style={styles.productImage}
                     />
 
-                    <View style={styles.discountBadge}>
-                      <Text style={styles.discountText}>{product.discount}</Text>
-                    </View>
+                    {isOutOfStock ? (
+                      <View style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0,0,0,0.55)',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        zIndex: 3,
+                        borderRadius: 12,
+                      }}>
+                        <Text style={{ color: '#FFFFFF', fontWeight: '900', fontSize: 12, letterSpacing: 1.5 }}>
+                          OUT OF STOCK
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={styles.discountBadge}>
+                        <Text style={styles.discountText}>{product.discount}</Text>
+                      </View>
+                    )}
 
                     <View style={styles.originTag}>
                       <Text style={styles.originText}>
@@ -462,7 +482,10 @@ export default function HomeScreen() {
 
                     <TouchableOpacity
                       style={[styles.heartButton, isFav && styles.heartButtonActive]}
-                      onPress={() => toggleWishlist(product.id)}
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        toggleWishlist(product.id);
+                      }}
                       activeOpacity={0.8}
                     >
                       <Text style={[styles.heart, isFav && styles.heartActive]}>
@@ -493,11 +516,17 @@ export default function HomeScreen() {
                       </View>
 
                       <TouchableOpacity
-                        style={styles.addButton}
+                        style={[styles.addButton, isOutOfStock && { backgroundColor: '#9CA3AF' }]}
                         activeOpacity={0.8}
-                        onPress={() => addToCart(product.id)}
+                        disabled={isOutOfStock}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          if (!isOutOfStock) addToCart(product.id);
+                        }}
                       >
-                        <Text style={styles.plus}>{t('addBtn')}</Text>
+                        <Text style={[styles.plus, isOutOfStock && { fontSize: 11 }]}>
+                          {isOutOfStock ? 'Sold Out' : t('addBtn')}
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   </View>

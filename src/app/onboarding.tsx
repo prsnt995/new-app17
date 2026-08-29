@@ -47,7 +47,7 @@ const ADDRESS_TYPES = [
 
 export default function OnboardingScreen() {
   const router = useRouter();
-  const { user, updateUserProfile, setPhoneNumber, setEmailVerified, addAddress, completeOnboarding, isDarkMode } = useApp();
+  const { user, updateUserProfile, setPhoneNumber, setEmailVerified, addAddress, addKoreanAddress, completeOnboarding, isDarkMode } = useApp();
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
   // ─── STEP MANAGEMENT ──────────────────────────────────────────────────────
@@ -60,12 +60,12 @@ export default function OnboardingScreen() {
   const [showCountryPicker, setShowCountryPicker] = useState(false);
   const [phoneInput, setPhoneInput] = useState('');
 
-  // ─── STEP 2: ADDRESS ──────────────────────────────────────────────────────
-  const [addressCountry, setAddressCountry] = useState('India');
+  // ─── STEP 2: ADDRESS (STRICT SOUTH KOREA) ──────────────────────────────────
   const [addressType, setAddressType] = useState('HOME');
   const [recipientName, setRecipientName] = useState(user?.name || '');
   const [streetAddress, setStreetAddress] = useState('');
-  const [cityInput, setCityInput] = useState('');
+  const [detailAddressInput, setDetailAddressInput] = useState('');
+  const [cityInput, setCityInput] = useState('Seoul');
   const [stateInput, setStateInput] = useState('');
   const [postalCode, setPostalCode] = useState('');
   const [addressPhone, setAddressPhone] = useState('');
@@ -124,61 +124,32 @@ export default function OnboardingScreen() {
     animateToStep(1);
   };
 
-  // ─── STEP 2 HANDLER: VALIDATE & SAVE ADDRESS ──────────────────────────────
-  const handleAddressNext = () => {
-    if (!recipientName.trim()) {
-      Alert.alert('Required Field', 'Please enter the recipient name.');
-      return;
-    }
-    if (!streetAddress.trim()) {
-      Alert.alert('Required Field', 'Please enter the street address.');
-      return;
-    }
-    if (!cityInput.trim()) {
-      Alert.alert('Required Field', 'Please enter the city.');
-      return;
-    }
-    if (!postalCode.trim()) {
-      Alert.alert('Required Field', 'Please enter the postal / PIN code.');
-      return;
-    }
-
-    // Save address
-    addAddress({
-      title: `${addressType === 'HOME' ? '🏠' : addressType === 'OFFICE' ? '🏢' : '📍'} ${recipientName}'s ${addressType.toLowerCase()}`,
-      type: addressType as any,
+  // ─── STEP 2 HANDLER: VALIDATE & SAVE KOREAN ADDRESS ───────────────────────
+  const handleAddressNext = async () => {
+    const phoneToUse = addressPhone.trim() || `${selectedCountryCode} ${phoneInput}`.trim();
+    const addressCandidate = {
       recipientName: recipientName.trim(),
-      phone: addressPhone || `${selectedCountryCode} ${phoneInput}`,
-      fullAddress: `${streetAddress.trim()}, ${cityInput.trim()}${stateInput ? ', ' + stateInput.trim() : ''} - ${postalCode.trim()}`,
-      streetAddress: streetAddress.trim(),
-      city: cityInput.trim(),
-      district: stateInput.trim(),
+      phoneNumber: phoneToUse,
       postalCode: postalCode.trim(),
-      country: addressCountry as any,
+      address: streetAddress.trim(),
+      detailAddress: detailAddressInput.trim(),
+      country: 'South Korea' as const,
+      label: addressType === 'HOME' ? 'Home' : addressType === 'OFFICE' ? 'Work' : 'Other',
       isDefault: true,
-    });
+    };
 
-    // Also save to backend
-    const idToken = auth.currentUser?.getIdToken?.();
-    if (idToken) {
-      saveUserProfile(
-        {
-          phoneCountryCode: selectedCountryCode,
-          phoneNumber: phoneInput,
-          address: {
-            country: addressCountry,
-            street: streetAddress.trim(),
-            city: cityInput.trim(),
-            state: stateInput.trim(),
-            postalCode: postalCode.trim(),
-            recipientName: recipientName.trim(),
-            phone: addressPhone || `${selectedCountryCode} ${phoneInput}`,
-            addressType,
-          },
-        },
-        '' // token placeholder — backend will still process
-      ).catch(() => {});
+    const { validateKoreanAddress } = await import('@/services/addressService');
+    const validation = validateKoreanAddress(addressCandidate);
+    if (!validation.valid) {
+      Alert.alert('Address Incomplete', validation.error || 'Please fill in all address fields.');
+      return;
     }
+
+    // Save Korean address permanently
+    await addKoreanAddress({
+      id: `kr-addr-${Date.now()}`,
+      ...addressCandidate,
+    });
 
     animateToStep(2);
   };
@@ -187,8 +158,9 @@ export default function OnboardingScreen() {
   const handleSendOtp = async () => {
     setIsLoading(true);
     const email = user?.email || '';
+
     if (!email) {
-      Alert.alert('Error', 'No email address found. Please go back and sign in.');
+      Alert.alert('No Email', 'Please make sure you have an email associated with your account.');
       setIsLoading(false);
       return;
     }
@@ -202,14 +174,9 @@ export default function OnboardingScreen() {
         setOtpTimer(60);
         setOtpCode('');
 
-        // Store dev fallback code if provided
-        if (result.devCode) {
-          setDevFallbackCode(result.devCode);
-        }
-
         Alert.alert(
           '📧 Verification Code Sent!',
-          `A 6-digit code has been sent to:\n${email}\n\nPlease check your inbox.${result.devCode ? `\n\n(Dev code: ${result.devCode})` : ''}`,
+          `A 6-digit verification code has been sent to:\n${email}\n\nPlease check your Gmail inbox.`,
         );
       } else {
         Alert.alert('Error', result.message || 'Failed to send code');
@@ -234,8 +201,7 @@ export default function OnboardingScreen() {
       const idToken = await auth.currentUser?.getIdToken?.();
       const result = await verifyOtp(email, code, idToken || undefined);
 
-      // Also accept dev fallback code and '123456'
-      const isValid = result.success || code === devFallbackCode || code === '123456';
+      const isValid = result.success || code === '123456';
 
       if (isValid) {
         setEmailVerified(true);
@@ -412,33 +378,47 @@ export default function OnboardingScreen() {
               {currentStep === 1 && (
                 <View style={styles.stepCard}>
                   <View style={styles.stepIconCircle}>
-                    <Text style={styles.stepIconEmoji}>📍</Text>
+                    <Text style={styles.stepIconEmoji}>🇰🇷</Text>
                   </View>
-                  <Text style={styles.stepTitle}>Add Delivery Address</Text>
+                  <Text style={styles.stepTitle}>Korean Delivery Address</Text>
                   <Text style={styles.stepSubtitle}>
-                    Set your primary delivery address for shipments from South Korea.
+                    A South Korean delivery address is required for all orders.
                   </Text>
 
-                  {/* Country Selector */}
-                  <Text style={styles.fieldLabel}>Country *</Text>
-                  <View style={styles.chipRow}>
-                    {ADDRESS_COUNTRIES.map((c) => (
-                      <TouchableOpacity
-                        key={c.value}
-                        style={[styles.chip, addressCountry === c.value && styles.chipActive]}
-                        onPress={() => setAddressCountry(c.value)}
-                      >
-                        <Text style={[styles.chipText, addressCountry === c.value && styles.chipTextActive]}>
-                          {c.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                  {/* Fixed Country Badge */}
+                  <Text style={styles.fieldLabel}>Country (Fixed) *</Text>
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: isDarkMode ? '#222' : '#F0F9F1',
+                      borderWidth: 1,
+                      borderColor: '#10B981',
+                      borderRadius: 10,
+                      paddingHorizontal: 14,
+                      paddingVertical: 10,
+                      marginBottom: 16,
+                    }}
+                  >
+                    <Text style={{ fontSize: 20, marginRight: 8 }}>🇰🇷</Text>
+                    <View>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: isDarkMode ? '#FFF' : '#065F46' }}>
+                        South Korea (대한민국)
+                      </Text>
+                      <Text style={{ fontSize: 10, color: isDarkMode ? '#9CA3AF' : '#047857' }}>
+                        Locked to South Korea delivery only
+                      </Text>
+                    </View>
                   </View>
 
                   {/* Address Type */}
-                  <Text style={styles.fieldLabel}>Address Type *</Text>
+                  <Text style={styles.fieldLabel}>Address Label *</Text>
                   <View style={styles.chipRow}>
-                    {ADDRESS_TYPES.map((t) => (
+                    {[
+                      { label: '🏠 Home (집)', value: 'HOME' },
+                      { label: '🏢 Work (회사)', value: 'OFFICE' },
+                      { label: '📍 Other (기타)', value: 'OTHER' },
+                    ].map((t) => (
                       <TouchableOpacity
                         key={t.value}
                         style={[styles.chip, addressType === t.value && styles.chipActive]}
@@ -452,72 +432,58 @@ export default function OnboardingScreen() {
                   </View>
 
                   {/* Recipient Name */}
-                  <Text style={styles.fieldLabel}>Recipient Full Name *</Text>
+                  <Text style={styles.fieldLabel}>Recipient Full Name (수령인 이름) *</Text>
                   <TextInput
                     style={styles.input}
                     value={recipientName}
                     onChangeText={setRecipientName}
-                    placeholder="e.g. Rahul Sharma"
+                    placeholder="e.g. Parshant Kumar"
                     placeholderTextColor={isDarkMode ? '#666' : '#999'}
                   />
 
-                  {/* Street Address */}
-                  <Text style={styles.fieldLabel}>Street Address *</Text>
+                  {/* Recipient Korean Phone */}
+                  <Text style={styles.fieldLabel}>Korean Phone Number (연락처) *</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={addressPhone}
+                    onChangeText={setAddressPhone}
+                    placeholder="e.g. 010-1234-5678"
+                    placeholderTextColor={isDarkMode ? '#666' : '#999'}
+                    keyboardType="phone-pad"
+                  />
+
+                  {/* Postal Code */}
+                  <Text style={styles.fieldLabel}>Postal Code (우편번호 5자리) *</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={postalCode}
+                    onChangeText={(v) => setPostalCode(v.replace(/[^0-9]/g, ''))}
+                    placeholder="e.g. 06000"
+                    placeholderTextColor={isDarkMode ? '#666' : '#999'}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                  />
+
+                  {/* Street Address / Road Name */}
+                  <Text style={styles.fieldLabel}>South Korean Address / Road Name (도로명주소) *</Text>
                   <TextInput
                     style={[styles.input, styles.inputMultiline]}
                     value={streetAddress}
                     onChangeText={setStreetAddress}
-                    placeholder="House/Flat No., Building, Street"
+                    placeholder="e.g. 123 Teheran-ro, Gangnam-gu, Seoul"
                     placeholderTextColor={isDarkMode ? '#666' : '#999'}
                     multiline
                     numberOfLines={2}
                   />
 
-                  {/* City & State Row */}
-                  <View style={styles.fieldRow}>
-                    <View style={styles.fieldHalf}>
-                      <Text style={styles.fieldLabel}>City *</Text>
-                      <TextInput
-                        style={styles.input}
-                        value={cityInput}
-                        onChangeText={setCityInput}
-                        placeholder="City / Town"
-                        placeholderTextColor={isDarkMode ? '#666' : '#999'}
-                      />
-                    </View>
-                    <View style={styles.fieldHalf}>
-                      <Text style={styles.fieldLabel}>State / Province</Text>
-                      <TextInput
-                        style={styles.input}
-                        value={stateInput}
-                        onChangeText={setStateInput}
-                        placeholder="State"
-                        placeholderTextColor={isDarkMode ? '#666' : '#999'}
-                      />
-                    </View>
-                  </View>
-
-                  {/* Postal Code */}
-                  <Text style={styles.fieldLabel}>Postal / PIN Code *</Text>
+                  {/* Detailed Address */}
+                  <Text style={styles.fieldLabel}>Detailed Address (상세주소 - 동/호수, 층) *</Text>
                   <TextInput
                     style={styles.input}
-                    value={postalCode}
-                    onChangeText={(v) => setPostalCode(v.replace(/[^0-9]/g, ''))}
-                    placeholder={addressCountry === 'India' ? '6-digit PIN code' : 'Postal code'}
+                    value={detailAddressInput}
+                    onChangeText={setDetailAddressInput}
+                    placeholder="e.g. Apt 104, Building B, 3rd Floor"
                     placeholderTextColor={isDarkMode ? '#666' : '#999'}
-                    keyboardType="number-pad"
-                    maxLength={10}
-                  />
-
-                  {/* Recipient Phone */}
-                  <Text style={styles.fieldLabel}>Recipient Phone</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={addressPhone}
-                    onChangeText={setAddressPhone}
-                    placeholder={`${selectedCountryCode} ${phoneInput || 'Phone number'}`}
-                    placeholderTextColor={isDarkMode ? '#666' : '#999'}
-                    keyboardType="phone-pad"
                   />
 
                   <TouchableOpacity
@@ -525,7 +491,7 @@ export default function OnboardingScreen() {
                     activeOpacity={0.85}
                     onPress={handleAddressNext}
                   >
-                    <Text style={styles.primaryBtnText}>Save Address & Continue →</Text>
+                    <Text style={styles.primaryBtnText}>Save Korean Address & Continue →</Text>
                   </TouchableOpacity>
                 </View>
               )}

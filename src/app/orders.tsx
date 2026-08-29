@@ -10,6 +10,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { getPaymentStatusBadge } from '@/services/paymentService';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useApp } from '@/context/AppContext';
@@ -18,7 +20,7 @@ import { OrderItem } from '@/types';
 
 export default function OrdersScreen() {
   const router = useRouter();
-  const { orders, reorder, formatPrice, isDarkMode } = useApp();
+  const { orders, reorder, formatPrice, isDarkMode, uploadPaymentScreenshot } = useApp();
 
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
@@ -32,6 +34,51 @@ export default function OrdersScreen() {
   // Modals state
   const [selectedParcel, setSelectedParcel] = useState<OrderItem | null>(null);
   const [selectedProductOrder, setSelectedProductOrder] = useState<OrderItem | null>(null);
+  const [previewScreenshotUrl, setPreviewScreenshotUrl] = useState<string | null>(null);
+  const [isUploadingScreenshot, setIsUploadingScreenshot] = useState(false);
+
+  const handleUploadScreenshotForOrder = async (order: OrderItem) => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permissionResult.granted === false) {
+        Alert.alert('Permission Needed', 'Please allow photo access to upload your payment receipt.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setIsUploadingScreenshot(true);
+        const uploadedUrl = await uploadPaymentScreenshot(order.id, result.assets[0].uri);
+        setIsUploadingScreenshot(false);
+
+        if (selectedProductOrder && selectedProductOrder.id === order.id) {
+          setSelectedProductOrder({
+            ...selectedProductOrder,
+            paymentScreenshot: uploadedUrl,
+            payment: {
+              screenshotUrl: uploadedUrl,
+              uploaded: true,
+              verified: false,
+              verifiedAt: null,
+              verifiedBy: null,
+              status: 'uploaded',
+            },
+            status: 'payment_uploaded',
+          });
+        }
+
+        Alert.alert('Receipt Uploaded', 'Your payment proof has been uploaded successfully. Namaste Mart admin will verify it shortly.');
+      }
+    } catch (e: any) {
+      setIsUploadingScreenshot(false);
+      Alert.alert('Upload Notice', e.message || 'Could not upload screenshot. Please try again.');
+    }
+  };
 
   // Filter Product Orders vs Parcel Shipments
   const productOrders = orders.filter(
@@ -253,6 +300,27 @@ export default function OrdersScreen() {
                         <View>
                           <Text style={styles.orderNumberText}>{order.orderNumber}</Text>
                           <Text style={styles.orderDateText}>{order.date}</Text>
+                          {(() => {
+                            const pBadge = getPaymentStatusBadge(order.payment);
+                            return (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                                <View
+                                  style={{
+                                    backgroundColor: `${pBadge.color}15`,
+                                    borderWidth: 1,
+                                    borderColor: pBadge.color,
+                                    borderRadius: 6,
+                                    paddingHorizontal: 6,
+                                    paddingVertical: 2,
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 9, fontWeight: '800', color: pBadge.color }}>
+                                    {pBadge.emoji} {pBadge.label}
+                                  </Text>
+                                </View>
+                              </View>
+                            );
+                          })()}
                         </View>
                         <View style={[styles.statusBadge, { backgroundColor: statusBadge.bg }]}>
                           <Text style={[styles.statusBadgeText, { color: statusBadge.text }]}>
@@ -286,6 +354,21 @@ export default function OrdersScreen() {
                         </View>
 
                         <View style={styles.actionBtnGroup}>
+                          {(!order.payment?.uploaded || order.payment?.status === 'rejected') && (
+                            <TouchableOpacity
+                              style={[
+                                styles.reorderBtn,
+                                { backgroundColor: order.payment?.status === 'rejected' ? '#EF4444' : '#F59E0B' },
+                              ]}
+                              onPress={() => handleUploadScreenshotForOrder(order)}
+                              disabled={isUploadingScreenshot}
+                            >
+                              <Text style={[styles.reorderBtnText, { color: '#FFF' }]}>
+                                {isUploadingScreenshot ? '...' : '📷 Proof'}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+
                           <TouchableOpacity
                             style={styles.reorderBtn}
                             onPress={() => handleReorder(order.id)}
@@ -340,13 +423,13 @@ export default function OrdersScreen() {
                   <Text style={styles.emptyEmoji}>📦</Text>
                   <Text style={styles.emptyTitle}>No Parcels Found</Text>
                   <Text style={styles.emptySubtitle}>
-                    You haven't sent any courier parcels to India or Nepal yet.
+                    You have not sent any international parcels yet.
                   </Text>
                   <TouchableOpacity
                     style={styles.emptyButton}
                     onPress={() => router.push('/send-parcel')}
                   >
-                    <Text style={styles.emptyButtonText}>+ Send Parcel Now</Text>
+                    <Text style={styles.emptyButtonText}>Send a Parcel</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
@@ -561,6 +644,52 @@ export default function OrdersScreen() {
                 </View>
 
                 <ScrollView contentContainerStyle={{ padding: 18 }}>
+                  {/* DELIVERY ADDRESS DETAILS */}
+                  <View
+                    style={{
+                      marginBottom: 14,
+                      padding: 12,
+                      borderRadius: 12,
+                      backgroundColor: isDarkMode ? '#262626' : '#F8F7F3',
+                      borderWidth: 1,
+                      borderColor: isDarkMode ? '#333' : '#EFEBE4',
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        fontWeight: '900',
+                        color: isDarkMode ? '#FFF' : '#212121',
+                        marginBottom: 4,
+                      }}
+                    >
+                      📍 Korean Delivery Address
+                    </Text>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: isDarkMode ? '#EEE' : '#333' }}>
+                      {selectedProductOrder.deliveryAddress?.recipientName ||
+                        selectedProductOrder.recipient?.name}
+                    </Text>
+                    <Text style={{ fontSize: 10, color: isDarkMode ? '#A0A0A0' : '#666', marginTop: 2 }}>
+                      📞{' '}
+                      {selectedProductOrder.deliveryAddress?.phoneNumber ||
+                        selectedProductOrder.recipient?.phone}
+                    </Text>
+                    <Text style={{ fontSize: 10, color: isDarkMode ? '#A0A0A0' : '#666', marginTop: 2 }}>
+                      {selectedProductOrder.deliveryAddress?.address ||
+                        selectedProductOrder.recipient?.address}
+                      {selectedProductOrder.deliveryAddress?.detailAddress
+                        ? `, ${selectedProductOrder.deliveryAddress.detailAddress}`
+                        : ''}
+                      {selectedProductOrder.deliveryAddress?.postalCode
+                        ? ` (${selectedProductOrder.deliveryAddress.postalCode})`
+                        : ''}
+                    </Text>
+                    <Text style={{ fontSize: 10, color: '#10B981', fontWeight: '700', marginTop: 2 }}>
+                      🇰🇷 South Korea (대한민국)
+                    </Text>
+                  </View>
+
+                  {/* PURCHASED PRODUCTS */}
                   <Text style={styles.timelineTitle}>Purchased Products</Text>
                   {selectedProductOrder.items.map((item, idx) => (
                     <View key={idx} style={styles.modalItemRow}>
@@ -585,27 +714,231 @@ export default function OrdersScreen() {
                   </View>
 
                   {/* BANK TRANSFER & SCREENSHOT DETAILS */}
-                  <View style={{ marginTop: 14, padding: 12, borderRadius: 12, backgroundColor: isDarkMode ? '#262626' : '#F8F7F3', borderWidth: 1, borderColor: isDarkMode ? '#333' : '#EFEBE4' }}>
-                    <Text style={{ fontSize: 11, fontWeight: '900', color: isDarkMode ? '#FFF' : '#212121', marginBottom: 4 }}>💳 Payment & Transfer Details</Text>
-                    <Text style={{ fontSize: 10, color: isDarkMode ? '#A0A0A0' : '#706D65' }}>Method: {selectedProductOrder.paymentMethod}</Text>
-                    {selectedProductOrder.bankAccount && (
-                      <Text style={{ fontSize: 10, color: isDarkMode ? '#A0A0A0' : '#706D65', marginTop: 2 }}>
-                        Bank: {selectedProductOrder.bankAccount.bankName} • Account: {selectedProductOrder.bankAccount.accountNumber} ({selectedProductOrder.bankAccount.accountHolder})
-                      </Text>
-                    )}
-                    {selectedProductOrder.paymentScreenshot ? (
-                      <View style={{ marginTop: 8 }}>
-                        <Text style={{ fontSize: 10, fontWeight: '800', color: '#2E7D32', marginBottom: 4 }}>✓ Payment Screenshot Attached</Text>
-                        <Image source={{ uri: selectedProductOrder.paymentScreenshot }} style={{ width: 80, height: 80, borderRadius: 8 }} />
+                  {(() => {
+                    const pBadge = getPaymentStatusBadge(selectedProductOrder.payment);
+                    return (
+                      <View
+                        style={{
+                          marginTop: 14,
+                          padding: 12,
+                          borderRadius: 12,
+                          backgroundColor: isDarkMode ? '#262626' : '#F8F7F3',
+                          borderWidth: 1,
+                          borderColor: isDarkMode ? '#333' : '#EFEBE4',
+                        }}
+                      >
+                        <View
+                          style={{
+                            flexDirection: 'row',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            marginBottom: 6,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 11,
+                              fontWeight: '900',
+                              color: isDarkMode ? '#FFF' : '#212121',
+                            }}
+                          >
+                            💳 Bank Transfer & Verification
+                          </Text>
+                          <View
+                            style={{
+                              backgroundColor: `${pBadge.color}15`,
+                              borderWidth: 1,
+                              borderColor: pBadge.color,
+                              borderRadius: 6,
+                              paddingHorizontal: 6,
+                              paddingVertical: 2,
+                            }}
+                          >
+                            <Text style={{ fontSize: 9, fontWeight: '800', color: pBadge.color }}>
+                              {pBadge.emoji} {pBadge.label}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={{ fontSize: 10, color: isDarkMode ? '#A0A0A0' : '#706D65' }}>
+                          Method: {selectedProductOrder.paymentMethod}
+                        </Text>
+                        {selectedProductOrder.bankAccount && (
+                          <Text
+                            style={{
+                              fontSize: 10,
+                              color: isDarkMode ? '#A0A0A0' : '#706D65',
+                              marginTop: 2,
+                            }}
+                          >
+                            Bank: {selectedProductOrder.bankAccount.bankName} • Account:{' '}
+                            {selectedProductOrder.bankAccount.accountNumber} (
+                            {selectedProductOrder.bankAccount.accountHolder})
+                          </Text>
+                        )}
+
+                        {/* REJECTION REASON NOTIFICATION */}
+                        {selectedProductOrder.payment?.status === 'rejected' && (
+                          <View
+                            style={{
+                              marginTop: 8,
+                              padding: 10,
+                              backgroundColor: '#FEE2E2',
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: '#F87171',
+                            }}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: '800', color: '#B91C1C' }}>
+                              ❌ Payment Receipt Rejected
+                            </Text>
+                            <Text style={{ fontSize: 10, color: '#991B1B', marginTop: 2 }}>
+                              Reason:{' '}
+                              {selectedProductOrder.payment?.rejectionReason ||
+                                'Receipt was unclear or transfer could not be matched.'}
+                            </Text>
+                          </View>
+                        )}
+
+                        {/* SCREENSHOT DISPLAY OR UPLOAD BUTTON */}
+                        {selectedProductOrder.paymentScreenshot ? (
+                          <View style={{ marginTop: 10 }}>
+                            <Text
+                              style={{
+                                fontSize: 10,
+                                fontWeight: '800',
+                                color: '#10B981',
+                                marginBottom: 6,
+                              }}
+                            >
+                              ✓ Payment Screenshot Attached
+                            </Text>
+                            <TouchableOpacity
+                              onPress={() =>
+                                setPreviewScreenshotUrl(
+                                  selectedProductOrder.paymentScreenshot || null
+                                )
+                              }
+                              activeOpacity={0.85}
+                              style={{ flexDirection: 'row', alignItems: 'center' }}
+                            >
+                              <Image
+                                source={{ uri: selectedProductOrder.paymentScreenshot }}
+                                style={{
+                                  width: 80,
+                                  height: 80,
+                                  borderRadius: 8,
+                                  borderWidth: 1,
+                                  borderColor: isDarkMode ? '#444' : '#DDD',
+                                }}
+                              />
+                              <View style={{ marginLeft: 12 }}>
+                                <Text
+                                  style={{
+                                    fontSize: 11,
+                                    fontWeight: '700',
+                                    color: isDarkMode ? '#D4AF37' : '#C88D2B',
+                                  }}
+                                >
+                                  🔍 Tap to expand preview
+                                </Text>
+                                <Text
+                                  style={{
+                                    fontSize: 9,
+                                    color: isDarkMode ? '#888' : '#777',
+                                    marginTop: 2,
+                                  }}
+                                >
+                                  Storage URL linked securely
+                                </Text>
+                              </View>
+                            </TouchableOpacity>
+
+                            {/* Option to re-upload if rejected */}
+                            {selectedProductOrder.payment?.status === 'rejected' && (
+                              <TouchableOpacity
+                                style={{
+                                  marginTop: 10,
+                                  paddingVertical: 8,
+                                  paddingHorizontal: 12,
+                                  backgroundColor: '#EA580C',
+                                  borderRadius: 8,
+                                  alignItems: 'center',
+                                }}
+                                onPress={() =>
+                                  handleUploadScreenshotForOrder(selectedProductOrder)
+                                }
+                                disabled={isUploadingScreenshot}
+                              >
+                                <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '800' }}>
+                                  {isUploadingScreenshot ? 'Uploading...' : '📷 Upload New Receipt'}
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        ) : (
+                          <View style={{ marginTop: 10 }}>
+                            <Text
+                              style={{
+                                fontSize: 10,
+                                color: '#F59E0B',
+                                fontWeight: '700',
+                                marginBottom: 6,
+                              }}
+                            >
+                              ⚠️ No Payment Screenshot Uploaded Yet
+                            </Text>
+                            <TouchableOpacity
+                              style={{
+                                paddingVertical: 10,
+                                paddingHorizontal: 14,
+                                backgroundColor: isDarkMode ? '#D4AF37' : '#C88D2B',
+                                borderRadius: 8,
+                                alignItems: 'center',
+                              }}
+                              onPress={() =>
+                                handleUploadScreenshotForOrder(selectedProductOrder)
+                              }
+                              disabled={isUploadingScreenshot}
+                            >
+                              <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '800' }}>
+                                {isUploadingScreenshot
+                                  ? 'Uploading...'
+                                  : '📷 Upload Payment Screenshot Now'}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
                       </View>
-                    ) : (
-                      <Text style={{ fontSize: 10, color: '#FFA000', marginTop: 4 }}>⚠️ Screenshot Not Attached</Text>
-                    )}
-                  </View>
+                    );
+                  })()}
                 </ScrollView>
               </View>
             </View>
           )}
+        </Modal>
+
+        {/* FULL SCREENSHOT PREVIEW MODAL */}
+        <Modal
+          visible={!!previewScreenshotUrl}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setPreviewScreenshotUrl(null)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' }}>
+            <TouchableOpacity
+              style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 10 }}
+              onPress={() => setPreviewScreenshotUrl(null)}
+            >
+              <Text style={{ color: '#FFF', fontSize: 24, fontWeight: 'bold' }}>✕</Text>
+            </TouchableOpacity>
+            {previewScreenshotUrl && (
+              <Image
+                source={{ uri: previewScreenshotUrl }}
+                style={{ width: '90%', height: '80%' }}
+                resizeMode="contain"
+              />
+            )}
+          </View>
         </Modal>
 
         <BottomNav currentTab="orders" />

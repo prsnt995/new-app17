@@ -44,51 +44,104 @@ export default function CartScreen() {
 
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
-  const [couponInput, setCouponInput] = useState('');
-  const [couponError, setCouponError] = useState('');
-  const [shippingMethod, setShippingMethod] = useState<'Standard' | 'Express'>('Standard');
-  const [selectedHub, setSelectedHub] = useState('Seoul Gangnam Main Hub');
+  const koreanAddresses = user.savedAddresses.filter((a) => a.country === 'South Korea');
   const [selectedAddressId, setSelectedAddressId] = useState(
-    user.savedAddresses[0]?.id || ''
+    koreanAddresses[0]?.id || user.savedAddresses[0]?.id || ''
   );
   const [paymentMethod, setPaymentMethod] = useState('Bank Transfer');
   const [selectedBank, setSelectedBank] = useState<BankAccountInfo>(() => getRandomBankAccount());
-  const [senderName, setSenderName] = useState(user?.name || 'PARSHANT');
+  const [senderName, setSenderName] = useState(user?.name || '');
   const [paymentScreenshot, setPaymentScreenshot] = useState<string | null>(null);
   const [isSuccessModalVisible, setIsSuccessModalVisible] = useState(false);
   const [createdOrderData, setCreatedOrderData] = useState<OrderItem | null>(null);
 
   const selectedAddress =
-    user.savedAddresses.find((a) => a.id === selectedAddressId) ||
+    koreanAddresses.find((a) => a.id === selectedAddressId) ||
+    koreanAddresses[0] ||
     user.savedAddresses[0];
 
-  const handleApplyCoupon = () => {
-    if (!couponInput.trim()) return;
-    const res = applyCoupon(couponInput);
-    if (!res.success) {
-      setCouponError(res.message);
-    } else {
-      setCouponError('');
-      setCouponInput('');
-    }
-  };
-
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add products before checking out.');
       return;
     }
 
-    if (!selectedAddress) {
-      Alert.alert('Delivery Address Required', 'Please choose a delivery address.');
+    // Check login
+    if (!user.isLoggedIn) {
+      Alert.alert(
+        '🔐 Login Required',
+        'Please sign in or create an account to place an order on Namaste Mart.',
+        [
+          { text: 'Sign In / Register', onPress: () => router.push('/login') },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
       return;
     }
 
+    // Check email verification
+    if (!user.isAdmin && user.emailVerified === false) {
+      Alert.alert(
+        '✉️ Email Verification Required',
+        'Your email address must be verified before placing orders. Please check your Gmail/email inbox for the verification link.',
+        [
+          { text: 'Verify Email', onPress: () => router.push('/login') },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+      return;
+    }
+
+    // Strict Korean Delivery Address Enforcement
+    if (!selectedAddress || selectedAddress.country !== 'South Korea') {
+      Alert.alert(
+        '🇰🇷 Korean Delivery Address Required',
+        'You must add and select a valid delivery address in South Korea to place an order.',
+        [
+          { text: 'Add Address', onPress: () => router.push('/login') },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+      return;
+    }
+
+    // Fast local stock verification
+    for (const item of cart) {
+      const stock = item.product.stock ?? 100;
+      if (stock <= 0) {
+        Alert.alert('Out of Stock', `"${item.product.name}" is out of stock. Please remove it from your cart before proceeding.`);
+        return;
+      }
+      if (item.quantity > stock) {
+        Alert.alert('Stock Limit Exceeded', `Only ${stock} units available for "${item.product.name}". Please decrease the quantity.`);
+        return;
+      }
+    }
+
+    // Fresh Firestore stock verification
+    try {
+      const { validateStockForCheckout } = await import('@/services/firestore');
+      const issues = await validateStockForCheckout(
+        cart.map((item) => ({ productId: item.product.id, quantity: item.quantity }))
+      );
+      if (issues.length > 0) {
+        const first = issues[0];
+        if (first.available <= 0) {
+          Alert.alert('Out of Stock', `"${first.name}" has just run out of stock.`);
+        } else {
+          Alert.alert('Stock Limit Exceeded', `Only ${first.available} units of "${first.name}" are currently available.`);
+        }
+        return;
+      }
+    } catch (err) {
+      // Continue gracefully
+    }
+
     const order = createOrder({
-      originHub: selectedHub,
-      destinationCity: selectedAddress.city,
-      destinationCountry: selectedAddress.country === 'Nepal' ? 'Nepal' : 'India',
-      shippingMethod,
+      originHub: 'Seoul Main Hub',
+      destinationCity: selectedAddress.city || 'Seoul',
+      destinationCountry: 'South Korea',
+      shippingMethod: 'Standard',
       paymentMethod: `Direct Bank Transfer (${selectedBank.bankNameKr})`,
       bankAccount: {
         bankName: `${selectedBank.bankName} (${selectedBank.bankNameKr})`,
@@ -99,11 +152,11 @@ export default function CartScreen() {
       paymentScreenshot: paymentScreenshot || undefined,
       recipient: {
         name: selectedAddress.recipientName,
-        phone: selectedAddress.phone,
-        address: selectedAddress.fullAddress,
-        city: selectedAddress.city,
+        phone: selectedAddress.phone || (selectedAddress as any).phoneNumber || user.phone,
+        address: selectedAddress.streetAddress || selectedAddress.fullAddress,
+        city: selectedAddress.city || 'Seoul',
         postalCode: selectedAddress.postalCode,
-        country: selectedAddress.country,
+        country: 'South Korea',
       },
     });
 
@@ -111,8 +164,8 @@ export default function CartScreen() {
     setIsSuccessModalVisible(true);
   };
 
-  // Free shipping threshold calculation
-  const freeShippingThreshold = 50000;
+  // Free shipping threshold calculation (₩43,000)
+  const freeShippingThreshold = 43000;
   const amountNeededForFreeShipping = Math.max(0, freeShippingThreshold - cartSubtotalKRW);
   const progressRatio = Math.min(1, cartSubtotalKRW / freeShippingThreshold);
 
@@ -221,6 +274,16 @@ export default function CartScreen() {
                       <Text style={styles.itemPrice}>
                         {formatPrice(product.priceKRW * quantity)}
                       </Text>
+                      {product.stock !== undefined && product.stock <= 0 && (
+                        <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '800', marginTop: 2 }}>
+                          ⚠️ Out of Stock
+                        </Text>
+                      )}
+                      {product.stock !== undefined && product.stock > 0 && quantity >= product.stock && (
+                        <Text style={{ color: '#F59E0B', fontSize: 10, fontWeight: '700', marginTop: 2 }}>
+                          Max stock reached ({product.stock})
+                        </Text>
+                      )}
                     </View>
 
                     {/* QUANTITY CONTROLS */}
@@ -252,212 +315,76 @@ export default function CartScreen() {
                 ))}
               </View>
 
-              {/* LOGISTICS ROUTE (SENDER HUB -> RECIPIENT) */}
+              {/* DELIVERY ADDRESS */}
               <View style={styles.section}>
-                <Text style={styles.sectionHeading}>Logistics & Delivery Route</Text>
+                <Text style={styles.sectionHeading}>Delivery Address</Text>
 
-                {/* Sender Hub in Korea */}
+                {/* Korean Delivery Address */}
                 <View style={styles.routeCard}>
                   <View style={styles.routeIconWrapper}>
                     <Text style={styles.routeFlag}>🇰🇷</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.routeLabel}>ORIGIN COLLECTION (SOUTH KOREA)</Text>
-                    <Text style={styles.routeName}>{selectedHub}</Text>
-                    <View style={styles.hubChipsRow}>
-                      {[
-                        'Seoul Gangnam Main Hub',
-                        'Busan Port Hub',
-                        'Incheon Airport Hub',
-                      ].map((hub) => (
-                        <TouchableOpacity
-                          key={hub}
-                          style={[
-                            styles.hubChip,
-                            selectedHub === hub && styles.hubChipActive,
-                          ]}
-                          onPress={() => setSelectedHub(hub)}
-                        >
-                          <Text
-                            style={[
-                              styles.hubChipText,
-                              selectedHub === hub && styles.hubChipTextActive,
-                            ]}
-                          >
-                            {hub.split(' ')[0]}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-                </View>
-
-                {/* Recipient in India/Nepal */}
-                <View style={[styles.routeCard, { marginTop: 10 }]}>
-                  <View style={styles.routeIconWrapper}>
-                    <Text style={styles.routeFlag}>
-                      {selectedAddress?.country === 'Nepal' ? '🇳🇵' : '🇮🇳'}
-                    </Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
                     <Text style={styles.routeLabel}>
-                      DESTINATION ({selectedAddress?.country?.toUpperCase()})
+                      SOUTH KOREAN DELIVERY ADDRESS (대한민국 배송지)
                     </Text>
-                    <Text style={styles.routeName}>{selectedAddress?.recipientName}</Text>
-                    <Text style={styles.routeDetail} numberOfLines={2}>
-                      {selectedAddress?.fullAddress}, {selectedAddress?.city}{' '}
-                      {selectedAddress?.postalCode}
-                    </Text>
-                    <Text style={styles.routePhone}>📞 {selectedAddress?.phone}</Text>
-
-                    {/* Quick address selection chips if multiple */}
-                    {user.savedAddresses.length > 1 && (
-                      <View style={styles.hubChipsRow}>
-                        {user.savedAddresses.map((addr) => (
-                          <TouchableOpacity
-                            key={addr.id}
-                            style={[
-                              styles.hubChip,
-                              selectedAddressId === addr.id && styles.hubChipActive,
-                            ]}
-                            onPress={() => setSelectedAddressId(addr.id)}
-                          >
-                            <Text
-                              style={[
-                                styles.hubChipText,
-                                selectedAddressId === addr.id && styles.hubChipTextActive,
-                              ]}
-                            >
-                              {addr.title}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
+                    {koreanAddresses.length === 0 ? (
+                      <View style={{ marginTop: 4 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#EF4444' }}>
+                          ⚠️ No South Korean delivery address saved.
+                        </Text>
+                        <Text style={{ fontSize: 10, color: isDarkMode ? '#A0A0A0' : '#666', marginTop: 2 }}>
+                          Tap "Manage" to add your required South Korean address.
+                        </Text>
                       </View>
+                    ) : (
+                      <>
+                        <Text style={styles.routeName}>{selectedAddress?.recipientName}</Text>
+                        <Text style={styles.routeDetail} numberOfLines={2}>
+                          {selectedAddress?.streetAddress || selectedAddress?.fullAddress}
+                          {selectedAddress?.detailAddress ? `, ${selectedAddress.detailAddress}` : ''}
+                          {selectedAddress?.postalCode ? ` (${selectedAddress.postalCode})` : ''}
+                        </Text>
+                        <Text style={styles.routePhone}>
+                          📞 {selectedAddress?.phone || (selectedAddress as any)?.phoneNumber}
+                        </Text>
+
+                        {/* Quick Korean address selection chips if multiple */}
+                        {koreanAddresses.length > 1 && (
+                          <View style={styles.hubChipsRow}>
+                            {koreanAddresses.map((addr) => (
+                              <TouchableOpacity
+                                key={addr.id}
+                                style={[
+                                  styles.hubChip,
+                                  selectedAddressId === addr.id && styles.hubChipActive,
+                                ]}
+                                onPress={() => setSelectedAddressId(addr.id)}
+                              >
+                                <Text
+                                  style={[
+                                    styles.hubChipText,
+                                    selectedAddressId === addr.id && styles.hubChipTextActive,
+                                  ]}
+                                >
+                                  {addr.title || addr.label || 'Address'}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        )}
+                      </>
                     )}
                   </View>
                   <TouchableOpacity
                     onPress={() => router.push('/profile')}
                     style={styles.changeAddressBtn}
                   >
-                    <Text style={styles.changeAddressText}>Manage</Text>
+                    <Text style={styles.changeAddressText}>
+                      {koreanAddresses.length === 0 ? '+ Add' : 'Manage'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
-              </View>
-
-              {/* SHIPPING SPEED SELECTOR */}
-              <View style={styles.section}>
-                <Text style={styles.sectionHeading}>Choose Shipping Speed</Text>
-
-                <TouchableOpacity
-                  style={[
-                    styles.shippingOption,
-                    shippingMethod === 'Standard' && styles.shippingOptionActive,
-                  ]}
-                  onPress={() => setShippingMethod('Standard')}
-                >
-                  <View style={styles.shippingRadio}>
-                    {shippingMethod === 'Standard' && <View style={styles.shippingRadioDot} />}
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.shippingTitle}>Standard International</Text>
-                    <Text style={styles.shippingEta}>Est. 10-14 business days</Text>
-                  </View>
-                  <Text style={styles.shippingCost}>
-                    {cartShippingFeeKRW === 0 ? 'FREE' : formatPrice(cartShippingFeeKRW)}
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.shippingOption,
-                    shippingMethod === 'Express' && styles.shippingOptionActive,
-                    { marginTop: 8 },
-                  ]}
-                  onPress={() => setShippingMethod('Express')}
-                >
-                  <View style={styles.shippingRadio}>
-                    {shippingMethod === 'Express' && <View style={styles.shippingRadioDot} />}
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.expressTagRow}>
-                      <Text style={styles.shippingTitle}>Air Express Priority</Text>
-                      <View style={styles.fastBadge}>
-                        <Text style={styles.fastBadgeText}>⚡ 3-5 DAYS</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.shippingEta}>Direct Incheon Flight with live GPS</Text>
-                  </View>
-                  <Text style={styles.shippingCost}>
-                    +{formatPrice(8000)}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* COUPON & PROMO */}
-              <View style={styles.section}>
-                <Text style={styles.sectionHeading}>Coupons & Promo Code</Text>
-
-                {appliedCoupon ? (
-                  <View style={styles.appliedCouponCard}>
-                    <View>
-                      <Text style={styles.appliedCouponCode}>
-                        🏷️ {appliedCoupon.code} APPLIED
-                      </Text>
-                      <Text style={styles.appliedCouponDesc}>
-                        {appliedCoupon.title}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.removeCouponBtn}
-                      onPress={removeCoupon}
-                    >
-                      <Text style={styles.removeCouponText}>Remove</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <View>
-                    <View style={styles.couponInputRow}>
-                      <TextInput
-                        style={styles.couponInput}
-                        placeholder="Enter coupon (e.g. NAMASTE10)"
-                        placeholderTextColor="#A2A2A2"
-                        autoCapitalize="characters"
-                        value={couponInput}
-                        onChangeText={(t) => {
-                          setCouponInput(t);
-                          setCouponError('');
-                        }}
-                      />
-                      <TouchableOpacity
-                        style={styles.applyBtn}
-                        onPress={handleApplyCoupon}
-                      >
-                        <Text style={styles.applyBtnText}>APPLY</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    {couponError.length > 0 && (
-                      <Text style={styles.couponErrorText}>{couponError}</Text>
-                    )}
-
-                    {/* Quick coupon chips */}
-                    <View style={styles.couponChipsRow}>
-                      <TouchableOpacity
-                        style={styles.couponChip}
-                        onPress={() => applyCoupon('NAMASTE10')}
-                      >
-                        <Text style={styles.couponChipText}>✨ NAMASTE10 (10% OFF)</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={styles.couponChip}
-                        onPress={() => applyCoupon('FREESHIP')}
-                      >
-                        <Text style={styles.couponChipText}>🚚 FREESHIP</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
               </View>
 
               {/* PAYMENT METHOD SECTION - DIRECT BANK TRANSFER ONLY */}
@@ -487,22 +414,14 @@ export default function CartScreen() {
                 <View style={styles.billRow}>
                   <Text style={styles.billLabel}>{t('shippingFee')}</Text>
                   <Text style={styles.billValue}>
-                    {shippingMethod === 'Express'
-                      ? formatPrice(cartShippingFeeKRW + 8000)
-                      : cartShippingFeeKRW === 0
-                      ? 'FREE'
-                      : formatPrice(cartShippingFeeKRW)}
+                    {cartShippingFeeKRW === 0 ? 'FREE' : formatPrice(cartShippingFeeKRW)}
                   </Text>
                 </View>
 
                 {cartDiscountKRW > 0 && (
                   <View style={styles.billRow}>
-                    <Text style={styles.discountLabel}>
-                      {t('discount')} ({appliedCoupon?.code})
-                    </Text>
-                    <Text style={styles.discountValue}>
-                      −{formatPrice(cartDiscountKRW)}
-                    </Text>
+                    <Text style={styles.discountLabel}>{t('discount')}</Text>
+                    <Text style={styles.discountValue}>−{formatPrice(cartDiscountKRW)}</Text>
                   </View>
                 )}
 
@@ -513,13 +432,7 @@ export default function CartScreen() {
                     <Text style={styles.totalLabel}>{t('totalAmount')}</Text>
                     <Text style={styles.taxInclusive}>Includes all customs & taxes</Text>
                   </View>
-                  <Text style={styles.totalAmount}>
-                    {formatPrice(
-                      shippingMethod === 'Express'
-                        ? cartTotalKRW + 8000
-                        : cartTotalKRW
-                    )}
-                  </Text>
+                  <Text style={styles.totalAmount}>{formatPrice(cartTotalKRW)}</Text>
                 </View>
               </View>
 
@@ -530,13 +443,7 @@ export default function CartScreen() {
                 onPress={handleCheckout}
               >
                 <Text style={styles.checkoutBtnText}>{t('proceedCheckout')}</Text>
-                <Text style={styles.checkoutBtnAmount}>
-                  {formatPrice(
-                    shippingMethod === 'Express'
-                      ? cartTotalKRW + 8000
-                      : cartTotalKRW
-                  )}
-                </Text>
+                <Text style={styles.checkoutBtnAmount}>{formatPrice(cartTotalKRW)}</Text>
               </TouchableOpacity>
             </>
           )}

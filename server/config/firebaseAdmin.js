@@ -27,7 +27,8 @@ if (fs.existsSync(serviceAccountPath)) {
 if (!admin.apps.length) {
   admin.initializeApp({
     credential,
-    projectId: process.env.FIREBASE_PROJECT_ID || 'namastemart-logistics',
+    projectId: process.env.FIREBASE_PROJECT_ID || 'namaste-mart-28c93',
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'namaste-mart-28c93.firebasestorage.app',
   });
 }
 

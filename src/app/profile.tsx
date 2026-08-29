@@ -399,7 +399,7 @@ export default function ProfileScreen() {
 
                 <Text style={styles.userEmail}>{user.email}</Text>
                 <Text style={styles.userPhone}>📞 {user.phone}</Text>
-                
+
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6, backgroundColor: isDarkMode ? '#2D271E' : '#FFF9ED', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, alignSelf: 'flex-start' }}
                   onPress={() => router.push('/login')}

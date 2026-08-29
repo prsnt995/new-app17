@@ -13,6 +13,7 @@ import {
   Category,
   Coupon,
   CurrencyCode,
+  KoreanAddress,
   LanguageCode,
   OrderItem,
   OrderStatus,
@@ -86,6 +87,11 @@ interface AppContextType {
   completeOnboarding: () => void;
   categories: Category[];
   banners: Banner[];
+  logout: () => Promise<void>;
+  hasKoreanAddress: boolean;
+  defaultKoreanAddress: Address | undefined;
+  addKoreanAddress: (addr: KoreanAddress) => Promise<void>;
+  uploadPaymentScreenshot: (orderId: string, fileUri: string) => Promise<string>;
 }
 
 const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
@@ -593,15 +599,31 @@ const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+const GUEST_USER: UserProfile = {
+  id: 'guest',
+  name: 'Guest',
+  email: '',
+  phone: '',
+  phoneNumber: '',
+  avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400',
+  memberTier: 'Silver Member',
+  savedAddresses: [],
+  addresses: [],
+  totalShipments: 0,
+  totalSavedKRW: 0,
+  preferredCurrency: 'KRW',
+  preferredLanguage: 'English',
+  notificationsEnabled: true,
+  isLoggedIn: false,
+  authProvider: 'guest',
+};
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
-  const [cart, setCart] = useState<CartItem[]>([
-    { product: INITIAL_PRODUCTS[0], quantity: 1 },
-    { product: INITIAL_PRODUCTS[3], quantity: 2 },
-  ]);
-  const [wishlist, setWishlist] = useState<string[]>(['2', '6']);
-  const [orders, setOrders] = useState<OrderItem[]>(INITIAL_ORDERS);
-  const [user, setUser] = useState<UserProfile>(INITIAL_USER);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [wishlist, setWishlist] = useState<string[]>([]);
+  const [orders, setOrders] = useState<OrderItem[]>([]);
+  const [user, setUser] = useState<UserProfile>(GUEST_USER);
   const [currency, setCurrencyState] = useState<CurrencyCode>('KRW');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [language, setLanguage] = useState<LanguageCode>('EN');
@@ -609,13 +631,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [categories, setCategories] = useState<Category[]>([]);
   const [banners, setBanners] = useState<Banner[]>([]);
 
+  // Track auth UID for Firestore user-scoped operations
+  const [authUid, setAuthUid] = useState<string | null>(null);
+  // Prevent duplicate Firestore syncs while a sync is in progress
+  const cartSyncRef = React.useRef(false);
+  const wishlistSyncRef = React.useRef(false);
+
   // ── FIRESTORE REAL-TIME SUBSCRIPTIONS ─────────────────────────────────
   useEffect(() => {
     const unsubscribers: (() => void)[] = [];
 
-    // Lazy import to avoid circular deps and allow graceful degradation
     import('@/services/firestore').then((firestoreService) => {
-      // Products
+      // Products — real-time
       const unsubProducts = firestoreService.subscribeToProducts(
         (firestoreProducts) => {
           if (firestoreProducts.length > 0) setProducts(firestoreProducts);
@@ -623,15 +650,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         () => {} // Silently keep using mock data on error
       );
       unsubscribers.push(unsubProducts);
-
-      // Orders
-      const unsubOrders = firestoreService.subscribeToOrders(
-        (firestoreOrders) => {
-          if (firestoreOrders.length > 0) setOrders(firestoreOrders);
-        },
-        true // adminMode to subscribe to all orders
-      );
-      unsubscribers.push(unsubOrders);
 
       // Categories
       const unsubCats = firestoreService.subscribeToCategories((cats) => {
@@ -654,6 +672,186 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     return () => unsubscribers.forEach((unsub) => unsub());
   }, []);
+
+  // ── AUTH STATE LISTENER + USER-SCOPED DATA ────────────────────────────
+  useEffect(() => {
+    let unsubOrders: (() => void) | undefined;
+    let unsubCart: (() => void) | undefined;
+    let unsubWishlist: (() => void) | undefined;
+
+    import('@/config/firebase').then(({ auth: firebaseAuth, onAuthStateChanged: onAuth }) => {
+      const unsubAuth = onAuth(firebaseAuth, async (firebaseUser) => {
+        if (firebaseUser) {
+          const uid = firebaseUser.uid;
+          setAuthUid(uid);
+
+          try {
+            // 1. Ensure user document exists in Firestore (never overwrites phone or addresses)
+            const { ensureUserDoc } = await import('@/services/userService');
+            const userDoc = await ensureUserDoc(uid, {
+              name: firebaseUser.displayName || 'User',
+              email: firebaseUser.email || '',
+              phoneNumber: firebaseUser.phoneNumber || undefined,
+              avatar: firebaseUser.photoURL || undefined,
+            });
+
+            // 2. Map Korean delivery addresses
+            const mappedAddresses: Address[] = (userDoc.addresses || []).map((a: any) => ({
+              id: a.id || `addr-${Date.now()}`,
+              title: a.label || 'Home',
+              type: 'HOME' as const,
+              recipientName: a.recipientName || userDoc.name,
+              phone: a.phoneNumber || '',
+              phoneNumber: a.phoneNumber || '',
+              fullAddress: `${a.address}, ${a.detailAddress} (${a.postalCode})`,
+              streetAddress: a.address,
+              detailAddress: a.detailAddress,
+              city: 'Seoul',
+              postalCode: a.postalCode || '',
+              country: 'South Korea' as const,
+              isDefault: !!a.isDefault,
+              label: a.label || 'Home',
+            }));
+
+            // 3. Set dynamic user profile from Auth & Firestore
+            setUser({
+              id: uid,
+              name: userDoc.name || firebaseUser.displayName || 'User',
+              email: userDoc.email || firebaseUser.email || '',
+              phone: userDoc.phoneNumber || '',
+              phoneNumber: userDoc.phoneNumber || '',
+              avatar: userDoc.avatar || firebaseUser.photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400',
+              memberTier: 'Gold Member',
+              savedAddresses: mappedAddresses,
+              addresses: userDoc.addresses || [],
+              totalShipments: 0,
+              totalSavedKRW: 0,
+              preferredCurrency: 'KRW',
+              preferredLanguage: 'English',
+              notificationsEnabled: true,
+              isLoggedIn: true,
+              authProvider: firebaseUser.providerData[0]?.providerId === 'google.com' ? 'google' : 'email',
+            });
+
+            // 4. Real-time subscribe to current user's orders only
+            const { subscribeUserOrders } = await import('@/services/orderService');
+            unsubOrders = subscribeUserOrders(uid, (userOrders) => {
+              setOrders(userOrders);
+            });
+
+            // 5. Load persisted cart from Firestore
+            const { loadCartFromFirestore, loadWishlistFromFirestore } = await import('@/services/firestore');
+            const savedCart = await loadCartFromFirestore(uid).catch(() => []);
+            if (savedCart && savedCart.length > 0) {
+              setCart((prevCart) => {
+                const localIds = new Set(prevCart.map((c) => c.product.id));
+                setProducts((currentProducts) => {
+                  for (const item of savedCart) {
+                    if (!localIds.has(item.productId)) {
+                      const product = currentProducts.find((p) => p.id === item.productId);
+                      if (product) {
+                        setCart((c) => {
+                          if (c.some((ci) => ci.product.id === item.productId)) return c;
+                          return [...c, { product, quantity: item.quantity }];
+                        });
+                      }
+                    }
+                  }
+                  return currentProducts;
+                });
+                return prevCart;
+              });
+            }
+
+            // 6. Load persisted wishlist from Firestore
+            const savedWishlist = await loadWishlistFromFirestore(uid).catch(() => []);
+            if (savedWishlist && savedWishlist.length > 0) {
+              setWishlist((prev) => Array.from(new Set([...prev, ...savedWishlist])));
+            }
+          } catch (e: any) {
+            console.log('Error initializing user profile:', e.message);
+          }
+        } else {
+          // USER SIGNED OUT: Clear user session and user data completely
+          setAuthUid(null);
+          unsubOrders?.();
+          unsubCart?.();
+          unsubWishlist?.();
+          setUser(GUEST_USER);
+          setCart([]);
+          setOrders([]);
+          setWishlist([]);
+        }
+      });
+
+      unsubscribers_auth_ref.current = () => {
+        unsubAuth();
+        unsubOrders?.();
+        unsubCart?.();
+        unsubWishlist?.();
+      };
+    }).catch(() => {});
+
+    return () => {
+      unsubscribers_auth_ref.current?.();
+    };
+  }, []);
+
+  const unsubscribers_auth_ref = React.useRef<(() => void) | null>(null);
+
+  // ── SYNC CART TO FIRESTORE (debounced) ────────────────────────────────
+  const syncCartTimeout = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncCartToCloud = useCallback((cartItems: CartItem[]) => {
+    if (!authUid || cartSyncRef.current) return;
+    if (syncCartTimeout.current) clearTimeout(syncCartTimeout.current);
+    syncCartTimeout.current = setTimeout(() => {
+      const firestoreItems = cartItems.map((c) => ({
+        productId: c.product.id,
+        quantity: c.quantity,
+      }));
+      import('@/services/firestore').then((fs) => {
+        fs.syncCartToFirestore(authUid, firestoreItems).catch(() => {});
+      }).catch(() => {});
+    }, 500); // 500ms debounce
+  }, [authUid]);
+
+  // ── SYNC WISHLIST TO FIRESTORE (debounced) ────────────────────────────
+  const syncWishlistTimeout = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncWishlistToCloud = useCallback((wishlistIds: string[]) => {
+    if (!authUid || wishlistSyncRef.current) return;
+    if (syncWishlistTimeout.current) clearTimeout(syncWishlistTimeout.current);
+    syncWishlistTimeout.current = setTimeout(() => {
+      import('@/services/firestore').then((fs) => {
+        fs.syncWishlistToFirestore(authUid, wishlistIds).catch(() => {});
+      }).catch(() => {});
+    }, 500);
+  }, [authUid]);
+
+  // ── SYNC ADDRESSES TO FIRESTORE ───────────────────────────────────────
+  const syncAddressesToCloud = useCallback((addresses: Address[]) => {
+    if (!authUid) return;
+    const firestoreAddresses = addresses.map((a) => ({
+      id: a.id,
+      label: a.title,
+      recipientName: a.recipientName,
+      phoneNumber: a.phone,
+      phone: a.phone,
+      address: a.streetAddress || a.fullAddress,
+      streetAddress: a.streetAddress || a.fullAddress,
+      detailAddress: a.detailedAddress || a.buildingApt || '',
+      fullAddress: a.fullAddress,
+      district: a.district || '',
+      city: a.city || 'Seoul',
+      postalCode: a.postalCode,
+      country: a.country || 'South Korea',
+      isDefault: a.isDefault,
+    }));
+    import('@/services/firestore').then((fs) => {
+      fs.updateUserAddresses(authUid, firestoreAddresses).catch(() => {});
+    }).catch(() => {});
+  }, [authUid]);
+
+
 
 
   // Cart Totals
@@ -688,15 +886,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return Math.min(calculated, appliedCoupon.maxDiscountKRW);
   }, [appliedCoupon, cartSubtotalKRW]);
 
+  // Shipping calculation (택배비 rule: Subtotal < ₩43,000 => ₩3,500; Subtotal >= ₩43,000 => FREE ₩0)
   const cartShippingFeeKRW = useMemo(() => {
     if (cart.length === 0) return 0;
-    if (cartSubtotalKRW >= 50000 || appliedCoupon?.code === 'FREESHIP') {
-      return 0; // Free delivery above ₩50,000 or with FREESHIP
+    if (cartSubtotalKRW >= 43000 || appliedCoupon?.code === 'FREESHIP') {
+      return 0; // Free delivery above ₩43,000 or with FREESHIP coupon
     }
-    // Base shipping calculation (8000 KRW base + 500 per extra kg above 2kg)
-    const extraWeight = Math.max(0, cartTotalWeightKg - 2);
-    return 8000 + Math.ceil(extraWeight) * 500;
-  }, [cart.length, cartSubtotalKRW, appliedCoupon, cartTotalWeightKg]);
+    return 3500; // ₩3,500 shipping fee (택배비) below ₩43,000
+  }, [cart.length, cartSubtotalKRW, appliedCoupon]);
 
   const cartTotalKRW = useMemo(() => {
     return Math.max(0, cartSubtotalKRW + cartShippingFeeKRW - cartDiscountKRW);
@@ -752,22 +949,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addToCart = (productId: string, quantity = 1) => {
     const product = products.find((p) => p.id === productId);
     if (!product) return;
+    // Stock check: prevent adding if out of stock
+    if ((product.stock ?? 1) <= 0) return;
 
     setCart((prev) => {
       const existing = prev.find((item) => item.product.id === productId);
+      let updated;
       if (existing) {
-        return prev.map((item) =>
+        // Prevent exceeding stock
+        const newQty = Math.min(existing.quantity + quantity, product.stock ?? 999);
+        updated = prev.map((item) =>
           item.product.id === productId
-            ? { ...item, quantity: item.quantity + quantity }
+            ? { ...item, quantity: newQty }
             : item
         );
+      } else {
+        updated = [...prev, { product, quantity: Math.min(quantity, product.stock ?? 999) }];
       }
-      return [...prev, { product, quantity }];
+      syncCartToCloud(updated);
+      return updated;
     });
   };
 
   const removeFromCart = (productId: string) => {
-    setCart((prev) => prev.filter((item) => item.product.id !== productId));
+    setCart((prev) => {
+      const updated = prev.filter((item) => item.product.id !== productId);
+      syncCartToCloud(updated);
+      return updated;
+    });
   };
 
   const updateCartQuantity = (productId: string, quantity: number) => {
@@ -775,24 +984,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       removeFromCart(productId);
       return;
     }
-    setCart((prev) =>
-      prev.map((item) =>
-        item.product.id === productId ? { ...item, quantity } : item
-      )
-    );
+    // Enforce stock limit
+    const product = products.find((p) => p.id === productId);
+    const maxQty = product?.stock ?? 999;
+    const safeQty = Math.min(quantity, maxQty);
+    setCart((prev) => {
+      const updated = prev.map((item) =>
+        item.product.id === productId ? { ...item, quantity: safeQty } : item
+      );
+      syncCartToCloud(updated);
+      return updated;
+    });
   };
 
   const clearCart = () => {
     setCart([]);
     setAppliedCoupon(null);
+    syncCartToCloud([]);
   };
 
   const toggleWishlist = (productId: string) => {
-    setWishlist((prev) =>
-      prev.includes(productId)
+    setWishlist((prev) => {
+      const updated = prev.includes(productId)
         ? prev.filter((id) => id !== productId)
-        : [...prev, productId]
-    );
+        : [...prev, productId];
+      syncWishlistToCloud(updated);
+      return updated;
+    });
   };
 
   const isInWishlist = (productId: string) => {
@@ -915,17 +1133,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const isKoreaLocal = orderPayload.destinationCountry === 'South Korea';
 
+    // Snapshot of items and delivery address for permanent order record
+    const itemSnapshots = itemsToOrder.map((it) => {
+      const origPrice = it.product.oldPriceKRW || it.product.priceKRW;
+      const disc = it.product.discountPercent ?? 0;
+      const fPrice = it.product.finalPrice ?? it.product.priceKRW;
+      return {
+        productId: it.product.id,
+        name: it.product.name,
+        quantity: it.quantity,
+        originalPrice: origPrice,
+        discount: disc,
+        finalPrice: fPrice,
+        subtotal: fPrice * it.quantity,
+        imageUrl: it.product.image || (it.product.images && it.product.images[0]) || '',
+      };
+    });
+
+    const deliveryAddress = {
+      recipientName: orderPayload.recipient.name,
+      phone: orderPayload.recipient.phone,
+      address: orderPayload.recipient.address,
+      city: orderPayload.recipient.city,
+      postalCode: orderPayload.recipient.postalCode,
+      country: orderPayload.destinationCountry,
+    };
+
     const newOrder: OrderItem = {
       id: newOrderId,
       orderNumber: `NM-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
       date: dateFormatted,
       items: itemsToOrder,
+      itemSnapshots,
+      deliveryAddress,
       subtotalKRW: subtotal,
       shippingFeeKRW: shippingFee,
       discountKRW: discount,
       totalKRW: finalTotal,
       totalWeightKg: totalWeight,
       status: 'ORDER_PLACED',
+      paymentStatus: 'pending',
+      customerUid: user?.id || 'guest',
+      customerName: user?.name || orderPayload.recipient.name,
+      customerEmail: user?.email || '',
+      customerPhone: user?.phone || orderPayload.recipient.phone,
       originHub: orderPayload.originHub,
       destinationCity: orderPayload.destinationCity,
       destinationCountry: orderPayload.destinationCountry,
@@ -973,22 +1224,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       clearCart();
     }
 
-    // Persist to Firestore + decrement stock (non-blocking, graceful)
-    import('@/services/firestore').then((fs) => {
-      // Save order to Firestore
-      fs.addOrderToFirestore({
-        ...newOrder,
-        customerUid: user?.id || 'guest',
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      }).catch(() => {});
-
-      // Atomically decrement stock for each ordered item
-      const stockDecrements = itemsToOrder.map((item) => ({
-        productId: item.product.id,
-        quantity: item.quantity,
-      }));
-      fs.decrementStockForOrder(stockDecrements).catch(() => {});
+    // Persist to Firestore + atomic stock reduction via orderService
+    import('@/services/orderService').then(({ createOrderWithStockSafety }) => {
+      createOrderWithStockSafety({
+        userId: user?.id || 'guest',
+        customer: {
+          name: user?.name || orderPayload.recipient.name,
+          email: user?.email || '',
+          phoneNumber: user?.phone || user?.phoneNumber || orderPayload.recipient.phone,
+        },
+        deliveryAddress: {
+          recipientName: orderPayload.recipient.name,
+          phoneNumber: orderPayload.recipient.phone,
+          postalCode: orderPayload.recipient.postalCode || '06000',
+          address: orderPayload.recipient.address,
+          detailAddress: (orderPayload.recipient as any).detailAddress || '',
+          country: 'South Korea',
+        },
+        items: itemsToOrder.map((it) => ({
+          productId: it.product.id,
+          name: it.product.name,
+          imageUrl: it.product.image || (it.product.images && it.product.images[0]) || '',
+          quantity: it.quantity,
+          originalPrice: it.product.oldPriceKRW || it.product.priceKRW,
+          discount: it.product.discountPercent ?? 0,
+          finalPrice: it.product.finalPrice ?? it.product.priceKRW,
+          subtotal: (it.product.finalPrice ?? it.product.priceKRW) * it.quantity,
+          weightKg: it.product.weightKg,
+        })),
+        subtotal,
+        totalDiscount: discount,
+        deliveryFee: shippingFee,
+        totalAmount: finalTotal,
+        paymentMethod: orderPayload.paymentMethod,
+        bankAccount: orderPayload.bankAccount,
+        senderName: orderPayload.senderName,
+        paymentScreenshotUri: orderPayload.paymentScreenshot,
+        originHub: orderPayload.originHub,
+        destinationCity: orderPayload.destinationCity,
+        shippingMethod: orderPayload.shippingMethod,
+      })
+        .then((savedOrder) => {
+          setOrders((prev) =>
+            prev.map((o) => (o.id === newOrderId ? { ...o, ...savedOrder } : o))
+          );
+        })
+        .catch((err) => {
+          console.log('Order persistence notice:', err.message);
+        });
 
       // Update local product stock immediately
       setProducts((prev) =>
@@ -1005,6 +1288,82 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newOrder;
   };
 
+  const logout = async () => {
+    try {
+      const { logoutUser } = await import('@/services/authService');
+      await logoutUser();
+    } catch (e) {}
+    setAuthUid(null);
+    setUser(GUEST_USER);
+    setCart([]);
+    setOrders([]);
+    setWishlist([]);
+  };
+
+  const hasKoreanAddress = (user.savedAddresses || []).some(
+    (a) => a.country === 'South Korea'
+  );
+
+  const defaultKoreanAddress =
+    (user.savedAddresses || []).find((a) => a.country === 'South Korea' && a.isDefault) ||
+    (user.savedAddresses || []).find((a) => a.country === 'South Korea');
+
+  const addKoreanAddress = async (addr: KoreanAddress) => {
+    if (authUid) {
+      const { addUserKoreanAddress } = await import('@/services/addressService');
+      await addUserKoreanAddress(authUid, addr).catch(() => {});
+    }
+    const newAddr: Address = {
+      id: addr.id,
+      title: addr.label || 'Home',
+      type: 'HOME',
+      recipientName: addr.recipientName,
+      phone: addr.phoneNumber,
+      phoneNumber: addr.phoneNumber,
+      fullAddress: `${addr.address}, ${addr.detailAddress} (${addr.postalCode})`,
+      streetAddress: addr.address,
+      detailAddress: addr.detailAddress,
+      city: 'Seoul',
+      postalCode: addr.postalCode,
+      country: 'South Korea',
+      isDefault: addr.isDefault,
+      label: addr.label,
+    };
+    setUser((prev) => {
+      const addresses = addr.isDefault
+        ? prev.savedAddresses.map((a) => ({ ...a, isDefault: false }))
+        : prev.savedAddresses;
+      return {
+        ...prev,
+        savedAddresses: [...addresses, newAddr],
+      };
+    });
+  };
+
+  const uploadPaymentScreenshot = async (orderId: string, fileUri: string): Promise<string> => {
+    const { uploadAndLinkPaymentScreenshot } = await import('@/services/paymentService');
+    const dlUrl = await uploadAndLinkPaymentScreenshot(fileUri, authUid || user.id, orderId);
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId
+          ? {
+              ...o,
+              paymentScreenshot: dlUrl,
+              payment: {
+                screenshotUrl: dlUrl,
+                uploaded: true,
+                verified: false,
+                verifiedAt: null,
+                verifiedBy: null,
+                status: 'uploaded',
+              },
+              status: 'payment_uploaded',
+            }
+          : o
+      )
+    );
+    return dlUrl;
+  };
 
   const reorder = (orderId: string) => {
     const order = orders.find((o) => o.id === orderId);
@@ -1021,15 +1380,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateUserProfile = (updates: Partial<UserProfile>) => {
     setUser((prev) => ({ ...prev, ...updates }));
+    if (authUid && updates.name) {
+      import('@/services/userService').then(({ updateUserProfileDoc }) => {
+        updateUserProfileDoc(authUid, {
+          name: updates.name,
+          phoneNumber: updates.phoneNumber || updates.phone,
+          avatar: updates.avatar,
+        }).catch(() => {});
+      }).catch(() => {});
+    }
   };
 
   const setPhoneNumber = (countryCode: string, phone: string) => {
+    const fullPhone = `${countryCode} ${phone}`.trim();
     setUser((prev) => ({
       ...prev,
       phoneCountryCode: countryCode,
       phoneNumber: phone,
-      phone: `${countryCode} ${phone}`,
+      phone: fullPhone,
     }));
+    if (authUid) {
+      import('@/services/userService').then(({ updateUserProfileDoc }) => {
+        updateUserProfileDoc(authUid, { phoneNumber: fullPhone }).catch(() => {});
+      }).catch(() => {});
+    }
   };
 
   const setEmailVerified = (verified: boolean) => {
@@ -1049,9 +1423,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const addresses = address.isDefault
         ? prev.savedAddresses.map((a) => ({ ...a, isDefault: false }))
         : prev.savedAddresses;
+      const updated = [...addresses, newAddr];
+      syncAddressesToCloud(updated);
       return {
         ...prev,
-        savedAddresses: [...addresses, newAddr],
+        savedAddresses: updated,
       };
     });
   };
@@ -1066,6 +1442,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           a.id === id ? { ...a, isDefault: true } : { ...a, isDefault: false }
         );
       }
+      syncAddressesToCloud(addresses);
       return {
         ...prev,
         savedAddresses: addresses,
@@ -1074,20 +1451,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteAddress = (id: string) => {
-    setUser((prev) => ({
-      ...prev,
-      savedAddresses: prev.savedAddresses.filter((a) => a.id !== id),
-    }));
+    setUser((prev) => {
+      const updated = prev.savedAddresses.filter((a) => a.id !== id);
+      syncAddressesToCloud(updated);
+      return {
+        ...prev,
+        savedAddresses: updated,
+      };
+    });
   };
 
   const setDefaultAddress = (id: string) => {
-    setUser((prev) => ({
-      ...prev,
-      savedAddresses: prev.savedAddresses.map((a) => ({
+    setUser((prev) => {
+      const updated = prev.savedAddresses.map((a) => ({
         ...a,
         isDefault: a.id === id,
-      })),
-    }));
+      }));
+      syncAddressesToCloud(updated);
+      return {
+        ...prev,
+        savedAddresses: updated,
+      };
+    });
   };
 
   const formatPrice = (amountKRW: number): string => {
@@ -1154,6 +1539,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         completeOnboarding,
         categories,
         banners,
+        logout,
+        hasKoreanAddress,
+        defaultKoreanAddress,
+        addKoreanAddress,
+        uploadPaymentScreenshot,
       }}
     >
       {children}

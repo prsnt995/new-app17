@@ -22,34 +22,67 @@ service cloud.firestore {
          request.auth.token.email == 'namaste.mart.admin@gmail.com');
     }
 
+    function hasAdminRole() {
+      return isAuthenticated() &&
+        (request.auth.token.role == 'admin' ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+    }
+
     function hasAdminAccess() {
-      return isAdmin() || isAdminEmail();
+      return isAdmin() || isAdminEmail() || hasAdminRole();
     }
 
     // ── PRODUCTS ──────────────────────────────────────────────────────────
-    // Anyone can read non-hidden products; only admins can write
+    // Anyone can read public / non-hidden products; only admins can write
     match /products/{productId} {
       allow read: if !resource.data.isHidden ||
                      (isAuthenticated() && hasAdminAccess());
-      allow create, update, delete: if hasAdminAccess();
+      allow create, delete: if hasAdminAccess();
+      allow update: if hasAdminAccess() ||
+                       (isAuthenticated() &&
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'updatedAt']) &&
+                        request.resource.data.stock >= 0);
+    }
+
+    // ── CARTS ─────────────────────────────────────────────────────────────
+    // Users can only access and modify their own cart
+    match /carts/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // ── WISHLISTS ─────────────────────────────────────────────────────────
+    // Users can only access and modify their own wishlist
+    match /wishlists/{userId} {
+      allow read, write: if isOwner(userId);
     }
 
     // ── ORDERS ────────────────────────────────────────────────────────────
-    // Customers read/write their own orders; admins read/write all
+    // Customers read/create their own orders; admins read/manage all orders
     match /orders/{orderId} {
       allow read: if hasAdminAccess() ||
-                     (isAuthenticated() && request.auth.uid == resource.data.customerUid);
+                     (isAuthenticated() &&
+                      (request.auth.uid == resource.data.customerUid ||
+                       request.auth.uid == resource.data.userId));
       allow create: if isAuthenticated() &&
-                       request.resource.data.customerUid == request.auth.uid;
+                       (request.resource.data.customerUid == request.auth.uid ||
+                        request.resource.data.userId == request.auth.uid);
       allow update: if hasAdminAccess() ||
-                       (isAuthenticated() && request.auth.uid == resource.data.customerUid &&
-                        // Customers can only cancel their own orders
-                        request.resource.data.status == 'CANCELLED');
+                       (isAuthenticated() &&
+                        (request.auth.uid == resource.data.customerUid ||
+                         request.auth.uid == resource.data.userId) &&
+                        (
+                          (request.resource.data.status == 'CANCELLED' ||
+                           request.resource.data.status == 'cancelled') ||
+                          (request.resource.data.payment.verified == false &&
+                           request.resource.data.payment.verifiedBy == null &&
+                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['payment', 'paymentScreenshot', 'status', 'updatedAt']))
+                        ));
       allow delete: if hasAdminAccess();
     }
 
     // ── REVIEWS ───────────────────────────────────────────────────────────
-    // Anyone can read; authenticated users can write their own
+    // Anyone can read; authenticated users can write their own reviews
     match /reviews/{reviewId} {
       allow read: if true;
       allow create: if isAuthenticated() &&
@@ -58,24 +91,29 @@ service cloud.firestore {
     }
 
     // ── CATEGORIES ────────────────────────────────────────────────────────
-    // Anyone reads active categories; only admins manage
+    // Anyone reads categories; only admins manage
     match /categories/{catId} {
       allow read: if true;
       allow create, update, delete: if hasAdminAccess();
     }
 
     // ── BANNERS ───────────────────────────────────────────────────────────
-    // Anyone reads active banners; only admins manage
+    // Anyone reads banners; only admins manage
     match /banners/{bannerId} {
       allow read: if true;
       allow create, update, delete: if hasAdminAccess();
     }
 
     // ── USERS ────────────────────────────────────────────────────────────
-    // Users read/write only their own document; admins read all
+    // Users read/write only their own document & addresses subcollection; admins read all
     match /users/{userId} {
       allow read: if isOwner(userId) || hasAdminAccess();
-      allow write: if isOwner(userId);
+      allow write: if isOwner(userId) || hasAdminAccess();
+
+      match /addresses/{addressId} {
+        allow read: if isOwner(userId) || hasAdminAccess();
+        allow write: if isOwner(userId) || hasAdminAccess();
+      }
     }
 
     // ── ADMINS ────────────────────────────────────────────────────────────
@@ -86,9 +124,16 @@ service cloud.firestore {
     }
 
     // ── ANALYTICS ─────────────────────────────────────────────────────────
-    // Only admins can read/write analytics summaries
+    // Only admins can read/write analytics
     match /analytics/{docId} {
       allow read, write: if hasAdminAccess();
+    }
+
+    // ── PARCELS ────────────────────────────────────────────────────────────
+    // Admins manage parcels; customers can read their own shipment parcels
+    match /parcels/{parcelId} {
+      allow read: if hasAdminAccess() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow write: if hasAdminAccess();
     }
   }
 }

@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   Alert,
   Image,
   ImageBackground,
+  Modal,
   Platform,
   ScrollView,
   StatusBar,
@@ -15,11 +16,23 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useApp } from '@/context/AppContext';
-import { auth, googleProvider, createGoogleCredential, signInWithCredential } from '@/config/firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
+import {
+  auth,
+  googleProvider,
+  createGoogleCredential,
+  signInWithCredential,
+  signInWithPopup,
+} from '@/config/firebase';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
-import { googleSignInBackend } from '@/services/api';
+import { googleSignInBackend, verifyOtp } from '@/services/api';
+import {
+  sendEmailVerificationCode,
+  verifyEmailCodeAndLogin,
+  completeCustomerRegistration,
+} from '@/services/authService';
+import { ensureUserDoc, saveUserDeliveryAddress } from '@/services/userService';
+import { Address, KoreanAddress } from '@/types';
 
 // For web-based OAuth redirect completion
 WebBrowser.maybeCompleteAuthSession();
@@ -31,12 +44,134 @@ const GOOGLE_DISCOVERY = {
   revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
 };
 
+// ─── POPULAR SOUTH KOREA ADDRESS HUBS FOR QUICK POSTAL SEARCH ────────────────
+interface KoreanAddressPreset {
+  postalCode: string;
+  province: string;
+  city: string;
+  district: string;
+  streetAddress: string;
+  buildingName: string;
+  areaLabel: string;
+}
+
+const KOREAN_ADDRESS_PRESETS: KoreanAddressPreset[] = [
+  {
+    postalCode: '06000',
+    province: 'Seoul',
+    city: 'Seoul',
+    district: 'Gangnam-gu',
+    streetAddress: 'Gangnam-daero 396',
+    buildingName: 'Gangnam Tower',
+    areaLabel: 'Seoul · Gangnam Station',
+  },
+  {
+    postalCode: '06164',
+    province: 'Seoul',
+    city: 'Seoul',
+    district: 'Gangnam-gu',
+    streetAddress: 'Teheran-ro 521',
+    buildingName: 'COEX Grand Mall',
+    areaLabel: 'Seoul · Samseong / COEX',
+  },
+  {
+    postalCode: '04352',
+    province: 'Seoul',
+    city: 'Seoul',
+    district: 'Yongsan-gu',
+    streetAddress: 'Itaewon-ro 240',
+    buildingName: 'Itaewon Center Plaza',
+    areaLabel: 'Seoul · Itaewon / Yongsan',
+  },
+  {
+    postalCode: '04043',
+    province: 'Seoul',
+    city: 'Seoul',
+    district: 'Mapo-gu',
+    streetAddress: 'Yanghwa-ro 160',
+    buildingName: 'Hongdae Central Square',
+    areaLabel: 'Seoul · Hongdae / Mapo',
+  },
+  {
+    postalCode: '07333',
+    province: 'Seoul',
+    city: 'Seoul',
+    district: 'Yeongdeungpo-gu',
+    streetAddress: 'Yeouinaru-ro 56',
+    buildingName: 'Yeouido Financial Plaza',
+    areaLabel: 'Seoul · Yeouido Hub',
+  },
+  {
+    postalCode: '05551',
+    province: 'Seoul',
+    city: 'Seoul',
+    district: 'Songpa-gu',
+    streetAddress: 'Olympic-ro 300',
+    buildingName: 'Lotte World Tower',
+    areaLabel: 'Seoul · Jamsil / Songpa',
+  },
+  {
+    postalCode: '13494',
+    province: 'Gyeonggi-do',
+    city: 'Seongnam-si',
+    district: 'Bundang-gu',
+    streetAddress: 'Pangyoyeok-ro 146',
+    buildingName: 'Pangyo Techno Valley Hub',
+    areaLabel: 'Gyeonggi · Pangyo / Bundang',
+  },
+  {
+    postalCode: '16499',
+    province: 'Gyeonggi-do',
+    city: 'Suwon-si',
+    district: 'Yeongtong-gu',
+    streetAddress: 'Gwanggyojungang-ro 140',
+    buildingName: 'Gwanggyo Center Mall',
+    areaLabel: 'Gyeonggi · Suwon / Gwanggyo',
+  },
+  {
+    postalCode: '21998',
+    province: 'Incheon',
+    city: 'Incheon',
+    district: 'Yeonsu-gu',
+    streetAddress: 'Songdogukje-daero 123',
+    buildingName: 'Songdo International Tower',
+    areaLabel: 'Incheon · Songdo City',
+  },
+  {
+    postalCode: '48099',
+    province: 'Busan',
+    city: 'Busan',
+    district: 'Haeundae-gu',
+    streetAddress: 'Haeundaehaebyeon-ro 280',
+    buildingName: 'Haeundae Ocean View Apt',
+    areaLabel: 'Busan · Haeundae',
+  },
+  {
+    postalCode: '41911',
+    province: 'Daegu',
+    city: 'Daegu',
+    district: 'Jung-gu',
+    streetAddress: 'Dongseong-ro 30',
+    buildingName: 'Dongseong Commercial Tower',
+    areaLabel: 'Daegu · Dongseong-ro',
+  },
+  {
+    postalCode: '35242',
+    province: 'Daejeon',
+    city: 'Daejeon',
+    district: 'Seo-gu',
+    streetAddress: 'Dunsan-ro 100',
+    buildingName: 'Dunsan Central Plaza',
+    areaLabel: 'Daejeon · Dunsan-dong',
+  },
+];
+
 export default function LoginScreen() {
   const router = useRouter();
   const { user, updateUserProfile, isDarkMode } = useApp();
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
-  // GOOGLE OAUTH SETUP
+  // GOOGLE OAUTH SETUP (FOR NATIVE PLATFORMS)
   const googleClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || '';
   const redirectUri = AuthSession.makeRedirectUri({ scheme: 'namastemart' });
 
@@ -50,55 +185,99 @@ export default function LoginScreen() {
     GOOGLE_DISCOVERY
   );
 
-  // LOGIN MODE: 'INSTAGRAM' (Direct Login) | 'GMAIL_OTP' (Gmail Code)
-  const [loginMode, setLoginMode] = useState<'INSTAGRAM' | 'GMAIL_OTP'>('INSTAGRAM');
+  // AUTH TABS / MODES
+  // 'REGISTER_STEP1' | 'REGISTER_STEP2_OTP' | 'REGISTER_STEP3_ADDRESS' | 'RETURNING_LOGIN' | 'RETURNING_LOGIN_OTP'
+  const [authTab, setAuthTab] = useState<'REGISTER' | 'LOGIN'>('REGISTER');
+  const [registerStep, setRegisterStep] = useState<1 | 2 | 3>(1);
 
-  // FORM INPUT STATES
-  const [usernameInput, setUsernameInput] = useState(user?.email || '');
-  const [passwordInput, setPasswordInput] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  // STEP 1: CUSTOMER INFORMATION FORM STATES
+  const [regName, setRegName] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [regEmail, setRegEmail] = useState('');
 
-  // GMAIL OTP STATES
-  const [gmailInput, setGmailInput] = useState(user?.email || '');
-  const [userEnteredCode, setUserEnteredCode] = useState('');
-  const [isCodeSent, setIsCodeSent] = useState(false);
-  const [generatedCode, setGeneratedCode] = useState<string>('123456');
-  const [timerSeconds, setTimerSeconds] = useState(60);
+  // STEP 2: EMAIL VERIFICATION OTP STATES
+  const [otpInput, setOtpInput] = useState('');
+  const [verifiedEmail, setVerifiedEmail] = useState('');
+  const [verifiedUid, setVerifiedUid] = useState<string | null>(null);
+  const [verifiedCustomToken, setVerifiedCustomToken] = useState<string | null>(null);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const [expirySeconds, setExpirySeconds] = useState(600); // 10 minutes
+  const [attemptsRemaining, setAttemptsRemaining] = useState(5);
+
+  // STEP 3: KOREAN DELIVERY ADDRESS STATES
+  const [addrRecipientName, setAddrRecipientName] = useState('');
+  const [addrPhone, setAddrPhone] = useState('');
+  const [addrPostalCode, setAddrPostalCode] = useState('06000');
+  const [addrProvince, setAddrProvince] = useState('Seoul');
+  const [addrCity, setAddrCity] = useState('Seoul');
+  const [addrDistrict, setAddrDistrict] = useState('Gangnam-gu');
+  const [addrStreetAddress, setAddrStreetAddress] = useState('');
+  const [addrBuildingName, setAddrBuildingName] = useState('');
+  const [addrUnitNumber, setAddrUnitNumber] = useState('');
+  const [addrDeliveryInstructions, setAddrDeliveryInstructions] = useState('');
+  const [addrIsDefault, setAddrIsDefault] = useState(true);
+
+  // KOREAN ADDRESS SEARCH MODAL HELPER
+  const [showAddressSearchModal, setShowAddressSearchModal] = useState(false);
+  const [searchAddressQuery, setSearchAddressQuery] = useState('');
+
+  // RETURNING CUSTOMER LOGIN FORM STATES
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginOtp, setLoginOtp] = useState('');
+  const [isLoginOtpSent, setIsLoginOtpSent] = useState(false);
+
+  // ADMIN OVERRIDE
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [adminUsername, setAdminUsername] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+
+  // LOADING STATES
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
-  // COUNTDOWN TIMER FOR RESENDING GMAIL CODE
+  // ─── COOLDOWN TIMER ──────────────────────────────────────────────────────────
   useEffect(() => {
-    let interval: any = null;
-    if (isCodeSent && timerSeconds > 0) {
-      interval = setInterval(() => {
-        setTimerSeconds((prev) => prev - 1);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    if (cooldownSeconds > 0) {
+      timer = setInterval(() => {
+        setCooldownSeconds((prev) => (prev > 0 ? prev - 1 : 0));
       }, 1000);
     }
-    return () => clearInterval(interval);
-  }, [isCodeSent, timerSeconds]);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [cooldownSeconds]);
 
-  // HANDLE GOOGLE OAUTH RESPONSE
+  // ─── EXPIRY TIMER ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    if (registerStep === 2 && expirySeconds > 0) {
+      timer = setInterval(() => {
+        setExpirySeconds((prev) => (prev > 0 ? prev - 1 : 0));
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [registerStep, expirySeconds]);
+
+  // ─── GOOGLE OAUTH RESPONSE LISTENER ──────────────────────────────────────────
   useEffect(() => {
     if (googleResponse?.type === 'success' && googleResponse.params?.id_token) {
-      handleGoogleSignInResult(googleResponse.params.id_token);
+      handleNativeGoogleIdToken(googleResponse.params.id_token);
     } else if (googleResponse?.type === 'error') {
       setIsGoogleLoading(false);
       Alert.alert('Google Sign-In Error', 'Could not sign in with Google. Please try again.');
     }
   }, [googleResponse]);
 
-  // PROCESS GOOGLE SIGN-IN RESULT
-  const handleGoogleSignInResult = async (idToken: string) => {
+  const handleNativeGoogleIdToken = async (idToken: string) => {
     try {
       setIsGoogleLoading(true);
-
-      // Sign in to Firebase with the Google credential
       const credential = createGoogleCredential(idToken);
       const firebaseResult = await signInWithCredential(auth, credential);
       const firebaseUser = firebaseResult.user;
 
-      // Also verify with backend
       try {
         const backendToken = await firebaseUser.getIdToken();
         await googleSignInBackend(backendToken);
@@ -106,217 +285,488 @@ export default function LoginScreen() {
         console.log('Backend Google sign-in notice:', backendErr);
       }
 
-      // Update local user profile with Google data
+      await finalizeGoogleUser(firebaseUser);
+    } catch (error: any) {
+      setIsGoogleLoading(false);
+      Alert.alert('Google Sign-In Error', error.message || 'Could not complete Google sign-in.');
+    }
+  };
+
+  // ═════════════════════════════════════════════════════════════════════════════
+  // GOOGLE LOGIN HANDLER
+  // ═════════════════════════════════════════════════════════════════════════════
+  const handleContinueWithGoogle = async () => {
+    setIsGoogleLoading(true);
+    try {
+      if (Platform.OS === 'web') {
+        const result = await signInWithPopup(auth, googleProvider);
+        await finalizeGoogleUser(result.user);
+      } else if (googleClientId) {
+        await promptGoogleAsync();
+      } else {
+        // Fallback demo for native environments without configured Google Client ID
+        const demoUid = `google-${Date.now()}`;
+        const demoUser = {
+          uid: demoUid,
+          displayName: 'Google Customer',
+          email: 'googlecustomer@gmail.com',
+          photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500',
+          emailVerified: true,
+          phoneNumber: '010-9876-5432',
+        };
+        await finalizeGoogleUser(demoUser);
+      }
+    } catch (err: any) {
+      setIsGoogleLoading(false);
+      if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
+        Alert.alert('Google Sign-In Notice', err.message || 'Could not initiate Google sign-in.');
+      }
+    }
+  };
+
+  const finalizeGoogleUser = async (firebaseUser: any) => {
+    try {
+      const uid = firebaseUser.uid;
+      const finalEmail = (firebaseUser.email || '').toLowerCase();
+      const finalName =
+        firebaseUser.displayName ||
+        finalEmail.split('@')[0].charAt(0).toUpperCase() + finalEmail.split('@')[0].slice(1);
+      const finalAvatar =
+        firebaseUser.photoURL ||
+        'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400';
+
+      const uDoc = await ensureUserDoc(uid, {
+        name: finalName,
+        email: finalEmail,
+        avatar: finalAvatar,
+        role: 'customer',
+        emailVerified: true,
+      });
+
+      const hasAddress = uDoc.addresses && uDoc.addresses.length > 0;
+
+      const mappedAddrs: Address[] = (uDoc.addresses || []).map((a: any) => ({
+        id: a.id || `addr-${Date.now()}`,
+        title: a.label || 'Home',
+        type: 'HOME',
+        recipientName: a.recipientName || finalName,
+        phone: a.phoneNumber || a.phone || '',
+        phoneNumber: a.phoneNumber || a.phone || '',
+        fullAddress: `${a.address || a.streetAddress}, ${a.detailAddress || ''} (${a.postalCode})`,
+        province: a.province || 'Seoul',
+        city: a.city || 'Seoul',
+        district: a.district || 'Gangnam-gu',
+        streetAddress: a.streetAddress || a.address || '',
+        buildingName: a.buildingName || '',
+        unitNumber: a.unitNumber || '',
+        detailAddress: a.detailAddress || '',
+        deliveryInstructions: a.deliveryInstructions || '',
+        postalCode: a.postalCode || '06000',
+        country: 'South Korea',
+        isDefault: !!a.isDefault,
+        label: a.label || 'Home',
+      }));
+
       updateUserProfile({
-        name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-        email: firebaseUser.email || '',
-        avatar: firebaseUser.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500',
+        id: uid,
+        name: uDoc.name || finalName,
+        email: uDoc.email || finalEmail,
+        phone: uDoc.phoneNumber || firebaseUser.phoneNumber || '',
+        phoneNumber: uDoc.phoneNumber || firebaseUser.phoneNumber || '',
+        avatar: uDoc.avatar || finalAvatar,
         isLoggedIn: true,
-        emailVerified: firebaseUser.emailVerified || false,
+        emailVerified: true,
+        profileSetupComplete: hasAddress,
+        savedAddresses: mappedAddrs,
         authProvider: 'google',
       });
 
       setIsGoogleLoading(false);
 
-      // Navigate to onboarding for phone number & address collection
-      Alert.alert(
-        'Welcome! 🎉',
-        `Signed in as ${firebaseUser.email}\n\nLet\'s complete your profile.`,
-        [{ text: 'Continue', onPress: () => router.replace('/onboarding') }]
-      );
-    } catch (error: any) {
-      setIsGoogleLoading(false);
-      console.log('Google Sign-In Firebase Error:', error);
-      Alert.alert('Sign-In Error', error.message || 'Could not complete Google sign-in.');
-    }
-  };
-
-  // CONTINUE WITH GOOGLE BUTTON HANDLER
-  const handleContinueWithGoogle = async () => {
-    if (!googleClientId) {
-      // Fallback: If no Google Client ID configured, use a demo flow
-      setIsGoogleLoading(true);
-      setTimeout(() => {
-        setIsGoogleLoading(false);
-        const demoEmail = 'user@gmail.com';
-        const demoName = 'User';
-
-        updateUserProfile({
-          name: demoName,
-          email: demoEmail,
-          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500',
-          isLoggedIn: true,
-          emailVerified: false,
-          authProvider: 'google',
-        });
-
+      if (hasAddress) {
+        router.replace('/');
+      } else {
+        // Pre-fill Step 3 for Google user needing address
+        setVerifiedEmail(finalEmail);
+        setVerifiedUid(uid);
+        setAddrRecipientName(finalName);
+        setAddrPhone(uDoc.phoneNumber || firebaseUser.phoneNumber || '010-');
+        setAuthTab('REGISTER');
+        setRegisterStep(3);
         Alert.alert(
-          'Google Sign-In (Demo)',
-          `Signed in as ${demoEmail}\n\n(Configure EXPO_PUBLIC_GOOGLE_CLIENT_ID for real Google OAuth)\n\nLet\'s complete your profile.`,
-          [{ text: 'Continue', onPress: () => router.replace('/onboarding') }]
+          'Google Account Connected! 🇰🇷',
+          'Please enter your South Korean delivery address to complete your account setup.'
         );
-      }, 800);
-      return;
-    }
-
-    setIsGoogleLoading(true);
-    try {
-      await promptGoogleAsync();
-    } catch (err) {
-      setIsGoogleLoading(false);
-      Alert.alert('Error', 'Could not initiate Google sign-in.');
-    }
-  };
-
-  // REAL EMAIL DISPATCH FUNCTION (DISPATCHES CODE TO USER'S GMAIL)
-  const sendGmailVerificationCode = async (targetEmail: string, code: string) => {
-    try {
-      const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          service_id: 'service_namaste',
-          template_id: 'template_otp',
-          user_id: 'public_key_namaste',
-          template_params: {
-            to_email: targetEmail,
-            verification_code: code,
-            app_name: 'NamasteMart Express Logistics',
-          },
-        }),
-      });
-      return response.ok;
-    } catch (error) {
-      console.log('Gmail Dispatch Log:', error);
-      return false;
-    }
-  };
-
-  // 1. INSTAGRAM STYLE DIRECT LOG IN WITH FIREBASE AUTH INTEGRATION
-  const handleInstagramStyleLogin = async () => {
-    const username = usernameInput.trim();
-    if (!username) {
-      Alert.alert('Missing Field', 'Please enter your phone number, username, or email.');
-      return;
-    }
-
-    setIsLoading(true);
-
-    const emailToUse = username.includes('@') ? username : `${username}@gmail.com`;
-
-    try {
-      if (passwordInput && passwordInput.length >= 6) {
-        // Try Firebase Authentication
-        await signInWithEmailAndPassword(auth, emailToUse, passwordInput).catch(async () => {
-          // If account doesn't exist, create user in Firebase Auth
-          await createUserWithEmailAndPassword(auth, emailToUse, passwordInput);
-        });
       }
-    } catch (e) {
-      console.log('Firebase Auth Notice:', e);
+    } catch (err: any) {
+      setIsGoogleLoading(false);
+      Alert.alert('Google Sync Error', err.message || 'Could not sync Google account.');
     }
-
-    setIsLoading(false);
-    const displayName = username.includes('@') ? username.split('@')[0] : username;
-
-    updateUserProfile({
-      name: displayName.charAt(0).toUpperCase() + displayName.slice(1),
-      email: emailToUse,
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500',
-      isLoggedIn: true,
-      emailVerified: false,
-      authProvider: 'email',
-    });
-
-    Alert.alert('Welcome! 🎉', `Logged in as ${username}\n\nLet\'s complete your profile.`, [
-      {
-        text: 'Continue',
-        onPress: () => router.replace('/onboarding'),
-      },
-    ]);
   };
 
-  // 2. DISPATCH GMAIL VERIFICATION CODE TO GMAIL INBOX
-  const handleSendGmailCode = async () => {
-    const emailTrimmed = gmailInput.trim().toLowerCase();
-    if (!emailTrimmed || !emailTrimmed.includes('@')) {
-      Alert.alert('Invalid Email', 'Please enter a valid Gmail address (e.g. name@gmail.com).');
+  // ═════════════════════════════════════════════════════════════════════════════
+  // REGISTRATION STEP 1: VALIDATE CUSTOMER INFO & TRIGGER OTP (DO NOT CREATE ACCOUNT YET)
+  // ═════════════════════════════════════════════════════════════════════════════
+  const handleProceedFromStep1ToStep2 = async () => {
+    const name = regName.trim();
+    const phone = regPhone.trim();
+    const email = regEmail.trim().toLowerCase();
+
+    if (!name || name.length < 2) {
+      Alert.alert('Missing Name', 'Please enter your full name (at least 2 characters).');
       return;
     }
 
-    setIsLoading(true);
-
-    // Generate secret 6-digit verification code
-    const secretCode = Math.floor(100000 + Math.random() * 900000).toString();
-    setGeneratedCode(secretCode);
-
-    // Attempt real email dispatch
-    await sendGmailVerificationCode(emailTrimmed, secretCode);
-
-    setIsLoading(false);
-    setIsCodeSent(true);
-    setUserEnteredCode('');
-    setTimerSeconds(60);
-
-    Alert.alert(
-      '📧 Verification Code Sent!',
-      `A 6-digit Google verification code has been dispatched to your Gmail inbox:\n\nTo: ${emailTrimmed}\n\nPlease check your Gmail app / inbox to retrieve your code.`,
-      [
-        {
-          text: 'Open Gmail Inbox',
-        },
-      ]
-    );
-  };
-
-  // 3. VERIFY GMAIL CODE FROM GMAIL INBOX
-  const handleVerifyGmailCode = () => {
-    const code = userEnteredCode.trim();
-    if (!code || code.length < 6) {
+    if (!phone || phone.length < 9) {
       Alert.alert(
-        'Enter 6-Digit Code',
-        'Please enter the 6-digit verification code sent to your Gmail inbox.'
+        'Invalid Korean Phone',
+        'Please enter a valid Korean phone number (e.g. 010-1234-5678 or 01012345678).'
       );
       return;
     }
 
-    // Strict verification matching the secret code sent to Gmail
-    if (code !== generatedCode && code !== '123456') {
-      Alert.alert(
-        'Incorrect Verification Code',
-        `The code "${code}" does not match the 6-digit code sent to ${gmailInput}.\nPlease check your Gmail inbox and try again.`
-      );
+    if (!email || !email.includes('@') || !email.includes('.')) {
+      Alert.alert('Invalid Email', 'Please enter a valid email address (e.g. name@gmail.com).');
+      return;
+    }
+
+    if (cooldownSeconds > 0) {
+      Alert.alert('Please Wait', `You can request another verification code in ${cooldownSeconds} seconds.`);
       return;
     }
 
     setIsLoading(true);
-    setTimeout(() => {
+    try {
+      const res = await sendEmailVerificationCode(email);
+
+      setIsLoading(false);
+      setVerifiedEmail(email);
+      setOtpInput('');
+      setAttemptsRemaining(5);
+      setExpirySeconds(600); // 10 minutes
+      setCooldownSeconds(res.cooldownSeconds || 45);
+
+      // Pre-fill Step 3 address fields
+      setAddrRecipientName(name);
+      setAddrPhone(phone);
+
+      // Transition to Step 2 (Email Verification)
+      setRegisterStep(2);
+
+      Alert.alert(
+        'Verification Code Sent! ✉️',
+        `A 6-digit one-time verification code has been sent to your Gmail inbox:\n${email}\n\nPlease check your inbox to proceed.`
+      );
+    } catch (err: any) {
+      setIsLoading(false);
+      Alert.alert('Could Not Send Code', err.message || 'Failed to send verification code. Please try again.');
+    }
+  };
+
+  // ═════════════════════════════════════════════════════════════════════════════
+  // REGISTRATION STEP 2: VERIFY EMAIL OTP (MUST SUCCEED BEFORE PROCEEDING TO STEP 3)
+  // ═════════════════════════════════════════════════════════════════════════════
+  const handleVerifyEmailStep2 = async () => {
+    const code = otpInput.trim();
+
+    if (!code) {
+      Alert.alert('Enter Code', 'Please enter the 6-digit verification code sent to your email.');
+      return;
+    }
+
+    if (code.length !== 6) {
+      Alert.alert('Invalid Code Format', 'The verification code must be exactly 6 digits.');
+      return;
+    }
+
+    if (expirySeconds <= 0) {
+      Alert.alert('Code Expired', 'The verification code has expired. Please tap Resend Code.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const verifyRes = await verifyOtp(verifiedEmail, code);
+
+      if (!verifyRes.success) {
+        setIsLoading(false);
+        setAttemptsRemaining((prev) => Math.max(0, prev - 1));
+        Alert.alert(
+          'Verification Failed ❌',
+          verifyRes.message || 'Incorrect verification code. Please check your Gmail inbox and try again.'
+        );
+        return;
+      }
+
+      // Store verified auth credentials for Step 4
+      setVerifiedUid(verifyRes.uid || null);
+      setVerifiedCustomToken(verifyRes.customToken || null);
       setIsLoading(false);
 
-      const derivedName = gmailInput.split('@')[0];
+      // Transition to Step 3: Korean Delivery Address
+      setRegisterStep(3);
 
+      Alert.alert(
+        '✅ Email Verified Successfully!',
+        'Your email address has been verified. Now, please enter your South Korean delivery address to complete registration.'
+      );
+    } catch (err: any) {
+      setIsLoading(false);
+      setAttemptsRemaining((prev) => Math.max(0, prev - 1));
+      Alert.alert('Verification Error', err.message || 'Could not verify code. Please try again.');
+    }
+  };
+
+  const handleResendStep2Code = async () => {
+    if (cooldownSeconds > 0) {
+      Alert.alert('Please Wait', `You can request another verification code in ${cooldownSeconds} seconds.`);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await sendEmailVerificationCode(verifiedEmail);
+      setIsLoading(false);
+      setOtpInput('');
+      setAttemptsRemaining(5);
+      setExpirySeconds(600);
+      setCooldownSeconds(res.cooldownSeconds || 45);
+
+      Alert.alert(
+        'New Code Sent 📩',
+        `A fresh 6-digit verification code has been sent to your Gmail inbox (${verifiedEmail}).`
+      );
+    } catch (err: any) {
+      setIsLoading(false);
+      Alert.alert('Resend Error', err.message || 'Could not resend verification code.');
+    }
+  };
+
+  // ═════════════════════════════════════════════════════════════════════════════
+  // REGISTRATION STEP 3 ➔ STEP 4 & 5: COMPLETE REGISTRATION & ATOMIC ACCOUNT CREATION
+  // ═════════════════════════════════════════════════════════════════════════════
+  const handleCompleteRegistration = async () => {
+    // 1. Verify all 4 requirements
+    const name = regName.trim() || addrRecipientName.trim();
+    const phone = regPhone.trim() || addrPhone.trim();
+    const email = verifiedEmail.trim().toLowerCase();
+    const postal = addrPostalCode.trim();
+    const province = addrProvince.trim() || 'Seoul';
+    const city = addrCity.trim() || 'Seoul';
+    const district = addrDistrict.trim() || 'Gangnam-gu';
+    const street = addrStreetAddress.trim();
+    const building = addrBuildingName.trim();
+    const unit = addrUnitNumber.trim();
+    const detail = `${building} ${unit}`.trim() || 'Unit 1';
+    const instructions = addrDeliveryInstructions.trim();
+
+    if (!name) {
+      Alert.alert('Missing Name', 'Please enter full recipient name.');
+      return;
+    }
+    if (!phone) {
+      Alert.alert('Missing Phone', 'Please enter a valid Korean phone number.');
+      return;
+    }
+    if (!postal || postal.length < 5) {
+      Alert.alert('Missing Postal Code', 'Please enter a valid 5-digit Korean postal code (e.g. 06000).');
+      return;
+    }
+    if (!street) {
+      Alert.alert('Missing Street Address', 'Please enter your road name / street address in South Korea.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const newKoreanAddress: KoreanAddress = {
+        id: `addr-${Date.now()}`,
+        recipientName: name,
+        phoneNumber: phone,
+        phone,
+        postalCode: postal,
+        province,
+        city,
+        district,
+        address: street,
+        streetAddress: street,
+        buildingName: building,
+        unitNumber: unit,
+        detailAddress: detail,
+        deliveryInstructions: instructions,
+        country: 'South Korea',
+        label: 'Home',
+        isDefault: addrIsDefault,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      // STEP 4: ATOMIC ACCOUNT CREATION (Saves Name, Phone, Verified Email, UID, Address)
+      const authResult = await completeCustomerRegistration({
+        name,
+        phoneNumber: phone,
+        email,
+        koreanAddress: newKoreanAddress,
+        customToken: verifiedCustomToken,
+        uid: verifiedUid || undefined,
+      });
+
+      const convertedAddress: Address = {
+        id: newKoreanAddress.id,
+        title: 'Home',
+        type: 'HOME',
+        recipientName: newKoreanAddress.recipientName,
+        phone: newKoreanAddress.phoneNumber,
+        phoneNumber: newKoreanAddress.phoneNumber,
+        fullAddress: `${newKoreanAddress.address}, ${newKoreanAddress.detailAddress} (${newKoreanAddress.postalCode})`,
+        province: newKoreanAddress.province,
+        city: newKoreanAddress.city || 'Seoul',
+        district: newKoreanAddress.district,
+        streetAddress: newKoreanAddress.streetAddress,
+        buildingName: newKoreanAddress.buildingName,
+        unitNumber: newKoreanAddress.unitNumber,
+        detailAddress: newKoreanAddress.detailAddress,
+        deliveryInstructions: newKoreanAddress.deliveryInstructions,
+        postalCode: newKoreanAddress.postalCode,
+        country: 'South Korea',
+        isDefault: newKoreanAddress.isDefault,
+        label: 'Home',
+      };
+
+      // STEP 5: AUTOMATIC LOGIN (Establishes session & AppContext state)
       updateUserProfile({
-        name: derivedName.charAt(0).toUpperCase() + derivedName.slice(1),
-        email: gmailInput.trim().toLowerCase(),
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500',
+        id: authResult.user.uid,
+        name,
+        email,
+        phone,
+        phoneNumber: phone,
+        avatar: (authResult.user as any).photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400',
         isLoggedIn: true,
-        emailVerified: true, // Already verified via OTP in this flow
+        emailVerified: true,
+        profileSetupComplete: true,
+        savedAddresses: [convertedAddress],
         authProvider: 'email',
       });
 
+      setIsLoading(false);
+
       Alert.alert(
-        'Gmail Verified Successfully 🎉',
-        `Welcome to NamasteMart!\nLet\'s complete your profile.`,
+        '🎉 Registration Complete!',
+        `Welcome to Namaste Mart, ${name}! Your account has been created with verified email and South Korean delivery address.`,
         [
           {
-            text: 'Continue',
-            onPress: () => router.replace('/onboarding'),
+            text: 'Start Shopping 🛍️',
+            onPress: () => router.replace('/'),
           },
         ]
       );
-    }, 800);
+    } catch (err: any) {
+      setIsLoading(false);
+      Alert.alert('Registration Error', err.message || 'Could not complete registration. Please try again.');
+    }
+  };
+
+  // ═════════════════════════════════════════════════════════════════════════════
+  // RETURNING CUSTOMER LOGIN FLOW
+  // ═════════════════════════════════════════════════════════════════════════════
+  const handleSendLoginOtp = async () => {
+    const email = loginEmail.trim().toLowerCase();
+    if (!email || !email.includes('@') || !email.includes('.')) {
+      Alert.alert('Invalid Email', 'Please enter your registered email address.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await sendEmailVerificationCode(email);
+      setIsLoading(false);
+      setIsLoginOtpSent(true);
+      setCooldownSeconds(res.cooldownSeconds || 45);
+      Alert.alert(
+        'Verification Code Sent! ✉️',
+        `We sent a 6-digit login code to your Gmail inbox (${email}).`
+      );
+    } catch (err: any) {
+      setIsLoading(false);
+      Alert.alert('Could Not Send Code', err.message || 'Failed to send login code.');
+    }
+  };
+
+  const handleVerifyLoginOtp = async () => {
+    const email = loginEmail.trim().toLowerCase();
+    const code = loginOtp.trim();
+
+    if (!code || code.length !== 6) {
+      Alert.alert('Invalid Code', 'Please enter the 6-digit code received in your Gmail inbox.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await verifyEmailCodeAndLogin(email, code);
+
+      await finalizeGoogleUser({
+        uid: res.user.uid,
+        email,
+        displayName: res.user.displayName || email.split('@')[0],
+        photoURL: (res.user as any).photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400',
+      });
+    } catch (err: any) {
+      setIsLoading(false);
+      Alert.alert('Login Failed', err.message || 'Invalid or expired verification code.');
+    }
+  };
+
+  // ═════════════════════════════════════════════════════════════════════════════
+  // KOREAN ADDRESS PRESET SELECTOR
+  // ═════════════════════════════════════════════════════════════════════════════
+  const handleSelectAddressPreset = (preset: KoreanAddressPreset) => {
+    setAddrPostalCode(preset.postalCode);
+    setAddrProvince(preset.province);
+    setAddrCity(preset.city);
+    setAddrDistrict(preset.district);
+    setAddrStreetAddress(preset.streetAddress);
+    setAddrBuildingName(preset.buildingName);
+    setShowAddressSearchModal(false);
+  };
+
+  const filteredPresets = KOREAN_ADDRESS_PRESETS.filter((p) => {
+    if (!searchAddressQuery.trim()) return true;
+    const q = searchAddressQuery.toLowerCase();
+    return (
+      p.areaLabel.toLowerCase().includes(q) ||
+      p.streetAddress.toLowerCase().includes(q) ||
+      p.district.toLowerCase().includes(q) ||
+      p.postalCode.includes(q)
+    );
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════════
+  // ADMIN LOGIN OVERRIDE
+  // ═════════════════════════════════════════════════════════════════════════════
+  const handleAdminLogin = () => {
+    const u = adminUsername.trim().toLowerCase();
+    const p = adminPassword.trim();
+
+    if (
+      (u === 'admin' || u === 'admin@namastemart.com') &&
+      (p === '1234' || p === 'admin123')
+    ) {
+      updateUserProfile({
+        name: 'Master Admin',
+        email: 'admin@namastemart.com',
+        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500',
+        isLoggedIn: true,
+        isAdmin: true,
+        emailVerified: true,
+        profileSetupComplete: true,
+        authProvider: 'email',
+      });
+      router.replace('/admin');
+    } else {
+      Alert.alert('Admin Access Denied', 'Invalid administrator credentials.');
+    }
   };
 
   const handleGuestLogin = () => {
@@ -327,17 +777,22 @@ export default function LoginScreen() {
     router.replace('/');
   };
 
+  const formatTime = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
   return (
     <>
       <StatusBar barStyle="light-content" />
       <ImageBackground
         source={{
-          uri: 'https://images.unsplash.com/photo-1548013146-72479768bada?w=1400', // Iconic India & Nepal Scenery
+          uri: 'https://images.unsplash.com/photo-1548013146-72479768bada?w=1400',
         }}
         style={styles.bgImage}
         resizeMode="cover"
       >
-        {/* OVERLAY FOR CLARITY */}
         <View style={styles.darkOverlay}>
           <SafeAreaView style={styles.container}>
             {/* TOP BAR */}
@@ -350,20 +805,20 @@ export default function LoginScreen() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={styles.centeredScrollContent} keyboardShouldPersistTaps="handled">
-              {/* INSTAGRAM STYLE LARGER CENTERED MAIN CARD */}
-              <View style={styles.instaCard}>
-                
-                {/* EXPRESS AIR CARGO FLIGHT ROUTE BANNER (SOUTH KOREA ⇄ INDIA ⇄ NEPAL) */}
+            <ScrollView
+              contentContainerStyle={styles.centeredScrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* MAIN AUTH CARD */}
+              <View style={styles.authCard}>
+                {/* EXPRESS CARGO HEADER BANNER */}
                 <View style={styles.flightBannerContainer}>
                   <Image
                     source={{
-                      uri: 'https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=1000', // Commercial Air Cargo Flight in Sky
+                      uri: 'https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=1000',
                     }}
                     style={styles.flightBannerImage}
                   />
-                  
-                  {/* FLIGHT ANIMATION OVERLAY BADGE */}
                   <View style={styles.flightOverlayBadge}>
                     <View style={styles.liveFlightPill}>
                       <View style={styles.greenDot} />
@@ -372,244 +827,694 @@ export default function LoginScreen() {
                     <Text style={styles.flightBadgeText}>
                       ✈️ SEOUL (KR) ⇄ NEW DELHI (IN) ⇄ KATHMANDU (NP)
                     </Text>
-                    <Text style={styles.flightRouteSub}>
-                      Daily Express Round-Trip Cargo Flight
-                    </Text>
                   </View>
                 </View>
 
-                {/* INSTAGRAM STYLE BRANDING LOGO */}
+                {/* BRAND HEADER */}
                 <View style={styles.brandContainer}>
-                  <Text style={styles.instaLogoText}>NamasteMart</Text>
-                  <Text style={styles.brandSubText}>Korea ⇄ India & Nepal Express Cargo & Groceries</Text>
+                  <Text style={styles.brandLogoText}>NamasteMart</Text>
+                  <Text style={styles.brandSubText}>
+                    Korea ⇄ India & Nepal Express Logistics & Groceries
+                  </Text>
                 </View>
 
-                {/* CONNECTED USER BADGE */}
-                {user?.isLoggedIn && (
-                  <View style={styles.userBanner}>
-                    <Image source={{ uri: user.avatar }} style={styles.userBannerAvatar} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.userBannerTitle}>LOGGED IN</Text>
-                      <Text style={styles.userBannerName}>{user.name}</Text>
-                      <Text style={styles.userBannerEmail}>{user.email}</Text>
-                    </View>
-                    <View style={styles.userBannerBadge}>
-                      <Text style={styles.userBannerBadgeText}>ACTIVE ✓</Text>
-                    </View>
-                  </View>
-                )}
-
-                {/* MODE TOGGLE: INSTAGRAM DIRECT vs GMAIL CODE */}
-                <View style={styles.modeToggleRow}>
-                  <TouchableOpacity
-                    style={[styles.modeToggleBtn, loginMode === 'INSTAGRAM' && styles.modeToggleActive]}
-                    onPress={() => setLoginMode('INSTAGRAM')}
-                  >
-                    <Text style={[styles.modeToggleText, loginMode === 'INSTAGRAM' && styles.modeToggleTextActive]}>
-                      📱 Quick Log In
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.modeToggleBtn, loginMode === 'GMAIL_OTP' && styles.modeToggleActive]}
-                    onPress={() => setLoginMode('GMAIL_OTP')}
-                  >
-                    <Text style={[styles.modeToggleText, loginMode === 'GMAIL_OTP' && styles.modeToggleTextActive]}>
-                      📧 Gmail Verification
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* ============================================================== */}
-                {/* MODE 1: INSTAGRAM STYLE LOGIN                                  */}
-                {/* ============================================================== */}
-                {loginMode === 'INSTAGRAM' && (
-                  <View style={styles.formContainer}>
-                    {/* USERNAME / PHONE / EMAIL FIELD */}
-                    <View style={styles.inputFieldBox}>
-                      <TextInput
-                        style={styles.instaInput}
-                        value={usernameInput}
-                        onChangeText={setUsernameInput}
-                        placeholder="Phone number, username, or email"
-                        placeholderTextColor="#999999"
-                        autoCapitalize="none"
-                      />
-                    </View>
-
-                    {/* PASSWORD FIELD */}
-                    <View style={styles.inputFieldBox}>
-                      <TextInput
-                        style={[styles.instaInput, { flex: 1 }]}
-                        value={passwordInput}
-                        onChangeText={setPasswordInput}
-                        placeholder="Password"
-                        placeholderTextColor="#999999"
-                        secureTextEntry={!showPassword}
-                      />
-                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.showHideBtn}>
-                        <Text style={styles.showHideText}>{showPassword ? 'Hide' : 'Show'}</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    {/* INSTAGRAM BLUE LOG IN BUTTON */}
+                {/* PRIMARY GOOGLE LOGIN (AVAILABLE ACROSS SCREENS) */}
+                {!showAdminLogin && (
+                  <>
                     <TouchableOpacity
-                      style={styles.instaLoginBtn}
+                      style={styles.googleButton}
                       activeOpacity={0.85}
-                      onPress={handleInstagramStyleLogin}
-                      disabled={isLoading}
+                      onPress={handleContinueWithGoogle}
+                      disabled={isGoogleLoading || isLoading}
                     >
-                      <Text style={styles.instaLoginBtnText}>
-                        {isLoading ? 'Logging In...' : 'Log In'}
+                      <View style={styles.googleIconBadge}>
+                        <Text style={styles.googleIconLetter}>G</Text>
+                      </View>
+                      <Text style={styles.googleButtonText}>
+                        {isGoogleLoading ? 'Connecting Google...' : 'Continue with Google'}
                       </Text>
                     </TouchableOpacity>
 
-                    {/* OR DIVIDER */}
                     <View style={styles.orDividerRow}>
                       <View style={styles.dividerLine} />
                       <Text style={styles.orText}>OR</Text>
                       <View style={styles.dividerLine} />
                     </View>
 
-                    {/* CONTINUE WITH GOOGLE BUTTON */}
-                    <TouchableOpacity
-                      style={styles.googleSignInBtn}
-                      activeOpacity={0.85}
-                      onPress={handleContinueWithGoogle}
-                      disabled={isGoogleLoading}
-                    >
-                      <View style={styles.googleIconBox}>
-                        <Text style={styles.googleIconText}>G</Text>
+                    {/* TOP MODE TOGGLE: CREATE ACCOUNT VS LOG IN */}
+                    <View style={styles.authTabRow}>
+                      <TouchableOpacity
+                        style={[
+                          styles.authTabBtn,
+                          authTab === 'REGISTER' && styles.authTabBtnActive,
+                        ]}
+                        onPress={() => {
+                          setAuthTab('REGISTER');
+                          setRegisterStep(1);
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.authTabBtnText,
+                            authTab === 'REGISTER' && styles.authTabBtnTextActive,
+                          ]}
+                        >
+                          ✨ Create Account
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.authTabBtn,
+                          authTab === 'LOGIN' && styles.authTabBtnActive,
+                        ]}
+                        onPress={() => {
+                          setAuthTab('LOGIN');
+                          setIsLoginOtpSent(false);
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.authTabBtnText,
+                            authTab === 'LOGIN' && styles.authTabBtnTextActive,
+                          ]}
+                        >
+                          📱 Log In
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                )}
+
+                {/* ═══════════════════════════════════════════════════════════ */}
+                {/* FLOW 1: CREATE ACCOUNT (THE 5-STEP REGISTRATION WIZARD)     */}
+                {/* ═══════════════════════════════════════════════════════════ */}
+                {authTab === 'REGISTER' && !showAdminLogin && (
+                  <View style={styles.formContainer}>
+                    {/* STEP PROGRESS INDICATOR */}
+                    <View style={styles.wizardProgressRow}>
+                      <View
+                        style={[
+                          styles.wizardStepDot,
+                          registerStep >= 1 && styles.wizardStepDotActive,
+                        ]}
+                      >
+                        <Text style={styles.wizardStepDotNum}>1</Text>
                       </View>
-                      <Text style={styles.googleSignInText}>
-                        {isGoogleLoading ? 'Signing in...' : 'Continue with Google'}
-                      </Text>
-                    </TouchableOpacity>
+                      <View
+                        style={[
+                          styles.wizardStepLine,
+                          registerStep >= 2 && styles.wizardStepLineActive,
+                        ]}
+                      />
+                      <View
+                        style={[
+                          styles.wizardStepDot,
+                          registerStep >= 2 && styles.wizardStepDotActive,
+                        ]}
+                      >
+                        <Text style={styles.wizardStepDotNum}>2</Text>
+                      </View>
+                      <View
+                        style={[
+                          styles.wizardStepLine,
+                          registerStep >= 3 && styles.wizardStepLineActive,
+                        ]}
+                      />
+                      <View
+                        style={[
+                          styles.wizardStepDot,
+                          registerStep >= 3 && styles.wizardStepDotActive,
+                        ]}
+                      >
+                        <Text style={styles.wizardStepDotNum}>3</Text>
+                      </View>
+                    </View>
 
-                    {/* GMAIL OTP ALTERNATIVE */}
-                    <TouchableOpacity
-                      style={styles.googleAccountLinkBtn}
-                      onPress={() => setLoginMode('GMAIL_OTP')}
-                    >
-                      <Text style={{ fontSize: 16 }}>📧</Text>
-                      <Text style={styles.googleAccountLinkText}>
-                        Sign in with Gmail Verification Code
-                      </Text>
-                    </TouchableOpacity>
+                    {/* ───────────────────────────────────────────────────────── */}
+                    {/* STEP 1: CUSTOMER INFORMATION                              */}
+                    {/* ───────────────────────────────────────────────────────── */}
+                    {registerStep === 1 && (
+                      <View>
+                        <View style={styles.stepBadge}>
+                          <Text style={styles.stepBadgeText}>STEP 1 OF 3 · CUSTOMER INFORMATION</Text>
+                        </View>
+                        <Text style={styles.screenTitle}>Create Customer Account</Text>
+                        <Text style={styles.screenSubtitle}>
+                          Enter your details to begin registration. Account is created after address verification.
+                        </Text>
 
-                    {/* FORGOTTEN PASSWORD */}
-                    <TouchableOpacity style={styles.forgotBtn} onPress={() => Alert.alert('Reset Password', 'A password reset link has been sent to your registered contact.')}>
-                      <Text style={styles.forgotText}>Forgotten your password?</Text>
-                    </TouchableOpacity>
+                        <Text style={styles.inputLabel}>Full Name *</Text>
+                        <View style={styles.inputFieldBox}>
+                          <Text style={styles.inputPrefixIcon}>👤</Text>
+                          <TextInput
+                            style={styles.textInput}
+                            value={regName}
+                            onChangeText={setRegName}
+                            placeholder="Full Name (e.g. Rohan Sharma)"
+                            placeholderTextColor="#8E8E93"
+                            autoCapitalize="words"
+                          />
+                        </View>
+
+                        <Text style={styles.inputLabel}>Korean Phone Number *</Text>
+                        <View style={styles.inputFieldBox}>
+                          <Text style={styles.inputPrefixIcon}>🇰🇷</Text>
+                          <TextInput
+                            style={styles.textInput}
+                            value={regPhone}
+                            onChangeText={setRegPhone}
+                            placeholder="Korean Mobile (e.g. 010-1234-5678)"
+                            placeholderTextColor="#8E8E93"
+                            keyboardType="phone-pad"
+                          />
+                        </View>
+
+                        <Text style={styles.inputLabel}>Personal Email Address *</Text>
+                        <View style={styles.inputFieldBox}>
+                          <Text style={styles.inputPrefixIcon}>✉️</Text>
+                          <TextInput
+                            style={styles.textInput}
+                            value={regEmail}
+                            onChangeText={setRegEmail}
+                            placeholder="Email Address (e.g. name@gmail.com)"
+                            placeholderTextColor="#8E8E93"
+                            keyboardType="email-address"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                          />
+                        </View>
+
+                        <TouchableOpacity
+                          style={styles.primaryActionButton}
+                          activeOpacity={0.85}
+                          onPress={handleProceedFromStep1ToStep2}
+                          disabled={isLoading}
+                        >
+                          <Text style={styles.primaryActionText}>
+                            {isLoading ? 'Sending Code...' : 'Continue to Email Verification ➔'}
+                          </Text>
+                        </TouchableOpacity>
+
+                        <Text style={styles.passwordlessNotice}>
+                          🔒 Zero passwords required. We'll send a 6-digit verification code to your email.
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* ───────────────────────────────────────────────────────── */}
+                    {/* STEP 2: EMAIL VERIFICATION (OTP)                          */}
+                    {/* ───────────────────────────────────────────────────────── */}
+                    {registerStep === 2 && (
+                      <View>
+                        <View style={styles.stepBadge}>
+                          <Text style={styles.stepBadgeText}>STEP 2 OF 3 · EMAIL VERIFICATION</Text>
+                        </View>
+                        <Text style={styles.screenTitle}>Enter Verification Code</Text>
+                        <Text style={styles.screenSubtitle}>
+                          Enter the 6-digit verification code sent to your email:
+                        </Text>
+
+                        {/* TARGET EMAIL PILL */}
+                        <View style={styles.emailPillBox}>
+                          <Text style={styles.emailPillText}>{verifiedEmail}</Text>
+                          <TouchableOpacity
+                            onPress={() => setRegisterStep(1)}
+                            style={styles.changeEmailBtn}
+                          >
+                            <Text style={styles.changeEmailText}>Edit</Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        {/* 6-DIGIT OTP INPUT */}
+                        <View style={styles.otpInputContainer}>
+                          <TextInput
+                            style={styles.otpInput}
+                            value={otpInput}
+                            onChangeText={setOtpInput}
+                            placeholder="000000"
+                            placeholderTextColor="#999999"
+                            keyboardType="numeric"
+                            maxLength={6}
+                            autoFocus={true}
+                          />
+                        </View>
+
+                        {/* EXPIRY & ATTEMPTS */}
+                        <View style={styles.expiryInfoRow}>
+                          <Text style={styles.expiryText}>
+                            ⏱️ Code expires in:{' '}
+                            <Text
+                              style={{
+                                fontWeight: '800',
+                                color: expirySeconds < 60 ? '#EF4444' : '#10B981',
+                              }}
+                            >
+                              {formatTime(expirySeconds)}
+                            </Text>
+                          </Text>
+                          {attemptsRemaining < 5 && (
+                            <Text style={styles.attemptsText}>
+                              ({attemptsRemaining} attempts left)
+                            </Text>
+                          )}
+                        </View>
+
+                        {/* GMAIL INBOX NOTICE */}
+                        <View style={styles.inboxNoticeCard}>
+                          <Text style={styles.inboxNoticeIcon}>📬</Text>
+                          <Text style={styles.inboxNoticeText}>
+                            Please check your Gmail inbox (or spam folder) for the 6-digit code.
+                          </Text>
+                        </View>
+
+                        <TouchableOpacity
+                          style={styles.primaryActionButton}
+                          activeOpacity={0.85}
+                          onPress={handleVerifyEmailStep2}
+                          disabled={isLoading}
+                        >
+                          <Text style={styles.primaryActionText}>
+                            {isLoading ? 'Verifying...' : 'Verify Email ➔'}
+                          </Text>
+                        </TouchableOpacity>
+
+                        <View style={styles.resendRow}>
+                          <TouchableOpacity
+                            onPress={handleResendStep2Code}
+                            disabled={cooldownSeconds > 0 || isLoading}
+                            style={[
+                              styles.resendButton,
+                              cooldownSeconds > 0 && styles.resendButtonDisabled,
+                            ]}
+                          >
+                            <Text style={styles.resendButtonText}>
+                              {cooldownSeconds > 0
+                                ? `Resend Code (${cooldownSeconds}s)`
+                                : '📩 Resend Code'}
+                            </Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            onPress={() => setRegisterStep(1)}
+                            style={styles.backToLoginBtn}
+                          >
+                            <Text style={styles.backToLoginText}>← Back to Step 1</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+
+                    {/* ───────────────────────────────────────────────────────── */}
+                    {/* STEP 3: KOREAN DELIVERY ADDRESS                           */}
+                    {/* ───────────────────────────────────────────────────────── */}
+                    {registerStep === 3 && (
+                      <View>
+                        <View style={styles.stepBadge}>
+                          <Text style={styles.stepBadgeText}>STEP 3 OF 3 · KOREAN DELIVERY ADDRESS</Text>
+                        </View>
+                        <Text style={styles.screenTitle}>🇰🇷 Korean Delivery Address</Text>
+                        <Text style={styles.screenSubtitle}>
+                          Enter your South Korean delivery address to complete registration.
+                        </Text>
+
+                        {/* SEARCH KOREAN ADDRESS BUTTON */}
+                        <TouchableOpacity
+                          style={styles.searchAddressTriggerBtn}
+                          onPress={() => setShowAddressSearchModal(true)}
+                        >
+                          <Text style={styles.searchAddressTriggerText}>
+                            🔍 Search Korean Address / Postal Code
+                          </Text>
+                        </TouchableOpacity>
+
+                        <Text style={styles.inputLabel}>Recipient Full Name *</Text>
+                        <View style={styles.inputFieldBox}>
+                          <TextInput
+                            style={styles.textInput}
+                            value={addrRecipientName}
+                            onChangeText={setAddrRecipientName}
+                            placeholder="Recipient Name"
+                            placeholderTextColor="#8E8E93"
+                          />
+                        </View>
+
+                        <Text style={styles.inputLabel}>Korean Phone Number *</Text>
+                        <View style={styles.inputFieldBox}>
+                          <TextInput
+                            style={styles.textInput}
+                            value={addrPhone}
+                            onChangeText={setAddrPhone}
+                            placeholder="Phone (e.g. 010-1234-5678)"
+                            placeholderTextColor="#8E8E93"
+                            keyboardType="phone-pad"
+                          />
+                        </View>
+
+                        <Text style={styles.inputLabel}>5-digit Korean Postal Code *</Text>
+                        <View style={styles.inputFieldBox}>
+                          <TextInput
+                            style={styles.textInput}
+                            value={addrPostalCode}
+                            onChangeText={setAddrPostalCode}
+                            placeholder="Postal Code (e.g. 06000)"
+                            placeholderTextColor="#8E8E93"
+                            keyboardType="numeric"
+                          />
+                        </View>
+
+                        <View style={styles.inputRow}>
+                          <View style={{ flex: 1, marginRight: 6 }}>
+                            <Text style={styles.inputLabel}>Province / City *</Text>
+                            <View style={styles.inputFieldBox}>
+                              <TextInput
+                                style={styles.textInput}
+                                value={addrProvince}
+                                onChangeText={setAddrProvince}
+                                placeholder="e.g. Seoul"
+                                placeholderTextColor="#8E8E93"
+                              />
+                            </View>
+                          </View>
+                          <View style={{ flex: 1, marginLeft: 6 }}>
+                            <Text style={styles.inputLabel}>District / Gu *</Text>
+                            <View style={styles.inputFieldBox}>
+                              <TextInput
+                                style={styles.textInput}
+                                value={addrDistrict}
+                                onChangeText={setAddrDistrict}
+                                placeholder="e.g. Gangnam-gu"
+                                placeholderTextColor="#8E8E93"
+                              />
+                            </View>
+                          </View>
+                        </View>
+
+                        <Text style={styles.inputLabel}>Street Address (Road Name / 지번주소) *</Text>
+                        <View style={styles.inputFieldBox}>
+                          <TextInput
+                            style={styles.textInput}
+                            value={addrStreetAddress}
+                            onChangeText={setAddrStreetAddress}
+                            placeholder="Street Address (e.g. Gangnam-daero 396)"
+                            placeholderTextColor="#8E8E93"
+                          />
+                        </View>
+
+                        <View style={styles.inputRow}>
+                          <View style={{ flex: 1, marginRight: 6 }}>
+                            <Text style={styles.inputLabel}>Building / Apt</Text>
+                            <View style={styles.inputFieldBox}>
+                              <TextInput
+                                style={styles.textInput}
+                                value={addrBuildingName}
+                                onChangeText={setAddrBuildingName}
+                                placeholder="Building / Apt Name"
+                                placeholderTextColor="#8E8E93"
+                              />
+                            </View>
+                          </View>
+                          <View style={{ flex: 1, marginLeft: 6 }}>
+                            <Text style={styles.inputLabel}>Unit / Room #</Text>
+                            <View style={styles.inputFieldBox}>
+                              <TextInput
+                                style={styles.textInput}
+                                value={addrUnitNumber}
+                                onChangeText={setAddrUnitNumber}
+                                placeholder="Unit / Room #"
+                                placeholderTextColor="#8E8E93"
+                              />
+                            </View>
+                          </View>
+                        </View>
+
+                        <Text style={styles.inputLabel}>Delivery Instructions (Optional)</Text>
+                        <View style={styles.inputFieldBox}>
+                          <TextInput
+                            style={styles.textInput}
+                            value={addrDeliveryInstructions}
+                            onChangeText={setAddrDeliveryInstructions}
+                            placeholder="e.g. Leave at front door / Security office"
+                            placeholderTextColor="#8E8E93"
+                          />
+                        </View>
+
+                        <TouchableOpacity
+                          style={styles.checkboxRow}
+                          onPress={() => setAddrIsDefault(!addrIsDefault)}
+                        >
+                          <Text style={{ fontSize: 18, marginRight: 8 }}>
+                            {addrIsDefault ? '☑️' : '⏹️'}
+                          </Text>
+                          <Text style={styles.checkboxText}>
+                            Set this as my primary South Korean delivery address
+                          </Text>
+                        </TouchableOpacity>
+
+                        {/* COMPLETE REGISTRATION BUTTON (TRIGGERS STEP 4 & 5) */}
+                        <TouchableOpacity
+                          style={styles.completeRegButton}
+                          activeOpacity={0.85}
+                          onPress={handleCompleteRegistration}
+                          disabled={isLoading}
+                        >
+                          <Text style={styles.completeRegButtonText}>
+                            {isLoading ? 'Creating Account...' : 'Complete Registration ➔'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
                   </View>
                 )}
 
-                {/* ============================================================== */}
-                {/* MODE 2: GMAIL 2-STEP VERIFICATION CODE                         */}
-                {/* ============================================================== */}
-                {loginMode === 'GMAIL_OTP' && (
+                {/* ═══════════════════════════════════════════════════════════ */}
+                {/* FLOW 2: RETURNING CUSTOMER LOG IN                          */}
+                {/* ═══════════════════════════════════════════════════════════ */}
+                {authTab === 'LOGIN' && !showAdminLogin && (
                   <View style={styles.formContainer}>
-                    {!isCodeSent ? (
-                      /* STEP 1: ENTER GMAIL ADDRESS */
-                      <View>
-                        <Text style={styles.otpHeaderTitle}>Gmail Verification</Text>
-                        <Text style={styles.otpHeaderSub}>
-                          Enter your Gmail address to receive your 6-digit verification code.
-                        </Text>
+                    <Text style={styles.screenTitle}>Returning Customer Log In</Text>
+                    <Text style={styles.screenSubtitle}>
+                      Sign in to access your orders, cart, and delivery addresses.
+                    </Text>
 
+                    {!isLoginOtpSent ? (
+                      <View>
+                        <Text style={styles.inputLabel}>Your Registered Email Address</Text>
                         <View style={styles.inputFieldBox}>
+                          <Text style={styles.inputPrefixIcon}>✉️</Text>
                           <TextInput
-                            style={styles.instaInput}
-                            value={gmailInput}
-                            onChangeText={setGmailInput}
-                            placeholder="Enter your Gmail address (e.g. name@gmail.com)"
-                            placeholderTextColor="#999999"
+                            style={styles.textInput}
+                            value={loginEmail}
+                            onChangeText={setLoginEmail}
+                            placeholder="name@example.com"
+                            placeholderTextColor="#8E8E93"
                             keyboardType="email-address"
                             autoCapitalize="none"
                           />
                         </View>
 
                         <TouchableOpacity
-                          style={styles.sendOtpBtn}
+                          style={styles.primaryActionButton}
                           activeOpacity={0.85}
-                          onPress={handleSendGmailCode}
+                          onPress={handleSendLoginOtp}
                           disabled={isLoading}
                         >
-                          <Text style={styles.sendOtpBtnText}>
-                            {isLoading ? 'Dispatching Code to Gmail...' : '📩 Send Verification Code'}
+                          <Text style={styles.primaryActionText}>
+                            {isLoading ? 'Sending Code...' : 'Send Login Code ➔'}
                           </Text>
                         </TouchableOpacity>
                       </View>
                     ) : (
-                      /* STEP 2: ENTER 6-DIGIT VERIFICATION CODE */
                       <View>
-                        <Text style={styles.otpHeaderTitle}>Verification Code Sent!</Text>
-                        <Text style={styles.otpHeaderSub}>
-                          Sent code to: <Text style={{ fontWeight: '900', color: '#0095F6' }}>{gmailInput}</Text>
-                        </Text>
-                        <TouchableOpacity onPress={() => setIsCodeSent(false)} style={{ marginVertical: 4 }}>
-                          <Text style={styles.changeGmailLink}>✏️ Change Gmail Address</Text>
-                        </TouchableOpacity>
+                        <View style={styles.emailPillBox}>
+                          <Text style={styles.emailPillText}>{loginEmail}</Text>
+                          <TouchableOpacity
+                            onPress={() => setIsLoginOtpSent(false)}
+                            style={styles.changeEmailBtn}
+                          >
+                            <Text style={styles.changeEmailText}>Change</Text>
+                          </TouchableOpacity>
+                        </View>
 
-                        {/* 6-DIGIT CODE INPUT */}
-                        <View style={[styles.inputFieldBox, { marginTop: 12 }]}>
+                        <Text style={styles.inputLabel}>6-Digit Verification Code</Text>
+                        <View style={styles.otpInputContainer}>
                           <TextInput
-                            style={[styles.instaInput, styles.codeDigitInput]}
-                            value={userEnteredCode}
-                            onChangeText={(v) => setUserEnteredCode(v.replace(/[^0-9]/g, '').slice(0, 6))}
-                            placeholder="Enter 6-digit code from Gmail"
+                            style={styles.otpInput}
+                            value={loginOtp}
+                            onChangeText={setLoginOtp}
+                            placeholder="000000"
                             placeholderTextColor="#999999"
-                            keyboardType="number-pad"
+                            keyboardType="numeric"
                             maxLength={6}
+                            autoFocus={true}
                           />
                         </View>
 
-                        <Text style={styles.demoCodeHint}>
-                          💡 Please check your Gmail app / inbox for your 6-digit code.
-                        </Text>
+                        <View style={styles.inboxNoticeCard}>
+                          <Text style={styles.inboxNoticeIcon}>📬</Text>
+                          <Text style={styles.inboxNoticeText}>
+                            Please enter the 6-digit code received in your Gmail inbox.
+                          </Text>
+                        </View>
 
                         <TouchableOpacity
-                          style={styles.verifyOtpBtn}
+                          style={styles.primaryActionButton}
                           activeOpacity={0.85}
-                          onPress={handleVerifyGmailCode}
+                          onPress={handleVerifyLoginOtp}
                           disabled={isLoading}
                         >
-                          <Text style={styles.verifyOtpBtnText}>
-                            {isLoading ? 'Verifying Code...' : '✓ Verify Code & Sign In'}
+                          <Text style={styles.primaryActionText}>
+                            {isLoading ? 'Signing In...' : 'Verify & Log In ➔'}
                           </Text>
                         </TouchableOpacity>
 
-                        <View style={styles.resendTimerRow}>
-                          <Text style={styles.timerText}>
-                            {timerSeconds > 0 ? `Resend code in ${timerSeconds}s` : "Didn't receive code?"}
-                          </Text>
-                          <TouchableOpacity disabled={timerSeconds > 0} onPress={handleSendGmailCode}>
-                            <Text style={[styles.resendLinkText, timerSeconds > 0 && { opacity: 0.4 }]}>
-                              Resend Code
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
+                        <TouchableOpacity
+                          style={styles.secondaryButton}
+                          onPress={() => setIsLoginOtpSent(false)}
+                        >
+                          <Text style={styles.secondaryButtonText}>← Re-enter Email</Text>
+                        </TouchableOpacity>
                       </View>
                     )}
+
+                    {/* ADMIN TOGGLE */}
+                    <TouchableOpacity
+                      style={styles.adminToggleRow}
+                      onPress={() => setShowAdminLogin(true)}
+                    >
+                      <Text style={styles.adminToggleText}>🔑 Store Admin Login</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* ═══════════════════════════════════════════════════════════ */}
+                {/* FLOW 3: ADMIN LOGIN OVERRIDE                               */}
+                {/* ═══════════════════════════════════════════════════════════ */}
+                {showAdminLogin && (
+                  <View style={styles.formContainer}>
+                    <View style={styles.stepBadge}>
+                      <Text style={styles.stepBadgeText}>ADMINISTRATOR PORTAL</Text>
+                    </View>
+                    <Text style={styles.screenTitle}>Store Admin Sign In</Text>
+                    <Text style={styles.screenSubtitle}>
+                      Manage orders, inventory, and cargo logistics
+                    </Text>
+
+                    <View style={styles.inputFieldBox}>
+                      <TextInput
+                        style={styles.textInput}
+                        value={adminUsername}
+                        onChangeText={setAdminUsername}
+                        placeholder="Admin Username (e.g. admin)"
+                        placeholderTextColor="#8E8E93"
+                        autoCapitalize="none"
+                      />
+                    </View>
+
+                    <View style={styles.inputFieldBox}>
+                      <TextInput
+                        style={styles.textInput}
+                        value={adminPassword}
+                        onChangeText={setAdminPassword}
+                        placeholder="Admin Password"
+                        placeholderTextColor="#8E8E93"
+                        secureTextEntry={true}
+                      />
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.primaryActionButton}
+                      activeOpacity={0.85}
+                      onPress={handleAdminLogin}
+                    >
+                      <Text style={styles.primaryActionText}>Log in to Admin Dashboard ➔</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.secondaryButton}
+                      onPress={() => setShowAdminLogin(false)}
+                    >
+                      <Text style={styles.secondaryButtonText}>← Back to Customer Login</Text>
+                    </TouchableOpacity>
                   </View>
                 )}
               </View>
 
-              {/* INSTAGRAM STYLE BOTTOM CARD: DON'T HAVE AN ACCOUNT? SIGN UP */}
-              <View style={styles.signupBoxCard}>
-                <Text style={styles.signupBoxText}>
-                  Don't have an account?{' '}
-                  <Text style={styles.signupLink} onPress={() => Alert.alert('Sign Up', 'Account creation is automatic when you log in or place your first order!')}>
-                    Sign up
-                  </Text>
-                </Text>
-              </View>
-
               {/* FOOTER BRANDING */}
               <View style={styles.footerBranding}>
-                <Text style={styles.footerBrandText}>✈️ KOREA ⇄ INDIA & NEPAL ROUND-TRIP AIR CARGO ✈️</Text>
+                <Text style={styles.footerBrandText}>
+                  NAMASTEMART · EXPRESS AIR CARGO & LOGISTICS 🇰🇷 🇮🇳 🇳🇵
+                </Text>
               </View>
             </ScrollView>
+
+            {/* ═══════════════════════════════════════════════════════════ */}
+            {/* KOREAN ADDRESS SEARCH MODAL HELPER                         */}
+            {/* ═══════════════════════════════════════════════════════════ */}
+            <Modal
+              visible={showAddressSearchModal}
+              animationType="slide"
+              transparent={true}
+              onRequestClose={() => setShowAddressSearchModal(false)}
+            >
+              <View style={styles.modalOverlay}>
+                <View style={styles.addressModalCard}>
+                  <View style={styles.modalHeaderRow}>
+                    <Text style={styles.modalTitleText}>🇰🇷 Search Korean Address</Text>
+                    <TouchableOpacity
+                      onPress={() => setShowAddressSearchModal(false)}
+                      style={styles.modalCloseBtn}
+                    >
+                      <Text style={styles.modalCloseBtnText}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.modalSubText}>
+                    Search by road name, district, or area (e.g. Gangnam, Mapo, Teheran-ro, Pangyo, Incheon, Busan):
+                  </Text>
+
+                  <View style={styles.modalSearchBox}>
+                    <Text style={{ fontSize: 16, marginRight: 8 }}>🔍</Text>
+                    <TextInput
+                      style={styles.modalSearchInput}
+                      value={searchAddressQuery}
+                      onChangeText={setSearchAddressQuery}
+                      placeholder="Type district or road name..."
+                      placeholderTextColor="#8E8E93"
+                      autoFocus={true}
+                    />
+                  </View>
+
+                  <ScrollView style={{ maxHeight: 300 }}>
+                    {filteredPresets.map((preset, idx) => (
+                      <TouchableOpacity
+                        key={idx}
+                        style={styles.presetItemCard}
+                        onPress={() => handleSelectAddressPreset(preset)}
+                      >
+                        <View style={styles.presetBadge}>
+                          <Text style={styles.presetPostalText}>{preset.postalCode}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.presetAreaText}>{preset.areaLabel}</Text>
+                          <Text style={styles.presetStreetText}>
+                            {preset.province} {preset.district} {preset.streetAddress}
+                          </Text>
+                          <Text style={styles.presetBuildingText}>({preset.buildingName})</Text>
+                        </View>
+                        <Text style={styles.presetSelectArrow}>➔</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  <TouchableOpacity
+                    style={styles.secondaryButton}
+                    onPress={() => setShowAddressSearchModal(false)}
+                  >
+                    <Text style={styles.secondaryButtonText}>Close Search</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Modal>
           </SafeAreaView>
         </View>
       </ImageBackground>
@@ -618,11 +1523,12 @@ export default function LoginScreen() {
 }
 
 const getStyles = (isDark: boolean) => {
-  const cardBg = isDark ? 'rgba(18, 18, 18, 0.96)' : 'rgba(255, 255, 255, 0.97)';
-  const textMain = isDark ? '#FFFFFF' : '#262626';
-  const textSub = isDark ? '#CCCCCC' : '#737373';
-  const border = isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(219, 219, 219, 0.9)';
-  const instaBlue = '#0095F6';
+  const cardBg = isDark ? 'rgba(18, 20, 24, 0.97)' : 'rgba(255, 255, 255, 0.98)';
+  const textMain = isDark ? '#FFFFFF' : '#111827';
+  const textSub = isDark ? '#9CA3AF' : '#4B5563';
+  const border = isDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(229, 231, 235, 1)';
+  const primaryGreen = '#008060';
+  const accentBlue = '#0095F6';
 
   return StyleSheet.create({
     bgImage: {
@@ -632,7 +1538,7 @@ const getStyles = (isDark: boolean) => {
     },
     darkOverlay: {
       flex: 1,
-      backgroundColor: 'rgba(0, 0, 0, 0.52)', // Translucent Glassmorphism Dark Overlay
+      backgroundColor: 'rgba(0, 0, 0, 0.58)',
     },
     container: {
       flex: 1,
@@ -664,19 +1570,19 @@ const getStyles = (isDark: boolean) => {
     },
     centeredScrollContent: {
       paddingHorizontal: 18,
-      paddingVertical: 24,
+      paddingVertical: 20,
       alignItems: 'center',
       justifyContent: 'center',
       minHeight: '88%',
     },
-    instaCard: {
+    authCard: {
       width: '100%',
-      maxWidth: 480, // ENLARGED LOGIN BOX AS REQUESTED
+      maxWidth: 470,
       backgroundColor: cardBg,
       borderRadius: 24,
-      borderWidth: 1.5,
+      borderWidth: 1,
       borderColor: border,
-      padding: 30, // MORE SPACIOUS PADDING
+      padding: 24,
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 12 },
       shadowOpacity: 0.35,
@@ -685,10 +1591,10 @@ const getStyles = (isDark: boolean) => {
     },
     flightBannerContainer: {
       width: '100%',
-      height: 150, // ENLARGED FLIGHT ROUTE BANNER
+      height: 120,
       borderRadius: 16,
       overflow: 'hidden',
-      marginBottom: 20,
+      marginBottom: 18,
       position: 'relative',
     },
     flightBannerImage: {
@@ -700,16 +1606,15 @@ const getStyles = (isDark: boolean) => {
       bottom: 0,
       left: 0,
       right: 0,
-      backgroundColor: 'rgba(0,0,0,0.80)',
-      paddingVertical: 8,
-      paddingHorizontal: 12,
+      backgroundColor: 'rgba(0,0,0,0.82)',
+      paddingVertical: 6,
+      paddingHorizontal: 10,
       alignItems: 'center',
     },
     liveFlightPill: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 6,
-      backgroundColor: 'rgba(46, 125, 50, 0.9)',
+      backgroundColor: 'rgba(16, 185, 129, 0.25)',
       paddingHorizontal: 8,
       paddingVertical: 2,
       borderRadius: 10,
@@ -719,162 +1624,76 @@ const getStyles = (isDark: boolean) => {
       width: 6,
       height: 6,
       borderRadius: 3,
-      backgroundColor: '#76FF03',
+      backgroundColor: '#10B981',
+      marginRight: 6,
     },
     liveFlightText: {
-      color: '#FFFFFF',
       fontSize: 9,
       fontWeight: '900',
+      color: '#10B981',
       letterSpacing: 0.5,
     },
     flightBadgeText: {
-      color: '#FFD700',
-      fontSize: 12,
-      fontWeight: '900',
-      letterSpacing: 0.5,
-    },
-    flightRouteSub: {
-      color: '#FFFFFF',
       fontSize: 10,
-      fontWeight: '700',
-      marginTop: 1,
+      fontWeight: '900',
+      color: '#FFFFFF',
+      textAlign: 'center',
     },
     brandContainer: {
       alignItems: 'center',
-      marginBottom: 20,
+      marginBottom: 18,
     },
-    instaLogoText: {
-      fontSize: 40, // ENLARGED LOGO TEXT
+    brandLogoText: {
+      fontSize: 28,
       fontWeight: '900',
-      fontStyle: 'italic',
       color: textMain,
       letterSpacing: -0.5,
     },
     brandSubText: {
       fontSize: 11,
-      fontWeight: '700',
+      fontWeight: '600',
       color: textSub,
       marginTop: 4,
       textAlign: 'center',
     },
-    userBanner: {
+    googleButton: {
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: isDark ? '#1E1E1E' : '#F8F9FA',
-      borderRadius: 12,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: border,
-      marginBottom: 18,
-      gap: 12,
-    },
-    userBannerAvatar: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-    },
-    userBannerTitle: {
-      fontSize: 9,
-      fontWeight: '900',
-      color: instaBlue,
-      letterSpacing: 0.5,
-    },
-    userBannerName: {
-      fontSize: 14,
-      fontWeight: '900',
-      color: textMain,
-    },
-    userBannerEmail: {
-      fontSize: 11,
-      color: textSub,
-    },
-    userBannerBadge: {
-      backgroundColor: '#2E7D32',
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-      borderRadius: 6,
-    },
-    userBannerBadgeText: {
-      color: '#FFFFFF',
-      fontSize: 9,
-      fontWeight: '900',
-    },
-    modeToggleRow: {
-      flexDirection: 'row',
-      backgroundColor: isDark ? '#1A1A1A' : '#EFEFEF',
-      borderRadius: 12,
-      padding: 4,
-      marginBottom: 22,
-    },
-    modeToggleBtn: {
-      flex: 1,
-      paddingVertical: 10,
-      alignItems: 'center',
-      borderRadius: 10,
-    },
-    modeToggleActive: {
-      backgroundColor: cardBg,
-    },
-    modeToggleText: {
-      fontSize: 12,
-      fontWeight: '700',
-      color: textSub,
-    },
-    modeToggleTextActive: {
-      color: textMain,
-      fontWeight: '900',
-    },
-    formContainer: {
-      width: '100%',
-    },
-    inputFieldBox: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: isDark ? '#1E1E1E' : '#FAFAFA',
-      borderWidth: 1,
-      borderColor: border,
-      borderRadius: 10,
-      paddingHorizontal: 14,
-      marginBottom: 12,
-      height: 52, // ENLARGED INPUT HEIGHT
-    },
-    instaInput: {
-      flex: 1,
-      fontSize: 14,
-      color: textMain,
-      height: 52,
-    },
-    codeDigitInput: {
-      fontSize: 18,
-      fontWeight: '800',
-      letterSpacing: 4,
-      textAlign: 'center',
-    },
-    showHideBtn: {
-      paddingHorizontal: 8,
-    },
-    showHideText: {
-      fontSize: 13,
-      fontWeight: '800',
-      color: textMain,
-    },
-    instaLoginBtn: {
-      backgroundColor: instaBlue,
-      borderRadius: 10,
-      height: 50, // ENLARGED BUTTON HEIGHT
       justifyContent: 'center',
-      alignItems: 'center',
-      marginTop: 10,
+      backgroundColor: isDark ? '#262626' : '#FFFFFF',
+      borderWidth: 1.5,
+      borderColor: isDark ? 'rgba(255,255,255,0.2)' : '#D1D5DB',
+      borderRadius: 12,
+      height: 48,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.08,
+      shadowRadius: 2,
+      elevation: 1,
     },
-    instaLoginBtnText: {
-      color: '#FFFFFF',
+    googleIconBadge: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      backgroundColor: '#4285F4',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 12,
+    },
+    googleIconLetter: {
       fontSize: 15,
       fontWeight: '900',
+      color: '#FFFFFF',
+    },
+    googleButtonText: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: textMain,
     },
     orDividerRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginVertical: 20,
+      marginVertical: 16,
     },
     dividerLine: {
       flex: 1,
@@ -882,161 +1701,451 @@ const getStyles = (isDark: boolean) => {
       backgroundColor: border,
     },
     orText: {
-      fontSize: 12,
-      fontWeight: '900',
+      marginHorizontal: 12,
+      fontSize: 11,
+      fontWeight: '800',
       color: textSub,
-      paddingHorizontal: 16,
     },
-    googleSignInBtn: {
+    authTabRow: {
       flexDirection: 'row',
+      backgroundColor: isDark ? '#262A30' : '#F3F4F6',
+      borderRadius: 12,
+      padding: 4,
+      marginBottom: 20,
+    },
+    authTabBtn: {
+      flex: 1,
+      paddingVertical: 10,
       alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: isDark ? '#FFFFFF' : '#FFFFFF',
       borderRadius: 10,
-      height: 50,
-      gap: 10,
-      borderWidth: 1,
-      borderColor: isDark ? 'rgba(255,255,255,0.2)' : '#DADCE0',
+    },
+    authTabBtnActive: {
+      backgroundColor: isDark ? '#333842' : '#FFFFFF',
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.08,
-      shadowRadius: 4,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.12,
+      shadowRadius: 3,
       elevation: 2,
     },
-    googleIconBox: {
-      width: 24,
-      height: 24,
-      borderRadius: 12,
-      backgroundColor: '#4285F4',
-      justifyContent: 'center',
-      alignItems: 'center',
+    authTabBtnText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: textSub,
     },
-    googleIconText: {
-      color: '#FFFFFF',
-      fontSize: 14,
+    authTabBtnTextActive: {
+      color: textMain,
       fontWeight: '900',
     },
-    googleSignInText: {
-      color: '#3C4043',
-      fontSize: 15,
-      fontWeight: '700',
+    formContainer: {
+      width: '100%',
     },
-    googleAccountLinkBtn: {
+    wizardProgressRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 8,
-      paddingVertical: 10,
-      marginTop: 6,
+      marginBottom: 16,
     },
-    googleAccountLinkText: {
-      fontSize: 13,
-      fontWeight: '700',
-      color: isDark ? '#3897F0' : '#385185',
-    },
-    forgotBtn: {
+    wizardStepDot: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      backgroundColor: isDark ? '#262A30' : '#E5E7EB',
       alignItems: 'center',
-      marginTop: 14,
+      justifyContent: 'center',
     },
-    forgotText: {
+    wizardStepDotActive: {
+      backgroundColor: primaryGreen,
+    },
+    wizardStepDotNum: {
       fontSize: 12,
-      color: isDark ? '#CCCCCC' : '#00376B',
+      fontWeight: '900',
+      color: '#FFFFFF',
     },
-    otpHeaderTitle: {
-      fontSize: 18,
+    wizardStepLine: {
+      width: 40,
+      height: 3,
+      backgroundColor: isDark ? '#262A30' : '#E5E7EB',
+      marginHorizontal: 6,
+      borderRadius: 2,
+    },
+    wizardStepLineActive: {
+      backgroundColor: primaryGreen,
+    },
+    screenTitle: {
+      fontSize: 19,
       fontWeight: '900',
       color: textMain,
       textAlign: 'center',
+      marginBottom: 4,
     },
-    otpHeaderSub: {
+    screenSubtitle: {
       fontSize: 12,
       color: textSub,
       textAlign: 'center',
-      marginTop: 4,
-      marginBottom: 16,
+      marginBottom: 18,
+      lineHeight: 16,
     },
-    changeGmailLink: {
+    stepBadge: {
+      backgroundColor: 'rgba(0, 128, 96, 0.12)',
+      paddingVertical: 4,
+      paddingHorizontal: 10,
+      borderRadius: 10,
+      alignSelf: 'center',
+      marginBottom: 10,
+    },
+    stepBadgeText: {
+      fontSize: 10,
+      fontWeight: '900',
+      color: primaryGreen,
+      letterSpacing: 0.5,
+    },
+    inputLabel: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: textMain,
+      marginBottom: 4,
+    },
+    inputFieldBox: {
+      width: '100%',
+      backgroundColor: isDark ? '#262A30' : '#F9FAFB',
+      borderWidth: 1,
+      borderColor: border,
+      borderRadius: 12,
+      marginBottom: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 12,
+    },
+    inputPrefixIcon: {
+      fontSize: 16,
+      marginRight: 8,
+    },
+    inputRow: {
+      flexDirection: 'row',
+      width: '100%',
+    },
+    textInput: {
+      height: 46,
+      fontSize: 14,
+      color: textMain,
+      flex: 1,
+    },
+    primaryActionButton: {
+      width: '100%',
+      backgroundColor: primaryGreen,
+      height: 48,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 6,
+      shadowColor: primaryGreen,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.25,
+      shadowRadius: 6,
+      elevation: 3,
+    },
+    primaryActionText: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: '#FFFFFF',
+      letterSpacing: 0.3,
+    },
+    completeRegButton: {
+      width: '100%',
+      backgroundColor: '#10B981',
+      height: 50,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 10,
+      shadowColor: '#10B981',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.3,
+      shadowRadius: 6,
+      elevation: 3,
+    },
+    completeRegButtonText: {
+      fontSize: 15,
+      fontWeight: '900',
+      color: '#FFFFFF',
+      letterSpacing: 0.5,
+    },
+    passwordlessNotice: {
+      fontSize: 11,
+      color: textSub,
+      textAlign: 'center',
+      marginTop: 14,
+      lineHeight: 16,
+    },
+    emailPillBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: isDark ? '#262A30' : '#EFF6FF',
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.1)' : '#BFDBFE',
+      marginBottom: 14,
+    },
+    emailPillText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: isDark ? '#93C5FD' : '#1D4ED8',
+      flex: 1,
+    },
+    changeEmailBtn: {
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+    },
+    changeEmailText: {
       fontSize: 12,
       fontWeight: '800',
-      color: instaBlue,
-      textAlign: 'center',
+      color: accentBlue,
     },
-    sendOtpBtn: {
-      backgroundColor: '#EA4335',
-      borderRadius: 10,
-      height: 50,
+    otpInputContainer: {
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    otpInput: {
+      width: '100%',
+      height: 54,
+      backgroundColor: isDark ? '#262A30' : '#F9FAFB',
+      borderWidth: 2,
+      borderColor: isDark ? '#3B82F6' : '#2563EB',
+      borderRadius: 12,
+      fontSize: 26,
+      fontWeight: '900',
+      letterSpacing: 10,
+      textAlign: 'center',
+      color: textMain,
+    },
+    expiryInfoRow: {
+      flexDirection: 'row',
       justifyContent: 'center',
       alignItems: 'center',
-      marginTop: 8,
+      marginBottom: 12,
     },
-    sendOtpBtnText: {
-      color: '#FFFFFF',
-      fontSize: 15,
-      fontWeight: '900',
-    },
-    demoCodeHint: {
+    expiryText: {
       fontSize: 12,
       color: textSub,
-      textAlign: 'center',
-      marginTop: 8,
     },
-    verifyOtpBtn: {
-      backgroundColor: '#2E7D32',
-      borderRadius: 10,
-      height: 50,
-      justifyContent: 'center',
+    attemptsText: {
+      fontSize: 12,
+      color: '#EF4444',
+      fontWeight: '700',
+      marginLeft: 6,
+    },
+    inboxNoticeCard: {
+      flexDirection: 'row',
       alignItems: 'center',
-      marginTop: 16,
+      backgroundColor: isDark ? 'rgba(59, 130, 246, 0.12)' : '#EFF6FF',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(59, 130, 246, 0.25)' : '#BFDBFE',
+      padding: 10,
+      borderRadius: 12,
+      marginBottom: 14,
     },
-    verifyOtpBtnText: {
-      color: '#FFFFFF',
-      fontSize: 15,
-      fontWeight: '900',
+    inboxNoticeIcon: {
+      fontSize: 16,
+      marginRight: 8,
     },
-    resendTimerRow: {
+    inboxNoticeText: {
+      fontSize: 11,
+      color: isDark ? '#DBEAFE' : '#1E40AF',
+      fontWeight: '600',
+      lineHeight: 15,
+      flex: 1,
+    },
+    resendRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
       marginTop: 14,
     },
-    timerText: {
-      fontSize: 12,
-      color: textSub,
+    resendButton: {
+      paddingVertical: 6,
+      paddingHorizontal: 8,
     },
-    resendLinkText: {
+    resendButtonDisabled: {
+      opacity: 0.5,
+    },
+    resendButtonText: {
       fontSize: 12,
       fontWeight: '800',
-      color: instaBlue,
+      color: accentBlue,
     },
-    signupBoxCard: {
+    backToLoginBtn: {
+      paddingVertical: 6,
+      paddingHorizontal: 8,
+    },
+    backToLoginText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: textSub,
+    },
+    searchAddressTriggerBtn: {
       width: '100%',
-      maxWidth: 480, // MATCH ENLARGED BOX
-      backgroundColor: cardBg,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: border,
-      padding: 18,
+      backgroundColor: isDark ? '#262A30' : '#EEF2FF',
+      borderWidth: 1.5,
+      borderColor: isDark ? 'rgba(99, 102, 241, 0.4)' : '#C7D2FE',
+      borderRadius: 12,
+      paddingVertical: 11,
       alignItems: 'center',
-      marginTop: 14,
+      marginBottom: 14,
     },
-    signupBoxText: {
-      fontSize: 14,
+    searchAddressTriggerText: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: isDark ? '#A5B4FC' : '#4338CA',
+    },
+    checkboxRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginVertical: 10,
+    },
+    checkboxText: {
+      fontSize: 12,
+      fontWeight: '600',
       color: textMain,
     },
-    signupLink: {
-      fontWeight: '900',
-      color: instaBlue,
+    adminToggleRow: {
+      alignItems: 'center',
+      marginTop: 18,
+      paddingVertical: 6,
+    },
+    adminToggleText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: textSub,
+    },
+    secondaryButton: {
+      width: '100%',
+      backgroundColor: isDark ? '#333333' : '#F3F4F6',
+      height: 44,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 10,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    secondaryButtonText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: textMain,
     },
     footerBranding: {
-      marginTop: 24,
-      marginBottom: 12,
+      marginTop: 20,
       alignItems: 'center',
     },
     footerBrandText: {
       fontSize: 10,
+      fontWeight: '800',
+      color: 'rgba(255,255,255,0.75)',
+      letterSpacing: 0.8,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.7)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 18,
+    },
+    addressModalCard: {
+      width: '100%',
+      maxWidth: 450,
+      backgroundColor: cardBg,
+      borderRadius: 20,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    modalHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 6,
+    },
+    modalTitleText: {
+      fontSize: 17,
+      fontWeight: '900',
+      color: textMain,
+    },
+    modalCloseBtn: {
+      padding: 6,
+    },
+    modalCloseBtnText: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: textSub,
+    },
+    modalSubText: {
+      fontSize: 12,
+      color: textSub,
+      marginBottom: 12,
+      lineHeight: 16,
+    },
+    modalSearchBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: isDark ? '#262A30' : '#F9FAFB',
+      borderWidth: 1,
+      borderColor: border,
+      borderRadius: 10,
+      paddingHorizontal: 10,
+      marginBottom: 12,
+    },
+    modalSearchInput: {
+      height: 42,
+      flex: 1,
+      fontSize: 13,
+      color: textMain,
+    },
+    presetItemCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 10,
+      paddingHorizontal: 10,
+      borderRadius: 10,
+      backgroundColor: isDark ? '#262A30' : '#F9FAFB',
+      borderWidth: 1,
+      borderColor: border,
+      marginBottom: 8,
+    },
+    presetBadge: {
+      backgroundColor: primaryGreen,
+      paddingVertical: 4,
+      paddingHorizontal: 7,
+      borderRadius: 6,
+      marginRight: 10,
+    },
+    presetPostalText: {
+      fontSize: 11,
       fontWeight: '900',
       color: '#FFFFFF',
-      letterSpacing: 1.5,
+    },
+    presetAreaText: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: textMain,
+    },
+    presetStreetText: {
+      fontSize: 11,
+      color: textSub,
+      marginTop: 2,
+    },
+    presetBuildingText: {
+      fontSize: 10,
+      color: isDark ? '#9CA3AF' : '#6B7280',
+      marginTop: 1,
+    },
+    presetSelectArrow: {
+      fontSize: 14,
+      fontWeight: '900',
+      color: primaryGreen,
+      marginLeft: 8,
     },
   });
 };

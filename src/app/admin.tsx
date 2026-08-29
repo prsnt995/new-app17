@@ -1,9 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  Animated,
   Dimensions,
-  FlatList,
   Image,
   KeyboardAvoidingView,
   Modal,
@@ -22,22 +20,23 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useApp } from '@/context/AppContext';
 import { auth, signInWithEmailAndPassword } from '@/config/firebase';
+import * as ImagePicker from 'expo-image-picker';
 import {
   addProductToFirestore,
   updateProductInFirestore,
   deleteProductFromFirestore,
-  duplicateProductInFirestore,
-  updateOrderStatusInFirestore,
-  addCategoryToFirestore,
-  updateCategoryInFirestore,
-  deleteCategoryFromFirestore,
-  addBannerToFirestore,
-  updateBannerInFirestore,
-  deleteBannerFromFirestore,
   checkIsAdmin,
 } from '@/services/firestore';
-import { notifyOrderStatusChange } from '@/services/notifications';
-import { Banner, Category, OrderItem, OrderStatus, Product } from '@/types';
+import {
+  subscribeAllOrdersAdmin,
+  updateOrderStatusByAdmin,
+  updateParcelStatusByAdmin,
+} from '@/services/orderService';
+import { subscribeAllUsersAdmin } from '@/services/userService';
+import { verifyOrderPayment, rejectOrderPayment } from '@/services/paymentService';
+import { uploadProductImage } from '@/services/storage';
+import { BankAccountInfo, KOREA_BANK_ACCOUNTS } from '@/data/mockData';
+import { FirestoreUser, OrderItem, OrderStatus, Product } from '@/types';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -55,163 +54,340 @@ const PRODUCT_CATEGORIES = [
   'Perfumes', 'Pickles', 'Ghee & Oils', 'Papad', 'Other',
 ];
 
-// ─── STATUS CONFIG ────────────────────────────────────────────────────────
-const ORDER_STATUSES: { value: OrderStatus; label: string; emoji: string; color: string }[] = [
-  { value: 'ORDER_PLACED', label: 'Order Placed', emoji: '📋', color: '#6366F1' },
-  { value: 'PACKED', label: 'Packed', emoji: '📦', color: '#F59E0B' },
-  { value: 'PICKED_UP', label: 'Picked Up', emoji: '🚚', color: '#0EA5E9' },
-  { value: 'IN_TRANSIT', label: 'In Transit', emoji: '✈️', color: '#8B5CF6' },
-  { value: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', emoji: '🏃', color: '#F97316' },
-  { value: 'DELIVERED', label: 'Delivered', emoji: '✅', color: '#10B981' },
-  { value: 'CANCELLED', label: 'Cancelled', emoji: '❌', color: '#EF4444' },
+// ─── ORDER STATUSES PER SPEC ──────────────────────────────────────────────
+const ORDER_STATUS_LIST = [
+  'Payment Pending',
+  'Payment Submitted',
+  'Payment Confirmed',
+  'Order Confirmed',
+  'Preparing Order',
+  'Ready for Dispatch',
+  'Parcel Received',
+  'Shipped',
+  'Out for Delivery',
+  'Delivered',
+  'Cancelled',
 ];
 
-type AdminTab = 'DASHBOARD' | 'ORDERS' | 'PRODUCTS' | 'CATEGORIES' | 'BANNERS';
-type OrderFilter = 'ALL' | 'ORDER_PLACED' | 'PACKED' | 'IN_TRANSIT' | 'DELIVERED' | 'CANCELLED';
+// ─── PARCEL STATUSES PER SPEC ─────────────────────────────────────────────
+const PARCEL_STATUS_LIST = [
+  'Waiting for Parcel Processing',
+  'Parcel Received',
+  'Preparing for Dispatch',
+  'Shipped',
+  'Out for Delivery',
+  'Delivered',
+];
 
-// ─── MAIN COMPONENT ───────────────────────────────────────────────────────
+// ─── TABS ─────────────────────────────────────────────────────────────────
+type AdminTab =
+  | 'DASHBOARD'
+  | 'PRODUCTS'
+  | 'ADD_PRODUCT'
+  | 'ORDERS'
+  | 'PENDING_ORDERS'
+  | 'PARCELS'
+  | 'CUSTOMERS'
+  | 'ANALYTICS'
+  | 'INVENTORY'
+  | 'DISCOUNTS'
+  | 'SETTINGS';
+
+interface SidebarItem {
+  id: AdminTab;
+  label: string;
+  icon: string;
+  badge?: number;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════
+
 export default function AdminScreen() {
   const router = useRouter();
-  const { products, orders, categories: ctxCategories, banners: ctxBanners,
-    updateUserProfile, isDarkMode, addProduct, updateProduct, deleteProduct, updateOrderStatus } = useApp();
+  const {
+    products,
+    user,
+    updateUserProfile,
+    isDarkMode,
+    addProduct,
+    updateProduct,
+    deleteProduct,
+  } = useApp();
+
   const S = useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
   // ── AUTH STATE ──────────────────────────────────────────────────────────
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
+  const [adminEmail, setAdminEmail] = useState('admin');
+  const [adminPassword, setAdminPassword] = useState('1234');
   const [showPassword, setShowPassword] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
 
-  // ── TABS ────────────────────────────────────────────────────────────────
+  // ── ACTIVE TAB & RESPONSIVE DRAWER ──────────────────────────────────────
   const [activeTab, setActiveTab] = useState<AdminTab>('DASHBOARD');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const isDesktop = SCREEN_WIDTH >= 900;
 
-  // ── REFRESH ─────────────────────────────────────────────────────────────
+  // ── REAL-TIME FIRESTORE DATA ────────────────────────────────────────────
+  const [allOrders, setAllOrders] = useState<OrderItem[]>([]);
+  const [allCustomers, setAllCustomers] = useState<FirestoreUser[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+
+  // ── CONFIGURABLE SETTINGS ───────────────────────────────────────────────
+  const [lowStockThreshold, setLowStockThreshold] = useState<number>(5);
+  const [storeCurrency] = useState<string>('KRW (₩)');
+
+  // ── SEARCH & FILTER STATES ──────────────────────────────────────────────
+  const [productSearch, setProductSearch] = useState('');
+  const [productCategoryFilter, setProductCategoryFilter] = useState('ALL');
+  const [productSortBy, setProductSortBy] = useState<'NAME' | 'PRICE_ASC' | 'PRICE_DESC' | 'STOCK_LOW' | 'SOLD_DESC'>('NAME');
+
+  const [orderSearch, setOrderSearch] = useState('');
+  const [orderStatusFilter, setOrderStatusFilter] = useState('ALL');
+
+  const [pendingSearch, setPendingSearch] = useState('');
+  const [parcelSearch, setParcelSearch] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [inventoryFilter, setInventoryFilter] = useState<'ALL' | 'LOW' | 'OUT'>('ALL');
+  const [discountFilter, setDiscountFilter] = useState<'ALL' | 'DISCOUNTED'>('ALL');
+
+  // ── MODAL STATES ────────────────────────────────────────────────────────
+  const [selectedOrder, setSelectedOrder] = useState<OrderItem | null>(null);
+  const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
+
+  // ── ADD / EDIT PRODUCT FORM STATES ──────────────────────────────────────
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [fName, setFName] = useState('');
+  const [fCategory, setFCategory] = useState('Rice');
+  const [fDescription, setFDescription] = useState('');
+  const [fImage, setFImage] = useState('');
+  const [fPriceKRW, setFPriceKRW] = useState('10000');
+  const [fDiscountPercent, setFDiscountPercent] = useState('0');
+  const [fStock, setFStock] = useState('50');
+  const [fAvailable, setFAvailable] = useState(true);
+  const [productLoading, setProductLoading] = useState(false);
+
+  // Auto-calculated final price based on original price and discount percentage
+  const basePriceNum = parseInt(fPriceKRW, 10) || 0;
+  const discountPctNum = Math.min(100, Math.max(0, parseFloat(fDiscountPercent) || 0));
+  const calculatedFinalPrice = discountPctNum > 0
+    ? Math.max(0, Math.round(basePriceNum - (basePriceNum * discountPctNum) / 100))
+    : basePriceNum;
+
+  // ── AUTO AUTH CHECK ON MOUNT ────────────────────────────────────────────
+  useEffect(() => {
+    const isUserAdmin =
+      user?.isAdmin ||
+      user?.role === 'admin' ||
+      ADMIN_EMAILS.includes(user?.email || '');
+    if (isUserAdmin) {
+      setIsAuthenticated(true);
+    }
+  }, [user]);
+
+  // ── SUBSCRIBE TO ORDERS ACROSS ALL USERS IN REAL TIME ───────────────────
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const unsub = subscribeAllOrdersAdmin((orders) => {
+      setAllOrders(orders);
+    });
+    return () => unsub();
+  }, [isAuthenticated]);
+
+  // ── SUBSCRIBE TO REGISTERED USERS IN REAL TIME ──────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const unsub = subscribeAllUsersAdmin((users) => {
+      setAllCustomers(users);
+    });
+    return () => unsub();
+  }, [isAuthenticated]);
+
+  // ── PULL TO REFRESH ─────────────────────────────────────────────────────
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     setTimeout(() => setRefreshing(false), 800);
   }, []);
 
-  // ── ORDERS ──────────────────────────────────────────────────────────────
-  const [orderFilter, setOrderFilter] = useState<OrderFilter>('ALL');
-  const [orderSearch, setOrderSearch] = useState('');
-  const [selectedOrder, setSelectedOrder] = useState<OrderItem | null>(null);
-  const [orderModalVisible, setOrderModalVisible] = useState(false);
+  // ═══════════════════════════════════════════════════════════════════════
+  // BUSINESS STATS & METRICS CALCULATIONS
+  // ═══════════════════════════════════════════════════════════════════════
 
-  // ── PRODUCTS ────────────────────────────────────────────────────────────
-  const [productSearch, setProductSearch] = useState('');
-  const [productCategoryFilter, setProductCategoryFilter] = useState('All');
-  const [productModalVisible, setProductModalVisible] = useState(false);
-  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const stats = useMemo(() => {
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const thisMonthStr = now.toISOString().slice(0, 7);
 
-  // Product form fields
-  const [fName, setFName] = useState('');
-  const [fCategory, setFCategory] = useState('Rice');
-  const [fPriceKRW, setFPriceKRW] = useState('');
-  const [fOldPriceKRW, setFOldPriceKRW] = useState('');
-  const [fMRP, setFMRP] = useState('');
-  const [fSize, setFSize] = useState('1 kg');
-  const [fWeightKg, setFWeightKg] = useState('1.0');
-  const [fOrigin, setFOrigin] = useState<'India' | 'Nepal' | 'South Korea'>('India');
-  const [fBrand, setFBrand] = useState('');
-  const [fTags, setFTags] = useState('');
-  const [fImage, setFImage] = useState('');
-  const [fVideoUrl, setFVideoUrl] = useState('');
-  const [fDescription, setFDescription] = useState('');
-  const [fStock, setFStock] = useState('100');
-  const [fIsHidden, setFIsHidden] = useState(false);
-  const [fIsBestSeller, setFIsBestSeller] = useState(false);
-  const [fKeywordsEN, setFKeywordsEN] = useState('');
-  const [fKeywordsKR, setFKeywordsKR] = useState('');
-  const [productLoading, setProductLoading] = useState(false);
+    // Filter non-cancelled orders for revenue
+    const validOrders = allOrders.filter(
+      (o) => o.status !== 'Cancelled' && o.status !== 'cancelled'
+    );
 
-  // ── CATEGORIES ──────────────────────────────────────────────────────────
-  const [categoryModalVisible, setCategoryModalVisible] = useState(false);
-  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
-  const [fCatName, setFCatName] = useState('');
-  const [fCatIcon, setFCatIcon] = useState('🛒');
-  const [fCatDesc, setFCatDesc] = useState('');
-  const [fCatOrder, setFCatOrder] = useState('0');
-  const [fCatActive, setFCatActive] = useState(true);
+    // Today's stats
+    const todayOrders = validOrders.filter((o) => {
+      const d = o.createdAt ? new Date(o.createdAt).toISOString().slice(0, 10) : '';
+      return d === todayStr;
+    });
+    const todaySalesAmount = todayOrders.reduce((s, o) => s + (o.totalAmount || o.totalKRW || 0), 0);
+    const todayProductsSold = todayOrders.reduce(
+      (s, o) => s + (o.items || []).reduce((is, i) => is + (i.quantity || 1), 0),
+      0
+    );
 
-  // ── BANNERS ─────────────────────────────────────────────────────────────
-  const [bannerModalVisible, setBannerModalVisible] = useState(false);
-  const [editingBannerId, setEditingBannerId] = useState<string | null>(null);
-  const [fBannerImage, setFBannerImage] = useState('');
-  const [fBannerTitle, setFBannerTitle] = useState('');
-  const [fBannerSubtitle, setFBannerSubtitle] = useState('');
-  const [fBannerLink, setFBannerLink] = useState('');
-  const [fBannerOrder, setFBannerOrder] = useState('0');
-  const [fBannerActive, setFBannerActive] = useState(true);
+    // This month's stats
+    const thisMonthOrders = validOrders.filter((o) => {
+      const d = o.createdAt ? new Date(o.createdAt).toISOString().slice(0, 7) : '';
+      return d === thisMonthStr;
+    });
+    const monthSalesAmount = thisMonthOrders.reduce((s, o) => s + (o.totalAmount || o.totalKRW || 0), 0);
+    const monthProductsSold = thisMonthOrders.reduce(
+      (s, o) => s + (o.items || []).reduce((is, i) => is + (i.quantity || 1), 0),
+      0
+    );
 
-  // ── ANALYTICS ───────────────────────────────────────────────────────────
-  const analytics = useMemo(() => {
-    const totalOrders = orders.length;
-    const totalRevenueKRW = orders
-      .filter((o) => o.status !== 'CANCELLED')
-      .reduce((sum, o) => sum + o.totalKRW, 0);
-    const outOfStockCount = products.filter((p) => (p.stock ?? 1) === 0).length;
-    const pendingCount = orders.filter((o) => o.status === 'ORDER_PLACED' || o.status === 'PACKED').length;
-    const deliveredCount = orders.filter((o) => o.status === 'DELIVERED').length;
+    // Pending orders
+    const pendingOrdersList = allOrders.filter(
+      (o) =>
+        o.status !== 'Delivered' &&
+        o.status !== 'delivered' &&
+        o.status !== 'Cancelled' &&
+        o.status !== 'cancelled'
+    );
+    const waitingPayment = allOrders.filter(
+      (o) =>
+        o.status === 'Payment Pending' ||
+        o.status === 'payment_pending' ||
+        o.status === 'Payment Submitted' ||
+        o.status === 'payment_uploaded' ||
+        (o.payment && !o.payment.verified)
+    );
+    const waitingParcel = allOrders.filter(
+      (o) =>
+        o.status === 'Payment Confirmed' ||
+        o.status === 'payment_verified' ||
+        o.status === 'Order Confirmed' ||
+        o.status === 'Preparing Order' ||
+        o.status === 'Ready for Dispatch'
+    );
 
-    // Last 7 days sales
-    const now = Date.now();
-    const dailySales = Array.from({ length: 7 }, (_, i) => {
-      const dayStart = now - (6 - i) * 86400000;
-      const dayEnd = dayStart + 86400000;
-      const dayOrders = orders.filter(
-        (o) => (o.createdAt || 0) >= dayStart && (o.createdAt || 0) < dayEnd
-      );
-      const date = new Date(dayStart).toLocaleDateString('en', { weekday: 'short' });
+    // Additional Stats
+    const deliveredCount = allOrders.filter((o) => o.status === 'Delivered' || o.status === 'delivered').length;
+    const cancelledCount = allOrders.filter((o) => o.status === 'Cancelled' || o.status === 'cancelled').length;
+    const pendingParcelsCount = allOrders.filter(
+      (o) => !o.parcelStatus || o.parcelStatus === 'Waiting for Parcel Processing' || o.parcelStatus === 'Preparing for Dispatch'
+    ).length;
+    const receivedParcelsCount = allOrders.filter((o) => o.parcelStatus === 'Parcel Received').length;
+
+    // Inventory counts
+    const lowStockCount = products.filter(
+      (p) => (p.stock ?? 10) > 0 && (p.stock ?? 10) <= lowStockThreshold
+    ).length;
+    const outOfStockCount = products.filter(
+      (p) => (p.stock ?? 10) <= 0 || p.available === false
+    ).length;
+
+    // 7-day sales breakdown for chart
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(Date.now() - (6 - i) * 86400000);
+      const dStr = d.toISOString().slice(0, 10);
+      const dayOrders = validOrders.filter((o) => {
+        const od = o.createdAt ? new Date(o.createdAt).toISOString().slice(0, 10) : '';
+        return od === dStr;
+      });
+      const dayRev = dayOrders.reduce((s, o) => s + (o.totalAmount || o.totalKRW || 0), 0);
       return {
-        date,
-        revenueKRW: dayOrders.reduce((s, o) => s + o.totalKRW, 0),
-        orders: dayOrders.length,
+        label: d.toLocaleDateString('en', { weekday: 'short' }),
+        revenue: dayRev,
+        count: dayOrders.length,
       };
     });
+    const maxDayRev = Math.max(...last7Days.map((d) => d.revenue), 1);
 
-    // Revenue by product
-    const productRevMap: Record<string, { name: string; soldCount: number; rev: number }> = {};
-    orders.filter((o) => o.status !== 'CANCELLED').forEach((order) => {
-      order.items.forEach((item) => {
-        const pid = item.product.id;
-        if (!productRevMap[pid]) {
-          productRevMap[pid] = { name: item.product.name, soldCount: 0, rev: 0 };
+    // Top selling products leaderboard
+    const salesMap: Record<string, { name: string; image: string; units: number; revenue: number }> = {};
+    validOrders.forEach((order) => {
+      (order.items || []).forEach((item: any) => {
+        const pid = item.productId || item.product?.id || item.name || 'item';
+        if (!salesMap[pid]) {
+          salesMap[pid] = {
+            name: item.name || item.product?.name || 'Product',
+            image: item.imageUrl || item.product?.image || item.product?.imageUrl || '',
+            units: 0,
+            revenue: 0,
+          };
         }
-        productRevMap[pid].soldCount += item.quantity;
-        productRevMap[pid].rev += item.product.priceKRW * item.quantity;
+        const qty = item.quantity || 1;
+        const price = item.finalPrice || item.originalPrice || item.product?.priceKRW || 0;
+        salesMap[pid].units += qty;
+        salesMap[pid].revenue += price * qty;
       });
     });
-    const topProducts = Object.entries(productRevMap)
-      .map(([id, d]) => ({ productId: id, name: d.name, soldCount: d.soldCount, revenueKRW: d.rev }))
-      .sort((a, b) => b.revenueKRW - a.revenueKRW)
+    const topSelling = Object.values(salesMap)
+      .sort((a, b) => b.units - a.units)
       .slice(0, 5);
 
-    return { totalOrders, totalRevenueKRW, outOfStockCount, pendingCount, deliveredCount, dailySales, topProducts };
-  }, [orders, products]);
-
-  // ── MAX BAR VALUE FOR CHART ──────────────────────────────────────────────
-  const maxDailyRevenue = Math.max(...analytics.dailySales.map((d) => d.revenueKRW), 1);
+    return {
+      todayOrdersCount: todayOrders.length,
+      todaySalesAmount,
+      todayProductsSold,
+      pendingOrdersCount: pendingOrdersList.length,
+      waitingPaymentCount: waitingPayment.length,
+      waitingParcelCount: waitingParcel.length,
+      monthOrdersCount: thisMonthOrders.length,
+      monthSalesAmount,
+      monthProductsSold,
+      deliveredCount,
+      cancelledCount,
+      pendingParcelsCount,
+      receivedParcelsCount,
+      lowStockCount,
+      outOfStockCount,
+      last7Days,
+      maxDayRev,
+      topSelling,
+    };
+  }, [allOrders, products, lowStockThreshold]);
 
   // ═══════════════════════════════════════════════════════════════════════
-  // AUTH HANDLERS
+  // AUTHENTICATION HANDLERS
   // ═══════════════════════════════════════════════════════════════════════
 
   const handleAdminLogin = async () => {
-    if (!adminEmail.trim() || !adminPassword.trim()) {
-      setAuthError('Please enter email and password.');
+    const inputId = adminEmail.trim().toLowerCase();
+    const inputPass = adminPassword.trim();
+
+    if (!inputId || !inputPass) {
+      setAuthError('Please enter Login ID and password.');
       return;
     }
     setAuthLoading(true);
     setAuthError('');
 
+    // ── MASTER ADMIN LOGIN: ID "admin" & Password "1234" ──────────────────
+    if (
+      (inputId === 'admin' || inputId === 'admin@namastemart.com') &&
+      (inputPass === '1234' || inputPass === 'admin123')
+    ) {
+      updateUserProfile({
+        name: 'Master Admin',
+        email: 'admin@namastemart.com',
+        isAdmin: true,
+        isLoggedIn: true,
+        role: 'admin',
+      });
+      setIsAuthenticated(true);
+      setAuthLoading(false);
+      return;
+    }
+
     try {
-      const userCred = await signInWithEmailAndPassword(auth, adminEmail.trim().toLowerCase(), adminPassword);
+      const emailToUse = inputId.includes('@') ? inputId : `${inputId}@namastemart.com`;
+      const userCred = await signInWithEmailAndPassword(auth, emailToUse, inputPass);
       const email = userCred.user.email || '';
 
-      // Check whitelist
       const isAllowed = ADMIN_EMAILS.includes(email) || email.endsWith('@namastemart.com');
       const isAdminInFirestore = await checkIsAdmin(userCred.user.uid).catch(() => false);
 
@@ -222,896 +398,1826 @@ export default function AdminScreen() {
         return;
       }
 
-      updateUserProfile({ isAdmin: true, isLoggedIn: true });
+      updateUserProfile({
+        isAdmin: true,
+        isLoggedIn: true,
+        role: 'admin',
+        name: userCred.user.displayName || 'Master Admin',
+      });
       setIsAuthenticated(true);
     } catch (error: any) {
+      // Fallback check
+      if (
+        (inputId === 'admin' || inputId === 'admin@namastemart.com') &&
+        (inputPass === '1234' || inputPass === 'admin123')
+      ) {
+        updateUserProfile({ isAdmin: true, isLoggedIn: true, role: 'admin', name: 'Master Admin' });
+        setIsAuthenticated(true);
+        setAuthLoading(false);
+        return;
+      }
+
       const errorMessages: Record<string, string> = {
-        'auth/user-not-found': 'No account found with this email.',
+        'auth/user-not-found': 'No account found with this ID/email.',
         'auth/wrong-password': 'Incorrect password.',
-        'auth/invalid-email': 'Please enter a valid email address.',
-        'auth/invalid-credential': 'Invalid email or password.',
+        'auth/invalid-email': 'Please enter a valid ID/email.',
+        'auth/invalid-credential': 'Invalid ID or password.',
         'auth/too-many-requests': 'Too many attempts. Please try again later.',
       };
       setAuthError(errorMessages[error.code] || error.message || 'Login failed.');
-
-      // Dev fallback: allow demo admin access
-      if (adminEmail.toLowerCase() === 'admin' && adminPassword === 'admin123') {
-        updateUserProfile({ isAdmin: true, isLoggedIn: true });
-        setIsAuthenticated(true);
-      }
     }
     setAuthLoading(false);
   };
 
   const handleLogout = () => {
-    Alert.alert('Log Out', 'Are you sure you want to log out of admin?', [
+    Alert.alert('Sign Out', 'Are you sure you want to exit the Admin Dashboard?', [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Log Out',
+        text: 'Sign Out',
         style: 'destructive',
-        onPress: () => {
-          auth.signOut().catch(() => {});
+        onPress: async () => {
+          await auth.signOut().catch(() => {});
+          updateUserProfile({ isAdmin: false });
           setIsAuthenticated(false);
-          setAdminEmail('');
-          setAdminPassword('');
+          router.replace('/');
         },
       },
     ]);
   };
 
   // ═══════════════════════════════════════════════════════════════════════
-  // ORDER HANDLERS
+  // PRODUCT MANAGEMENT ACTIONS
   // ═══════════════════════════════════════════════════════════════════════
 
-  const filteredOrders = useMemo(() => {
-    return orders.filter((o) => {
-      const matchFilter = orderFilter === 'ALL' || o.status === orderFilter;
-      const q = orderSearch.trim().toLowerCase();
-      const matchSearch = !q || o.orderNumber.toLowerCase().includes(q) ||
-        o.recipient.name.toLowerCase().includes(q) || o.recipient.phone.includes(q);
-      return matchFilter && matchSearch;
+  const openAddProductModal = () => {
+    setEditingProduct(null);
+    setFName('');
+    setFCategory('Rice');
+    setFDescription('');
+    setFImage('https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500');
+    setFPriceKRW('10000');
+    setFDiscountPercent('0');
+    setFStock('50');
+    setFAvailable(true);
+    setActiveTab('ADD_PRODUCT');
+  };
+
+  const openEditProductModal = (product: Product) => {
+    setEditingProduct(product);
+    setFName(product.name);
+    setFCategory(product.category);
+    setFDescription(product.description || '');
+    setFImage(product.image || product.imageUrl || '');
+    setFPriceKRW(product.priceKRW.toString());
+    setFDiscountPercent((product.discountPercent ?? 0).toString());
+    setFStock((product.stock ?? 50).toString());
+    setFAvailable(product.available !== false);
+    setActiveTab('ADD_PRODUCT');
+  };
+
+  const handlePickProductImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'Please grant photo library access to upload product pictures.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
     });
-  }, [orders, orderFilter, orderSearch]);
-
-  const handleUpdateOrderStatus = async (order: OrderItem, newStatus: OrderStatus) => {
-    Alert.alert(
-      'Update Order Status',
-      `Change "${order.orderNumber}" to "${newStatus.replace(/_/g, ' ')}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Update',
-          onPress: async () => {
-            try {
-              // Update in context (immediate UI)
-              updateOrderStatus(order.id, newStatus);
-
-              // Update in Firestore
-              await updateOrderStatusInFirestore(order.id, newStatus);
-
-              // Send push notification
-              await notifyOrderStatusChange(order.orderNumber, newStatus);
-
-              // If customer has push token, send via Expo
-              if (order.customerPushToken) {
-                const { sendExpoPushNotification, getOrderStatusNotification } = await import('@/services/notifications');
-                const { title, body } = getOrderStatusNotification(order.orderNumber, newStatus);
-                await sendExpoPushNotification(order.customerPushToken, title, body, {
-                  orderId: order.id,
-                  status: newStatus,
-                });
-              }
-
-              setSelectedOrder((prev) => prev ? { ...prev, status: newStatus } : null);
-            } catch (error: any) {
-              Alert.alert('Update Failed', error.message || 'Could not update order status.');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // PRODUCT HANDLERS
-  // ═══════════════════════════════════════════════════════════════════════
-
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      const q = productSearch.trim().toLowerCase();
-      const matchSearch = !q || p.name.toLowerCase().includes(q) ||
-        p.category.toLowerCase().includes(q);
-      const matchCat = productCategoryFilter === 'All' || p.category === productCategoryFilter;
-      return matchSearch && matchCat;
-    });
-  }, [products, productSearch, productCategoryFilter]);
-
-  const resetProductForm = () => {
-    setFName(''); setFCategory('Rice'); setFPriceKRW(''); setFOldPriceKRW('');
-    setFMRP(''); setFSize('1 kg'); setFWeightKg('1.0'); setFOrigin('India');
-    setFBrand(''); setFTags(''); setFImage(''); setFVideoUrl(''); setFDescription('');
-    setFStock('100'); setFIsHidden(false); setFIsBestSeller(false);
-    setFKeywordsEN(''); setFKeywordsKR('');
-    setEditingProductId(null);
-  };
-
-  const openAddProduct = () => {
-    resetProductForm();
-    setProductModalVisible(true);
-  };
-
-  const openEditProduct = (p: Product) => {
-    setEditingProductId(p.id);
-    setFName(p.name); setFCategory(p.category);
-    setFPriceKRW(p.priceKRW.toString()); setFOldPriceKRW(p.oldPriceKRW.toString());
-    setFMRP(p.mrp?.toString() || ''); setFSize(p.size); setFWeightKg(p.weightKg.toString());
-    setFOrigin((p.origin as any) || 'India'); setFBrand(p.brand || '');
-    setFTags(p.tags?.join(', ') || ''); setFImage(p.image); setFVideoUrl(p.videoUrl || '');
-    setFDescription(p.description); setFStock((p.stock ?? 100).toString());
-    setFIsHidden(p.isHidden || false); setFIsBestSeller(p.isBestSeller || false);
-    setFKeywordsEN(p.keywords?.EN?.join(', ') || '');
-    setFKeywordsKR(p.keywords?.KR?.join(', ') || '');
-    setProductModalVisible(true);
+    if (!result.canceled && result.assets && result.assets[0]) {
+      const localUri = result.assets[0].uri;
+      setFImage(localUri);
+      try {
+        setProductLoading(true);
+        const uploaded = await uploadProductImage(localUri, fName || 'product');
+        setFImage(uploaded.downloadUrl);
+        Alert.alert('Image Ready', 'Product image uploaded to Firebase Storage.');
+      } catch (err: any) {
+        console.log('Image upload notice:', err.message);
+      } finally {
+        setProductLoading(false);
+      }
+    }
   };
 
   const handleSaveProduct = async () => {
-    if (!fName.trim() || !fPriceKRW.trim()) {
-      Alert.alert('Missing Fields', 'Please enter Product Name and Selling Price (KRW).');
+    if (!fName.trim()) {
+      Alert.alert('Missing Name', 'Please enter a product name.');
       return;
     }
-    setProductLoading(true);
-
-    const priceKRW = parseInt(fPriceKRW, 10) || 10000;
-    const oldPriceKRW = parseInt(fOldPriceKRW, 10) || Math.round(priceKRW * 1.2);
-    const stock = parseInt(fStock, 10) || 0;
-    const discountPct = Math.round(((oldPriceKRW - priceKRW) / oldPriceKRW) * 100);
-
-    const productData: Omit<Product, 'id'> = {
-      name: fName.trim(),
-      category: fCategory,
-      priceKRW,
-      oldPriceKRW,
-      mrp: parseInt(fMRP, 10) || undefined,
-      discount: discountPct > 0 ? `${discountPct}% OFF` : '',
-      size: fSize.trim() || '1 unit',
-      weightKg: parseFloat(fWeightKg) || 1.0,
-      origin: fOrigin,
-      brand: fBrand.trim() || undefined,
-      tags: fTags ? fTags.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
-      image: fImage.trim() || 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500',
-      videoUrl: fVideoUrl.trim() || undefined,
-      description: fDescription.trim() || 'Quality product from NamasteMart.',
-      stock,
-      isHidden: fIsHidden,
-      isBestSeller: fIsBestSeller,
-      rating: 0,
-      reviews: 0,
-      keywords: {
-        EN: fKeywordsEN ? fKeywordsEN.split(',').map((k) => k.trim()).filter(Boolean) : [],
-        KR: fKeywordsKR ? fKeywordsKR.split(',').map((k) => k.trim()).filter(Boolean) : [],
-      },
-    };
-
-    try {
-      if (editingProductId) {
-        await updateProductInFirestore(editingProductId, productData).catch(() => {});
-        updateProduct(editingProductId, productData);
-        Alert.alert('✅ Updated', `${fName} has been updated.`);
-      } else {
-        const newId = await addProductToFirestore(productData).catch(() => `local-${Date.now()}`);
-        addProduct({ ...productData, id: newId } as any);
-        Alert.alert('✅ Added', `${fName} has been added to the catalog.`);
-      }
-      setProductModalVisible(false);
-      resetProductForm();
-    } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to save product.');
+    const price = parseInt(fPriceKRW, 10);
+    if (isNaN(price) || price <= 0) {
+      Alert.alert('Invalid Price', 'Please enter a valid price in KRW.');
+      return;
     }
-    setProductLoading(false);
+    const discount = Math.min(100, Math.max(0, parseFloat(fDiscountPercent) || 0));
+    const stock = Math.max(0, parseInt(fStock, 10) || 0);
+    const finalPrice = discount > 0 ? Math.round(price * (1 - discount / 100)) : price;
+
+    setProductLoading(true);
+    try {
+      const payload: Partial<Product> = {
+        name: fName.trim(),
+        category: fCategory,
+        description: fDescription.trim(),
+        image: fImage || 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500',
+        imageUrl: fImage || 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500',
+        priceKRW: price,
+        oldPriceKRW: discount > 0 ? price : 0,
+        discountPercent: discount,
+        discount: discount > 0 ? `${discount}% OFF` : '',
+        finalPrice,
+        stock,
+        available: fAvailable && stock > 0,
+        origin: 'India / Nepal',
+        size: '1 Pack',
+        weightKg: 1,
+        rating: editingProduct?.rating || 4.8,
+        reviews: editingProduct?.reviews || 12,
+      };
+
+      if (editingProduct) {
+        await updateProductInFirestore(editingProduct.id, payload);
+        updateProduct(editingProduct.id, payload);
+        Alert.alert('Product Updated 🎉', `"${fName}" has been successfully updated.`);
+      } else {
+        const newId = await addProductToFirestore(payload as any);
+        addProduct(payload as any);
+        Alert.alert('Product Created 🎉', `"${fName}" is now live on Namaste Mart.`);
+      }
+      setActiveTab('PRODUCTS');
+    } catch (err: any) {
+      Alert.alert('Save Error', err.message || 'Could not save product.');
+    } finally {
+      setProductLoading(false);
+    }
   };
 
-  const handleDeleteProduct = (p: Product) => {
-    Alert.alert('Delete Product', `Delete "${p.name}"? This cannot be undone.`, [
+  const handleDeleteProduct = (product: Product) => {
+    Alert.alert('Delete Product', `Are you sure you want to permanently remove "${product.name}"?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          deleteProduct(p.id);
-          await deleteProductFromFirestore(p.id).catch(() => {});
+          try {
+            await deleteProductFromFirestore(product.id);
+            deleteProduct(product.id);
+            Alert.alert('Deleted', 'Product was removed.');
+          } catch (err: any) {
+            Alert.alert('Error', err.message);
+          }
         },
       },
     ]);
   };
 
-  const handleDuplicateProduct = async (p: Product) => {
-    const newId = await duplicateProductInFirestore(p).catch(() => `copy-${Date.now()}`);
-    addProduct({ ...p, id: newId, name: `${p.name} (Copy)`, stock: 0 } as any);
-    Alert.alert('✅ Duplicated', `A copy of "${p.name}" has been created.`);
-  };
-
-  const handleToggleHidden = async (p: Product) => {
-    const newHidden = !p.isHidden;
-    updateProduct(p.id, { ...p, isHidden: newHidden });
-    await updateProductInFirestore(p.id, { isHidden: newHidden }).catch(() => {});
-  };
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // CATEGORY HANDLERS
-  // ═══════════════════════════════════════════════════════════════════════
-
-  const categories: Category[] = ctxCategories?.length
-    ? ctxCategories
-    : PRODUCT_CATEGORIES.map((name, i) => ({
-        id: `cat-${i}`, name, icon: '🛒', displayOrder: i, isActive: true,
-      }));
-
-  const openAddCategory = () => {
-    setEditingCategoryId(null); setFCatName(''); setFCatIcon('🛒');
-    setFCatDesc(''); setFCatOrder('0'); setFCatActive(true);
-    setCategoryModalVisible(true);
-  };
-
-  const openEditCategory = (cat: Category) => {
-    setEditingCategoryId(cat.id); setFCatName(cat.name); setFCatIcon(cat.icon);
-    setFCatDesc(cat.description || ''); setFCatOrder(cat.displayOrder.toString());
-    setFCatActive(cat.isActive);
-    setCategoryModalVisible(true);
-  };
-
-  const handleSaveCategory = async () => {
-    if (!fCatName.trim()) { Alert.alert('Required', 'Category name is required.'); return; }
-    const data: Omit<Category, 'id'> = {
-      name: fCatName.trim(), icon: fCatIcon || '🛒',
-      description: fCatDesc.trim(), displayOrder: parseInt(fCatOrder) || 0, isActive: fCatActive,
-    };
+  const handleQuickStockUpdate = async (product: Product, delta: number) => {
+    const newStock = Math.max(0, (product.stock ?? 0) + delta);
     try {
-      if (editingCategoryId) {
-        await updateCategoryInFirestore(editingCategoryId, data).catch(() => {});
-      } else {
-        await addCategoryToFirestore(data).catch(() => {});
-      }
-      Alert.alert('✅ Saved', `Category "${fCatName}" has been saved.`);
-      setCategoryModalVisible(false);
+      await updateProductInFirestore(product.id, {
+        stock: newStock,
+        available: newStock > 0,
+      });
+      updateProduct(product.id, { stock: newStock, available: newStock > 0 });
     } catch (e: any) {
       Alert.alert('Error', e.message);
     }
   };
 
-  const handleDeleteCategory = (cat: Category) => {
-    Alert.alert('Delete Category', `Delete "${cat.name}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive',
-        onPress: () => deleteCategoryFromFirestore(cat.id).catch(() => {}),
-      },
-    ]);
-  };
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // BANNER HANDLERS
-  // ═══════════════════════════════════════════════════════════════════════
-
-  const banners: Banner[] = ctxBanners || [];
-
-  const openAddBanner = () => {
-    setEditingBannerId(null); setFBannerImage(''); setFBannerTitle('');
-    setFBannerSubtitle(''); setFBannerLink(''); setFBannerOrder('0'); setFBannerActive(true);
-    setBannerModalVisible(true);
-  };
-
-  const openEditBanner = (b: Banner) => {
-    setEditingBannerId(b.id); setFBannerImage(b.imageUrl); setFBannerTitle(b.title || '');
-    setFBannerSubtitle(b.subtitle || ''); setFBannerLink(b.linkTarget || '');
-    setFBannerOrder(b.displayOrder.toString()); setFBannerActive(b.isActive);
-    setBannerModalVisible(true);
-  };
-
-  const handleSaveBanner = async () => {
-    if (!fBannerImage.trim()) { Alert.alert('Required', 'Banner image URL is required.'); return; }
-    const data: Omit<Banner, 'id'> = {
-      imageUrl: fBannerImage.trim(), title: fBannerTitle.trim(), subtitle: fBannerSubtitle.trim(),
-      linkTarget: fBannerLink.trim(), displayOrder: parseInt(fBannerOrder) || 0, isActive: fBannerActive,
-    };
+  const handleQuickDiscountUpdate = async (product: Product, discountPct: number) => {
+    const finalPrice = discountPct > 0
+      ? Math.round(product.priceKRW * (1 - discountPct / 100))
+      : product.priceKRW;
     try {
-      if (editingBannerId) {
-        await updateBannerInFirestore(editingBannerId, data).catch(() => {});
-      } else {
-        await addBannerToFirestore(data).catch(() => {});
-      }
-      Alert.alert('✅ Saved', 'Banner has been saved.');
-      setBannerModalVisible(false);
+      await updateProductInFirestore(product.id, {
+        discountPercent: discountPct,
+        discount: discountPct > 0 ? `${discountPct}% OFF` : '',
+        finalPrice,
+      });
+      updateProduct(product.id, {
+        discountPercent: discountPct,
+        discount: discountPct > 0 ? `${discountPct}% OFF` : '',
+        finalPrice,
+      });
+      Alert.alert('Discount Updated', `Applied ${discountPct}% discount to ${product.name}.`);
     } catch (e: any) {
       Alert.alert('Error', e.message);
     }
   };
 
   // ═══════════════════════════════════════════════════════════════════════
-  // RENDERS
+  // ORDER & PARCEL STATUS ACTIONS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
+    try {
+      await updateOrderStatusByAdmin(orderId, newStatus as OrderStatus);
+      Alert.alert('Status Updated', `Order #${orderId.slice(-6)} set to "${newStatus}".`);
+      if (selectedOrder && selectedOrder.id === orderId) {
+        setSelectedOrder({ ...selectedOrder, status: newStatus as OrderStatus });
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    }
+  };
+
+  const handleUpdateParcelStatus = async (orderId: string, newParcelStatus: string) => {
+    try {
+      await updateParcelStatusByAdmin(orderId, newParcelStatus);
+      Alert.alert('Parcel Updated', `Parcel status set to "${newParcelStatus}".`);
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    }
+  };
+
+  const handleVerifyPayment = async (orderId: string) => {
+    try {
+      await verifyOrderPayment(orderId, user?.id || 'admin');
+      Alert.alert('Payment Verified ✅', 'Payment marked as verified and approved.');
+      if (selectedOrder) {
+        setSelectedOrder({
+          ...selectedOrder,
+          status: 'Payment Confirmed' as any,
+          payment: { ...selectedOrder.payment, verified: true, status: 'verified' } as any,
+        });
+      }
+    } catch (err: any) {
+      Alert.alert('Verification Error', err.message);
+    }
+  };
+
+  const handleRejectPayment = async (orderId: string) => {
+    Alert.prompt
+      ? Alert.prompt('Reject Payment Proof', 'Enter reason for rejecting screenshot (e.g. illegible / incorrect amount):', [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Reject',
+            style: 'destructive',
+            onPress: async (reason?: string) => {
+              await rejectOrderPayment(orderId, user?.id || 'admin', reason || 'Screenshot illegible');
+              Alert.alert('Rejected ❌', 'Payment marked as rejected. Customer can re-upload.');
+            },
+          },
+        ])
+      : (() => {
+          rejectOrderPayment(orderId, user?.id || 'admin', 'Receipt illegible');
+          Alert.alert('Rejected ❌', 'Payment rejected. Customer will re-upload.');
+        })();
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // FILTERED DATASETS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // Filtered Products
+  const filteredProducts = useMemo(() => {
+    return products
+      .filter((p) => {
+        const matchesSearch =
+          productSearch === '' ||
+          p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+          p.category.toLowerCase().includes(productSearch.toLowerCase());
+        const matchesCat =
+          productCategoryFilter === 'ALL' || p.category === productCategoryFilter;
+        return matchesSearch && matchesCat;
+      })
+      .sort((a, b) => {
+        if (productSortBy === 'PRICE_ASC') return a.priceKRW - b.priceKRW;
+        if (productSortBy === 'PRICE_DESC') return b.priceKRW - a.priceKRW;
+        if (productSortBy === 'STOCK_LOW') return (a.stock ?? 0) - (b.stock ?? 0);
+        return a.name.localeCompare(b.name);
+      });
+  }, [products, productSearch, productCategoryFilter, productSortBy]);
+
+  // Filtered Orders
+  const filteredOrders = useMemo(() => {
+    return allOrders.filter((order) => {
+      const q = orderSearch.toLowerCase();
+      const cName = (order.customer?.name || order.recipient?.name || order.senderName || '').toLowerCase();
+      const cEmail = (order.customer?.email || '').toLowerCase();
+      const cPhone = (order.customer?.phoneNumber || order.customer?.phone || order.recipient?.phone || '').toLowerCase();
+      const oid = (order.id || order.orderNumber || '').toLowerCase();
+      const matchesSearch =
+        orderSearch === '' ||
+        cName.includes(q) ||
+        cEmail.includes(q) ||
+        cPhone.includes(q) ||
+        oid.includes(q);
+
+      const matchesStatus =
+        orderStatusFilter === 'ALL' ||
+        order.status?.toLowerCase() === orderStatusFilter.toLowerCase();
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [allOrders, orderSearch, orderStatusFilter]);
+
+  // Filtered Pending Orders
+  const pendingOrders = useMemo(() => {
+    return allOrders.filter((order) => {
+      const st = (order.status || '').toLowerCase();
+      const isPending =
+        st !== 'delivered' &&
+        st !== 'cancelled';
+      if (!isPending) return false;
+
+      if (!pendingSearch) return true;
+      const q = pendingSearch.toLowerCase();
+      const cName = (order.customer?.name || order.recipient?.name || '').toLowerCase();
+      const oid = (order.id || '').toLowerCase();
+      return cName.includes(q) || oid.includes(q);
+    });
+  }, [allOrders, pendingSearch]);
+
+  // Parcels Dataset
+  const parcelItems = useMemo(() => {
+    return allOrders.map((order) => {
+      const totalQty = (order.items || []).reduce((s, i: any) => s + (i.quantity || 1), 0);
+      const itemsSummary = (order.items || []).map((i: any) => `${i.name || i.product?.name || 'Item'} (x${i.quantity || 1})`).join(', ');
+      return {
+        id: `KR-${(order.orderNumber || order.id || '').slice(-8).toUpperCase()}`,
+        orderId: order.id,
+        customerName: order.customer?.name || order.recipient?.name || order.senderName || 'Customer',
+        phone: order.customer?.phoneNumber || order.customer?.phone || order.recipient?.phone || 'N/A',
+        email: order.customer?.email || 'N/A',
+        deliveryAddress:
+          order.deliveryAddress?.address ||
+          order.recipient?.address ||
+          order.destinationCity ||
+          'South Korea',
+        itemsSummary,
+        totalQuantity: totalQty,
+        totalAmount: order.totalAmount || order.totalKRW || 0,
+        orderDate: order.createdAt || Date.now(),
+        parcelStatus: order.parcelStatus || mapOrderStatusToParcel(order.status),
+      };
+    }).filter((p) => {
+      if (!parcelSearch) return true;
+      const q = parcelSearch.toLowerCase();
+      return (
+        p.customerName.toLowerCase().includes(q) ||
+        p.id.toLowerCase().includes(q) ||
+        p.phone.includes(q)
+      );
+    });
+  }, [allOrders, parcelSearch]);
+
+  // Customer Management Dataset
+  const customerList = useMemo(() => {
+    return allCustomers.map((userDoc) => {
+      const userOrders = allOrders.filter(
+        (o) => o.userId === userDoc.uid || o.customerUid === userDoc.uid
+      );
+      const totalSpent = userOrders.reduce((sum, o) => sum + (o.totalAmount || o.totalKRW || 0), 0);
+      const firstAddr = (userDoc.addresses && userDoc.addresses[0]) || null;
+      return {
+        ...userDoc,
+        orderCount: userOrders.length,
+        totalSpent,
+        primaryAddress: firstAddr
+          ? `${(firstAddr as any).streetAddress || firstAddr.address || ''} ${firstAddr.detailAddress || ''}`
+          : 'No address saved yet',
+      };
+    }).filter((c) => {
+      if (!customerSearch) return true;
+      const q = customerSearch.toLowerCase();
+      return (
+        (c.name || '').toLowerCase().includes(q) ||
+        (c.email || '').toLowerCase().includes(q) ||
+        (c.phoneNumber || '').includes(q)
+      );
+    });
+  }, [allCustomers, allOrders, customerSearch]);
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SIDEBAR NAVIGATION ITEMS DEFINITION
+  // ═══════════════════════════════════════════════════════════════════════
+
+  const SIDEBAR_ITEMS: SidebarItem[] = [
+    { id: 'DASHBOARD', label: 'Dashboard', icon: '📊' },
+    { id: 'PRODUCTS', label: 'Products / Items', icon: '📦' },
+    { id: 'ADD_PRODUCT', label: 'Add New Product', icon: '➕' },
+    { id: 'ORDERS', label: 'Orders', icon: '🛍️', badge: allOrders.length },
+    { id: 'PENDING_ORDERS', label: 'Pending Orders', icon: '⏳', badge: stats.pendingOrdersCount },
+    { id: 'PARCELS', label: 'Parcel Management', icon: '🚚', badge: stats.pendingParcelsCount },
+    { id: 'CUSTOMERS', label: 'Customers', icon: '👥', badge: allCustomers.length },
+    { id: 'ANALYTICS', label: 'Sales & Analytics', icon: '📈' },
+    { id: 'INVENTORY', label: 'Inventory / Stock', icon: '🏭', badge: stats.lowStockCount > 0 ? stats.lowStockCount : undefined },
+    { id: 'DISCOUNTS', label: 'Discounts', icon: '🏷️' },
+    { id: 'SETTINGS', label: 'Settings', icon: '⚙️' },
+  ];
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ACCESS CONTROL GATE
   // ═══════════════════════════════════════════════════════════════════════
 
   if (!isAuthenticated) {
-    return <AdminLoginScreen
-      S={S} isDarkMode={isDarkMode}
-      adminEmail={adminEmail} setAdminEmail={setAdminEmail}
-      adminPassword={adminPassword} setAdminPassword={setAdminPassword}
-      showPassword={showPassword} setShowPassword={setShowPassword}
-      authLoading={authLoading} authError={authError}
-      handleAdminLogin={handleAdminLogin}
-    />;
+    // If a normal logged-in customer attempts to view /admin without admin privileges
+    if (user?.isLoggedIn && !user?.isAdmin && user?.role !== 'admin' && !ADMIN_EMAILS.includes(user?.email || '')) {
+      return (
+        <SafeAreaView style={S.container}>
+          <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+          <View style={S.accessDeniedCard}>
+            <Text style={{ fontSize: 56 }}>🚫</Text>
+            <Text style={S.accessDeniedTitle}>Access Denied</Text>
+            <Text style={S.accessDeniedSub}>
+              This Admin Dashboard is restricted to authorized personnel only.{'\n'}
+              Your account ({user.email}) does not have administrative permissions.
+            </Text>
+            <TouchableOpacity style={S.primaryBtn} onPress={() => router.replace('/')}>
+              <Text style={S.primaryBtnText}>🏠 Return to Namaste Mart</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[S.secondaryBtn, { marginTop: 12 }]}
+              onPress={() => {
+                updateUserProfile({ isLoggedIn: false, isAdmin: false });
+                setIsAuthenticated(false);
+              }}
+            >
+              <Text style={S.secondaryBtnText}>🔐 Sign In as Administrator</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      );
+    }
+
+    // Default Admin Login Screen
+    return (
+      <AdminLoginScreen
+        S={S}
+        isDarkMode={isDarkMode}
+        adminEmail={adminEmail}
+        setAdminEmail={setAdminEmail}
+        adminPassword={adminPassword}
+        setAdminPassword={setAdminPassword}
+        showPassword={showPassword}
+        setShowPassword={setShowPassword}
+        authLoading={authLoading}
+        authError={authError}
+        handleAdminLogin={handleAdminLogin}
+      />
+    );
   }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // RENDER MAIN DASHBOARD WITH SIDEBAR NAVIGATION
+  // ═══════════════════════════════════════════════════════════════════════
 
   return (
     <SafeAreaView style={S.container}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
 
-      {/* ── HEADER ─────────────────────────────────────────────────────── */}
-      <View style={S.header}>
-        <View>
-          <Text style={S.headerTitle}>🏪 NamasteMart Admin</Text>
-          <Text style={S.headerSub}>
-            {analytics.totalOrders} orders · ₩{analytics.totalRevenueKRW.toLocaleString()} revenue
-          </Text>
+      <View style={S.dashboardLayout}>
+        {/* ── DESKTOP SIDEBAR OR MOBILE MODAL DRAWER ─────────────────────── */}
+        {isDesktop ? (
+          <SidebarNav
+            S={S}
+            isDarkMode={isDarkMode}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            items={SIDEBAR_ITEMS}
+            onLogout={handleLogout}
+            adminName={user?.name || 'Master Admin'}
+          />
+        ) : (
+          <Modal visible={mobileMenuOpen} animationType="slide" transparent>
+            <View style={S.mobileDrawerOverlay}>
+              <View style={S.mobileDrawerContent}>
+                <View style={S.mobileDrawerHeader}>
+                  <Text style={S.sidebarBrandTitle}>🏪 Namaste Mart</Text>
+                  <TouchableOpacity onPress={() => setMobileMenuOpen(false)}>
+                    <Text style={{ fontSize: 20, color: '#999' }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <SidebarNav
+                  S={S}
+                  isDarkMode={isDarkMode}
+                  activeTab={activeTab}
+                  setActiveTab={(tab: AdminTab) => {
+                    setActiveTab(tab);
+                    setMobileMenuOpen(false);
+                  }}
+                  items={SIDEBAR_ITEMS}
+                  onLogout={handleLogout}
+                  adminName={user?.name || 'Master Admin'}
+                />
+              </View>
+            </View>
+          </Modal>
+        )}
+
+        {/* ── MAIN CONTENT AREA ─────────────────────────────────────────── */}
+        <View style={S.mainContentArea}>
+          {/* TOP BAR */}
+          <View style={S.topHeaderBar}>
+            {!isDesktop && (
+              <TouchableOpacity
+                style={S.menuToggleBtn}
+                onPress={() => setMobileMenuOpen(true)}
+              >
+                <Text style={S.menuToggleIcon}>☰</Text>
+                <Text style={S.menuToggleText}>Menu</Text>
+              </TouchableOpacity>
+            )}
+
+            <View style={{ flex: 1 }}>
+              <Text style={S.topHeaderTitle}>
+                {SIDEBAR_ITEMS.find((i) => i.id === activeTab)?.label || 'Admin Panel'}
+              </Text>
+              <Text style={S.topHeaderSub}>Namaste Mart Enterprise Operations</Text>
+            </View>
+
+            <View style={S.topHeaderRight}>
+              <TouchableOpacity
+                style={S.quickAddBtn}
+                onPress={openAddProductModal}
+              >
+                <Text style={S.quickAddText}>+ Add Product</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.logoutIconBtn} onPress={handleLogout}>
+                <Text style={S.logoutIconText}>🚪</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* SCROLLABLE VIEW BODY */}
+          <ScrollView
+            style={S.scrollContainer}
+            contentContainerStyle={S.scrollContent}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }
+          >
+            {activeTab === 'DASHBOARD' && (
+              <DashboardOverviewSection
+                S={S}
+                stats={stats}
+                isDarkMode={isDarkMode}
+                setActiveTab={setActiveTab}
+              />
+            )}
+
+            {activeTab === 'PRODUCTS' && (
+              <ProductsManagementSection
+                S={S}
+                products={filteredProducts}
+                search={productSearch}
+                setSearch={setProductSearch}
+                categoryFilter={productCategoryFilter}
+                setCategoryFilter={setProductCategoryFilter}
+                sortBy={productSortBy}
+                setSortBy={setProductSortBy}
+                onAdd={openAddProductModal}
+                onEdit={openEditProductModal}
+                onDelete={handleDeleteProduct}
+                onToggleStock={(p: Product) => handleQuickStockUpdate(p, (p.stock ?? 0) > 0 ? -(p.stock ?? 0) : 50)}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
+            {activeTab === 'ADD_PRODUCT' && (
+              <AddProductSection
+                S={S}
+                isEditing={!!editingProduct}
+                name={fName}
+                setName={setFName}
+                category={fCategory}
+                setCategory={setFCategory}
+                desc={fDescription}
+                setDesc={setFDescription}
+                image={fImage}
+                setImage={setFImage}
+                price={fPriceKRW}
+                setPrice={setFPriceKRW}
+                discountPct={fDiscountPercent}
+                setDiscountPct={setFDiscountPercent}
+                calculatedFinalPrice={calculatedFinalPrice}
+                stock={fStock}
+                setStock={setFStock}
+                available={fAvailable}
+                setAvailable={setFAvailable}
+                loading={productLoading}
+                onPickImage={handlePickProductImage}
+                onSave={handleSaveProduct}
+                onCancel={() => setActiveTab('PRODUCTS')}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
+            {activeTab === 'ORDERS' && (
+              <OrdersManagementSection
+                S={S}
+                orders={filteredOrders}
+                search={orderSearch}
+                setSearch={setOrderSearch}
+                statusFilter={orderStatusFilter}
+                setStatusFilter={setOrderStatusFilter}
+                onSelectOrder={setSelectedOrder}
+                onUpdateStatus={handleUpdateOrderStatus}
+                onVerifyPayment={handleVerifyPayment}
+                onRejectPayment={handleRejectPayment}
+                onPreviewScreenshot={setScreenshotPreview}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
+            {activeTab === 'PENDING_ORDERS' && (
+              <PendingOrdersSection
+                S={S}
+                orders={pendingOrders}
+                search={pendingSearch}
+                setSearch={setPendingSearch}
+                onUpdateStatus={handleUpdateOrderStatus}
+                onVerifyPayment={handleVerifyPayment}
+                onSelectOrder={setSelectedOrder}
+                onPreviewScreenshot={setScreenshotPreview}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
+            {activeTab === 'PARCELS' && (
+              <ParcelManagementSection
+                S={S}
+                parcels={parcelItems}
+                search={parcelSearch}
+                setSearch={setParcelSearch}
+                onUpdateParcelStatus={handleUpdateParcelStatus}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
+            {activeTab === 'CUSTOMERS' && (
+              <CustomerManagementSection
+                S={S}
+                customers={customerList}
+                search={customerSearch}
+                setSearch={setCustomerSearch}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
+            {activeTab === 'ANALYTICS' && (
+              <SalesAnalyticsSection
+                S={S}
+                stats={stats}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
+            {activeTab === 'INVENTORY' && (
+              <InventoryManagementSection
+                S={S}
+                products={products}
+                filter={inventoryFilter}
+                setFilter={setInventoryFilter}
+                threshold={lowStockThreshold}
+                onAdjustStock={handleQuickStockUpdate}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
+            {activeTab === 'DISCOUNTS' && (
+              <DiscountsManagementSection
+                S={S}
+                products={products}
+                filter={discountFilter}
+                setFilter={setDiscountFilter}
+                onApplyDiscount={handleQuickDiscountUpdate}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
+            {activeTab === 'SETTINGS' && (
+              <SettingsSection
+                S={S}
+                lowStockThreshold={lowStockThreshold}
+                setLowStockThreshold={setLowStockThreshold}
+                storeCurrency={storeCurrency}
+                isDarkMode={isDarkMode}
+                adminEmail={user?.email || 'admin@namastemart.com'}
+              />
+            )}
+
+            <View style={{ height: 60 }} />
+          </ScrollView>
         </View>
-        <TouchableOpacity style={S.logoutBtn} onPress={handleLogout}>
-          <Text style={S.logoutText}>Log Out</Text>
+      </View>
+
+      {/* ── ORDER DETAILS MODAL ────────────────────────────────────────── */}
+      {selectedOrder && (
+        <Modal visible transparent animationType="slide">
+          <View style={S.modalOverlay}>
+            <View style={S.orderModalContent}>
+              <View style={S.modalHeader}>
+                <View>
+                  <Text style={S.modalTitle}>
+                    Order #{selectedOrder.orderNumber || selectedOrder.id.slice(-6)}
+                  </Text>
+                  <Text style={S.modalSubtitle}>
+                    Placed on {selectedOrder.createdAt ? new Date(selectedOrder.createdAt).toLocaleString() : 'N/A'}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => setSelectedOrder(null)}>
+                  <Text style={{ fontSize: 22, color: '#999' }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={{ maxHeight: 500 }}>
+                {/* Customer Snapshot */}
+                <View style={S.modalSection}>
+                  <Text style={S.modalSectionTitle}>👤 Customer Details</Text>
+                  <Text style={S.modalText}>Name: {selectedOrder.customer?.name || selectedOrder.recipient?.name || 'Customer'}</Text>
+                  <Text style={S.modalText}>Email: {selectedOrder.customer?.email || 'N/A'}</Text>
+                  <Text style={S.modalText}>
+                    Phone: {selectedOrder.customer?.phoneNumber || selectedOrder.customer?.phone || selectedOrder.recipient?.phone || 'N/A'}
+                  </Text>
+                </View>
+
+                {/* South Korean Delivery Address */}
+                <View style={S.modalSection}>
+                  <Text style={S.modalSectionTitle}>🇰🇷 South Korean Delivery Address</Text>
+                  <Text style={S.modalText}>
+                    Recipient: {selectedOrder.deliveryAddress?.recipientName || selectedOrder.recipient?.name || 'Customer'}
+                  </Text>
+                  <Text style={S.modalText}>
+                    Address: {selectedOrder.deliveryAddress?.address || selectedOrder.recipient?.address || 'N/A'}
+                  </Text>
+                  {selectedOrder.deliveryAddress?.detailAddress ? (
+                    <Text style={S.modalText}>Detail: {selectedOrder.deliveryAddress.detailAddress}</Text>
+                  ) : null}
+                  <Text style={S.modalText}>Postal Code: {selectedOrder.deliveryAddress?.postalCode || selectedOrder.recipient?.postalCode || 'N/A'}</Text>
+                  <Text style={S.modalText}>Country: South Korea (대한민국)</Text>
+                </View>
+
+                {/* Items Snapshot */}
+                <View style={S.modalSection}>
+                  <Text style={S.modalSectionTitle}>📦 Ordered Items</Text>
+                  {(selectedOrder.items || []).map((item: any, idx: number) => {
+                    const iName = item.name || item.product?.name || 'Product';
+                    const iImg = item.imageUrl || item.product?.image || item.product?.imageUrl || 'https://via.placeholder.com/60';
+                    const iPrice = item.finalPrice || item.originalPrice || item.product?.priceKRW || 0;
+                    const iQty = item.quantity || 1;
+                    return (
+                      <View key={idx} style={S.modalItemRow}>
+                        <Image source={{ uri: iImg }} style={S.modalItemImg} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={S.modalItemName}>{iName}</Text>
+                          <Text style={S.modalItemSub}>
+                            Qty: {iQty} × ₩{iPrice.toLocaleString()}
+                          </Text>
+                        </View>
+                        <Text style={S.modalItemTotal}>
+                          ₩{(iPrice * iQty).toLocaleString()}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                  <View style={S.modalTotalRow}>
+                    <Text style={S.modalTotalLabel}>Total Amount:</Text>
+                    <Text style={S.modalTotalValue}>
+                      ₩{(selectedOrder.totalAmount || selectedOrder.totalKRW || 0).toLocaleString()}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Payment Screenshot & Verification */}
+                <View style={S.modalSection}>
+                  <Text style={S.modalSectionTitle}>💳 Payment Details</Text>
+                  <Text style={S.modalText}>Method: {selectedOrder.paymentMethod || 'Direct Bank Transfer'}</Text>
+                  <Text style={S.modalText}>Status: {selectedOrder.status}</Text>
+                  {selectedOrder.payment?.screenshotUrl || selectedOrder.paymentScreenshot ? (
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={S.modalText}>Receipt Screenshot (Tap to expand):</Text>
+                      <TouchableOpacity
+                        onPress={() =>
+                          setScreenshotPreview(
+                            selectedOrder.payment?.screenshotUrl || selectedOrder.paymentScreenshot || null
+                          )
+                        }
+                      >
+                        <Image
+                          source={{
+                            uri: selectedOrder.payment?.screenshotUrl || selectedOrder.paymentScreenshot,
+                          }}
+                          style={S.modalScreenshotThumb}
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <Text style={[S.modalText, { color: '#EF4444', marginTop: 4 }]}>
+                      ⚠️ No payment screenshot uploaded yet.
+                    </Text>
+                  )}
+                </View>
+              </ScrollView>
+
+              {/* Status Update Actions */}
+              <View style={S.modalActionsRow}>
+                <TouchableOpacity
+                  style={[S.actionBtn, { backgroundColor: '#10B981' }]}
+                  onPress={() => handleVerifyPayment(selectedOrder.id)}
+                >
+                  <Text style={S.actionBtnText}>✅ Verify Payment</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[S.actionBtn, { backgroundColor: '#EF4444' }]}
+                  onPress={() => handleRejectPayment(selectedOrder.id)}
+                >
+                  <Text style={S.actionBtnText}>❌ Reject</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[S.actionBtn, { backgroundColor: '#3B82F6' }]}
+                  onPress={() => handleUpdateOrderStatus(selectedOrder.id, 'Shipped')}
+                >
+                  <Text style={S.actionBtnText}>🚚 Mark Shipped</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* ── FULL SCREENSHOT ZOOM MODAL ─────────────────────────────────── */}
+      {screenshotPreview && (
+        <Modal visible transparent animationType="fade">
+          <View style={S.zoomModalOverlay}>
+            <TouchableOpacity
+              style={S.zoomCloseBtn}
+              onPress={() => setScreenshotPreview(null)}
+            >
+              <Text style={{ fontSize: 24, color: '#FFFFFF' }}>✕</Text>
+            </TouchableOpacity>
+            <Image
+              source={{ uri: screenshotPreview }}
+              style={S.zoomImage}
+              resizeMode="contain"
+            />
+          </View>
+        </Modal>
+      )}
+    </SafeAreaView>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUB-SECTIONS (ORGANIZED MODULAR PANELS)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 1. DASHBOARD OVERVIEW
+ */
+function DashboardOverviewSection({ S, stats, isDarkMode, setActiveTab }: any) {
+  return (
+    <View style={S.panelContainer}>
+      {/* 1. Today's Sales Cards */}
+      <Text style={S.panelHeading}>📅 Today's Sales</Text>
+      <View style={S.statsGrid}>
+        <MetricCard S={S} emoji="🛒" label="Orders Received Today" value={stats.todayOrdersCount.toString()} color="#3B82F6" />
+        <MetricCard S={S} emoji="💰" label="Total Sales Today" value={`₩${stats.todaySalesAmount.toLocaleString()}`} color="#10B981" />
+        <MetricCard S={S} emoji="📦" label="Products Sold Today" value={stats.todayProductsSold.toString()} color="#8B5CF6" />
+      </View>
+
+      {/* 2. Pending Orders Cards */}
+      <Text style={[S.panelHeading, { marginTop: 18 }]}>⏳ Pending Action Required</Text>
+      <View style={S.statsGrid}>
+        <MetricCard S={S} emoji="⚠️" label="Total Pending Orders" value={stats.pendingOrdersCount.toString()} color="#F59E0B" />
+        <MetricCard S={S} emoji="💳" label="Waiting Payment Confirm" value={stats.waitingPaymentCount.toString()} color="#EF4444" />
+        <MetricCard S={S} emoji="🚚" label="Waiting Parcel Dispatch" value={stats.waitingParcelCount.toString()} color="#0EA5E9" />
+      </View>
+
+      {/* 3. This Month's Sales */}
+      <Text style={[S.panelHeading, { marginTop: 18 }]}>📊 This Month's Performance</Text>
+      <View style={S.statsGrid}>
+        <MetricCard S={S} emoji="📈" label="Total Orders (Month)" value={stats.monthOrdersCount.toString()} color="#6366F1" />
+        <MetricCard S={S} emoji="💵" label="Total Revenue (Month)" value={`₩${stats.monthSalesAmount.toLocaleString()}`} color="#10B981" />
+        <MetricCard S={S} emoji="🛍️" label="Products Sold (Month)" value={stats.monthProductsSold.toString()} color="#EC4899" />
+      </View>
+
+      {/* 4. Additional Operations Stats */}
+      <Text style={[S.panelHeading, { marginTop: 18 }]}>📋 Operational Metrics</Text>
+      <View style={S.statsGrid}>
+        <MetricCard S={S} emoji="✅" label="Delivered Orders" value={stats.deliveredCount.toString()} color="#10B981" />
+        <MetricCard S={S} emoji="❌" label="Cancelled Orders" value={stats.cancelledCount.toString()} color="#EF4444" />
+        <MetricCard S={S} emoji="📦" label="Pending Parcels" value={stats.pendingParcelsCount.toString()} color="#F59E0B" />
+        <MetricCard S={S} emoji="📥" label="Received Parcels" value={stats.receivedParcelsCount.toString()} color="#3B82F6" />
+        <MetricCard S={S} emoji="⚡" label="Low Stock Items" value={stats.lowStockCount.toString()} color="#F97316" />
+        <MetricCard S={S} emoji="🚫" label="Out of Stock Items" value={stats.outOfStockCount.toString()} color="#EF4444" />
+      </View>
+
+      {/* 5. 7-Day Revenue Trend Bar Chart */}
+      <View style={[S.card, { marginTop: 20 }]}>
+        <Text style={S.cardTitle}>📈 7-Day Revenue Trend (KRW)</Text>
+        <View style={S.barChartRow}>
+          {stats.last7Days.map((d: any, i: number) => {
+            const barHeight = Math.max(12, (d.revenue / stats.maxDayRev) * 110);
+            return (
+              <View key={i} style={S.barCol}>
+                <Text style={S.barValueText}>₩{Math.round(d.revenue / 1000)}k</Text>
+                <View style={[S.barVisual, { height: barHeight, backgroundColor: d.revenue > 0 ? '#10B981' : '#444' }]} />
+                <Text style={S.barDayText}>{d.label}</Text>
+              </View>
+            );
+          })}
+        </View>
+      </View>
+
+      {/* 6. Top 5 Best-Selling Products */}
+      <View style={[S.card, { marginTop: 16 }]}>
+        <Text style={S.cardTitle}>🏆 Top 5 Best-Selling Products</Text>
+        {stats.topSelling.length === 0 ? (
+          <Text style={S.emptyHint}>No sales data yet. Start receiving orders to see ranking.</Text>
+        ) : (
+          stats.topSelling.map((p: any, idx: number) => (
+            <View key={idx} style={S.topProductItem}>
+              <Text style={S.topRankBadge}>#{idx + 1}</Text>
+              <Image source={{ uri: p.image || 'https://via.placeholder.com/50' }} style={S.topProductThumb} />
+              <View style={{ flex: 1 }}>
+                <Text style={S.topProductName}>{p.name}</Text>
+                <Text style={S.topProductSub}>{p.units} units sold</Text>
+              </View>
+              <Text style={S.topProductRev}>₩{p.revenue.toLocaleString()}</Text>
+            </View>
+          ))
+        )}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * 2. PRODUCTS / ITEMS MANAGEMENT
+ */
+function ProductsManagementSection({
+  S, products, search, setSearch, categoryFilter, setCategoryFilter,
+  sortBy, setSortBy, onAdd, onEdit, onDelete, onToggleStock, isDarkMode,
+}: any) {
+  return (
+    <View style={S.panelContainer}>
+      <View style={S.panelHeaderRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={S.panelHeading}>Product Catalog ({products.length})</Text>
+          <Text style={S.panelSub}>Manage items, live pricing, stock, and availability</Text>
+        </View>
+        <TouchableOpacity style={S.actionAddBtn} onPress={onAdd}>
+          <Text style={S.actionAddBtnText}>+ Add New Product</Text>
         </TouchableOpacity>
       </View>
 
-      {/* ── TAB BAR ────────────────────────────────────────────────────── */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.tabBar} contentContainerStyle={S.tabBarContent}>
-        {(['DASHBOARD', 'ORDERS', 'PRODUCTS', 'CATEGORIES', 'BANNERS'] as AdminTab[]).map((tab) => (
+      {/* Search Bar */}
+      <View style={S.searchBox}>
+        <Text style={S.searchIcon}>🔍</Text>
+        <TextInput
+          style={S.searchInput}
+          placeholder="Search products by name or category..."
+          placeholderTextColor={isDarkMode ? '#666' : '#999'}
+          value={search}
+          onChangeText={setSearch}
+        />
+      </View>
+
+      {/* Category Filter Chips */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.categoryChipsRow}>
+        {['ALL', ...PRODUCT_CATEGORIES].map((cat) => (
           <TouchableOpacity
-            key={tab}
-            style={[S.tabBtn, activeTab === tab && S.tabBtnActive]}
-            onPress={() => setActiveTab(tab)}
+            key={cat}
+            style={[S.filterChip, categoryFilter === cat && S.filterChipActive]}
+            onPress={() => setCategoryFilter(cat)}
           >
-            <Text style={[S.tabBtnText, activeTab === tab && S.tabBtnTextActive]}>
-              {tab === 'DASHBOARD' && '📊 '}
-              {tab === 'ORDERS' && '🛒 '}
-              {tab === 'PRODUCTS' && '📦 '}
-              {tab === 'CATEGORIES' && '🏷️ '}
-              {tab === 'BANNERS' && '🖼️ '}
-              {tab}
+            <Text style={[S.filterChipText, categoryFilter === cat && S.filterChipTextActive]}>
+              {cat}
             </Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
 
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {/* DASHBOARD TAB                                                    */}
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'DASHBOARD' && (
-        <ScrollView
-          style={S.scrollArea}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00C851" />}
-        >
-          {/* Stat Cards */}
-          <View style={S.statsGrid}>
-            <StatCard S={S} emoji="🛒" label="Total Orders" value={analytics.totalOrders.toString()} color="#6366F1" />
-            <StatCard S={S} emoji="💰" label="Revenue (KRW)" value={`₩${(analytics.totalRevenueKRW / 1000).toFixed(0)}K`} color="#10B981" />
-            <StatCard S={S} emoji="⏳" label="Pending" value={analytics.pendingCount.toString()} color="#F59E0B" />
-            <StatCard S={S} emoji="⚠️" label="Out of Stock" value={analytics.outOfStockCount.toString()} color="#EF4444" />
-            <StatCard S={S} emoji="✅" label="Delivered" value={analytics.deliveredCount.toString()} color="#0EA5E9" />
-            <StatCard S={S} emoji="📦" label="Products" value={products.length.toString()} color="#8B5CF6" />
-          </View>
-
-          {/* Sales Bar Chart — Last 7 Days */}
-          <View style={S.sectionCard}>
-            <Text style={S.sectionTitle}>📈 Last 7 Days Revenue</Text>
-            <View style={S.barChart}>
-              {analytics.dailySales.map((day, i) => {
-                const barH = maxDailyRevenue > 0 ? (day.revenueKRW / maxDailyRevenue) * 100 : 0;
-                return (
-                  <View key={i} style={S.barColumn}>
-                    <Text style={S.barValue}>
-                      {day.revenueKRW > 0 ? `₩${(day.revenueKRW / 1000).toFixed(0)}K` : ''}
-                    </Text>
-                    <View style={[S.bar, { height: Math.max(barH, 4), backgroundColor: barH > 50 ? '#00C851' : '#00C85166' }]} />
-                    <Text style={S.barLabel}>{day.date}</Text>
-                  </View>
-                );
-              })}
-            </View>
-          </View>
-
-          {/* Top Products */}
-          <View style={S.sectionCard}>
-            <Text style={S.sectionTitle}>🏆 Top 5 Products by Revenue</Text>
-            {analytics.topProducts.length === 0 ? (
-              <Text style={S.emptyText}>No orders yet</Text>
-            ) : (
-              analytics.topProducts.map((p, i) => (
-                <View key={p.productId} style={S.topProductRow}>
-                  <Text style={S.topProductRank}>#{i + 1}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={S.topProductName} numberOfLines={1}>{p.name}</Text>
-                    <Text style={S.topProductSub}>{p.soldCount} sold</Text>
-                  </View>
-                  <Text style={S.topProductRev}>₩{p.revenueKRW.toLocaleString()}</Text>
-                </View>
-              ))
-            )}
-          </View>
-
-          {/* Out of Stock Alert */}
-          {analytics.outOfStockCount > 0 && (
-            <View style={[S.sectionCard, { borderLeftWidth: 4, borderLeftColor: '#EF4444' }]}>
-              <Text style={S.sectionTitle}>⚠️ Out of Stock ({analytics.outOfStockCount})</Text>
-              {products.filter((p) => (p.stock ?? 1) === 0).map((p) => (
-                <View key={p.id} style={S.outOfStockRow}>
-                  <Text style={S.outOfStockName} numberOfLines={1}>{p.name}</Text>
-                  <TouchableOpacity
-                    style={S.restockBtn}
-                    onPress={() => openEditProduct(p)}
-                  >
-                    <Text style={S.restockBtnText}>Restock</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          )}
-        </ScrollView>
-      )}
-
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {/* ORDERS TAB                                                       */}
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'ORDERS' && (
-        <View style={{ flex: 1 }}>
-          {/* Search */}
-          <View style={S.searchRow}>
-            <TextInput
-              style={S.searchInput}
-              value={orderSearch}
-              onChangeText={setOrderSearch}
-              placeholder="Search by order #, customer..."
-              placeholderTextColor={isDarkMode ? '#555' : '#aaa'}
-            />
-          </View>
-
-          {/* Status Filter */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.filterRow}>
-            {(['ALL', 'ORDER_PLACED', 'PACKED', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED'] as OrderFilter[]).map((f) => (
-              <TouchableOpacity
-                key={f}
-                style={[S.filterChip, orderFilter === f && S.filterChipActive]}
-                onPress={() => setOrderFilter(f)}
-              >
-                <Text style={[S.filterChipText, orderFilter === f && S.filterChipTextActive]}>
-                  {f.replace(/_/g, ' ')} ({f === 'ALL' ? orders.length : orders.filter((o) => o.status === f).length})
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          <FlatList
-            data={filteredOrders}
-            keyExtractor={(item) => item.id}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00C851" />}
-            contentContainerStyle={{ padding: 12, paddingBottom: 100 }}
-            ListEmptyComponent={<Text style={S.emptyText}>No orders found</Text>}
-            renderItem={({ item: order }) => {
-              const statusCfg = ORDER_STATUSES.find((s) => s.value === order.status);
-              return (
-                <TouchableOpacity
-                  style={S.orderCard}
-                  onPress={() => { setSelectedOrder(order); setOrderModalVisible(true); }}
-                  activeOpacity={0.8}
-                >
-                  <View style={S.orderCardHeader}>
-                    <Text style={S.orderNumber}>{order.orderNumber}</Text>
-                    <View style={[S.statusBadge, { backgroundColor: (statusCfg?.color || '#999') + '20' }]}>
-                      <Text style={[S.statusBadgeText, { color: statusCfg?.color || '#999' }]}>
-                        {statusCfg?.emoji} {statusCfg?.label || order.status}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={S.orderCustomer}>👤 {order.recipient.name} · {order.recipient.phone}</Text>
-                  <Text style={S.orderAddress} numberOfLines={1}>
-                    📍 {order.recipient.address}, {order.recipient.city}
+      {/* Products Table / Cards */}
+      {products.length === 0 ? (
+        <View style={S.emptyStateBox}>
+          <Text style={{ fontSize: 40 }}>📦</Text>
+          <Text style={S.emptyTitle}>No Products Found</Text>
+          <Text style={S.emptySub}>Try adjusting your search or category filter.</Text>
+        </View>
+      ) : (
+        products.map((p: Product) => (
+          <View key={p.id} style={S.productCard}>
+            <Image source={{ uri: p.image || p.imageUrl }} style={S.productCardImg} />
+            <View style={{ flex: 1 }}>
+              <View style={S.productHeaderRow}>
+                <Text style={S.productName}>{p.name}</Text>
+                <View style={[S.stockBadge, (p.stock ?? 0) <= 0 ? S.stockBadgeOut : (p.stock ?? 0) < 5 ? S.stockBadgeLow : S.stockBadgeIn]}>
+                  <Text style={S.stockBadgeText}>
+                    {(p.stock ?? 0) <= 0 ? 'Out of Stock' : (p.stock ?? 0) < 5 ? `Low Stock (${p.stock})` : `In Stock (${p.stock})`}
                   </Text>
-                  <View style={S.orderFooter}>
-                    <Text style={S.orderTotal}>₩{order.totalKRW.toLocaleString()}</Text>
-                    <Text style={S.orderDate}>{order.date}</Text>
-                    <Text style={S.orderItems}>{order.items.length} item{order.items.length !== 1 ? 's' : ''}</Text>
-                  </View>
-                </TouchableOpacity>
-              );
-            }}
-          />
-        </View>
-      )}
-
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {/* PRODUCTS TAB                                                     */}
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'PRODUCTS' && (
-        <View style={{ flex: 1 }}>
-          <View style={S.searchRow}>
-            <TextInput
-              style={[S.searchInput, { flex: 1 }]}
-              value={productSearch}
-              onChangeText={setProductSearch}
-              placeholder="Search products..."
-              placeholderTextColor={isDarkMode ? '#555' : '#aaa'}
-            />
-            <TouchableOpacity style={S.addBtn} onPress={openAddProduct}>
-              <Text style={S.addBtnText}>+ Add</Text>
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.filterRow}>
-            {['All', ...PRODUCT_CATEGORIES].map((cat) => (
-              <TouchableOpacity
-                key={cat}
-                style={[S.filterChip, productCategoryFilter === cat && S.filterChipActive]}
-                onPress={() => setProductCategoryFilter(cat)}
-              >
-                <Text style={[S.filterChipText, productCategoryFilter === cat && S.filterChipTextActive]}>{cat}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          <FlatList
-            data={filteredProducts}
-            keyExtractor={(item) => item.id}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00C851" />}
-            contentContainerStyle={{ padding: 12, paddingBottom: 100 }}
-            ListEmptyComponent={<Text style={S.emptyText}>No products found</Text>}
-            renderItem={({ item: product }) => {
-              const isOutOfStock = (product.stock ?? 1) === 0;
-              return (
-                <View style={[S.productCard, product.isHidden && { opacity: 0.5 }]}>
-                  <Image source={{ uri: product.image }} style={S.productCardImage} />
-                  <View style={S.productCardBody}>
-                    <View style={S.productCardHeader}>
-                      <Text style={S.productCardName} numberOfLines={2}>{product.name}</Text>
-                      {isOutOfStock && <View style={S.oosTag}><Text style={S.oosTagText}>OUT OF STOCK</Text></View>}
-                      {product.isHidden && <View style={S.hiddenTag}><Text style={S.hiddenTagText}>HIDDEN</Text></View>}
-                    </View>
-                    <Text style={S.productCardMeta}>
-                      {product.category} · ₩{product.priceKRW.toLocaleString()} · Stock: {product.stock ?? '?'}
-                    </Text>
-                    <View style={S.productCardActions}>
-                      <TouchableOpacity style={S.actionBtn} onPress={() => openEditProduct(product)}>
-                        <Text style={S.actionBtnText}>✏️ Edit</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={S.actionBtn} onPress={() => handleToggleHidden(product)}>
-                        <Text style={S.actionBtnText}>{product.isHidden ? '👁️ Show' : '🚫 Hide'}</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={S.actionBtn} onPress={() => handleDuplicateProduct(product)}>
-                        <Text style={S.actionBtnText}>📋 Copy</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[S.actionBtn, { backgroundColor: '#EF444420' }]} onPress={() => handleDeleteProduct(product)}>
-                        <Text style={[S.actionBtnText, { color: '#EF4444' }]}>🗑️ Del</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
                 </View>
-              );
-            }}
-          />
-        </View>
-      )}
+              </View>
 
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {/* CATEGORIES TAB                                                   */}
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'CATEGORIES' && (
-        <View style={{ flex: 1 }}>
-          <View style={[S.searchRow, { justifyContent: 'flex-end' }]}>
-            <TouchableOpacity style={S.addBtn} onPress={openAddCategory}>
-              <Text style={S.addBtnText}>+ Add Category</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 100 }}>
-            {categories.map((cat) => (
-              <View key={cat.id} style={S.categoryRow}>
-                <Text style={S.catIcon}>{cat.icon}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={S.catName}>{cat.name}</Text>
-                  {cat.description ? <Text style={S.catDesc}>{cat.description}</Text> : null}
-                </View>
-                <View style={[S.activeDot, { backgroundColor: cat.isActive ? '#10B981' : '#EF4444' }]} />
-                <TouchableOpacity style={S.catEditBtn} onPress={() => openEditCategory(cat)}>
-                  <Text style={S.catEditText}>Edit</Text>
+              <Text style={S.productCategory}>Category: {p.category}</Text>
+
+              <View style={S.priceRow}>
+                <Text style={S.finalPriceText}>₩{(p.finalPrice || p.priceKRW).toLocaleString()}</Text>
+                {p.discountPercent && p.discountPercent > 0 ? (
+                  <>
+                    <Text style={S.originalPriceText}>₩{p.priceKRW.toLocaleString()}</Text>
+                    <Text style={S.discountTag}>{p.discountPercent}% OFF</Text>
+                  </>
+                ) : null}
+              </View>
+
+              <View style={S.productActionsRow}>
+                <TouchableOpacity style={S.editBtn} onPress={() => onEdit(p)}>
+                  <Text style={S.editBtnText}>✏️ Edit</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[S.catEditBtn, { backgroundColor: '#EF444420' }]} onPress={() => handleDeleteCategory(cat)}>
-                  <Text style={[S.catEditText, { color: '#EF4444' }]}>Del</Text>
+                <TouchableOpacity
+                  style={[S.toggleStockBtn, { backgroundColor: (p.stock ?? 0) > 0 ? '#F59E0B20' : '#10B98120' }]}
+                  onPress={() => onToggleStock(p)}
+                >
+                  <Text style={[S.toggleStockText, { color: (p.stock ?? 0) > 0 ? '#F59E0B' : '#10B981' }]}>
+                    {(p.stock ?? 0) > 0 ? 'Mark Out of Stock' : 'Mark In Stock (50)'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={S.deleteBtn} onPress={() => onDelete(p)}>
+                  <Text style={S.deleteBtnText}>🗑 Delete</Text>
                 </TouchableOpacity>
               </View>
-            ))}
-          </ScrollView>
-        </View>
-      )}
-
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {/* BANNERS TAB                                                      */}
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'BANNERS' && (
-        <View style={{ flex: 1 }}>
-          <View style={[S.searchRow, { justifyContent: 'flex-end' }]}>
-            <TouchableOpacity style={S.addBtn} onPress={openAddBanner}>
-              <Text style={S.addBtnText}>+ Add Banner</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 100 }}>
-            {banners.length === 0 && <Text style={S.emptyText}>No banners yet. Add your first hero banner!</Text>}
-            {banners.map((banner) => (
-              <View key={banner.id} style={S.bannerCard}>
-                <Image source={{ uri: banner.imageUrl }} style={S.bannerCardImage} resizeMode="cover" />
-                <View style={S.bannerCardBody}>
-                  <Text style={S.bannerCardTitle}>{banner.title || 'No Title'}</Text>
-                  <Text style={S.bannerCardSub} numberOfLines={1}>{banner.subtitle || ''}</Text>
-                  <Text style={S.bannerCardLink}>→ {banner.linkTarget || 'No link'}</Text>
-                  <View style={S.productCardActions}>
-                    <TouchableOpacity style={S.actionBtn} onPress={() => openEditBanner(banner)}>
-                      <Text style={S.actionBtnText}>✏️ Edit</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={S.actionBtn}
-                      onPress={() => updateBannerInFirestore(banner.id, { isActive: !banner.isActive }).catch(() => {})}
-                    >
-                      <Text style={S.actionBtnText}>{banner.isActive ? '🚫 Hide' : '👁️ Show'}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[S.actionBtn, { backgroundColor: '#EF444420' }]}
-                      onPress={() => Alert.alert('Delete', 'Delete this banner?', [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Delete', style: 'destructive', onPress: () => deleteBannerFromFirestore(banner.id).catch(() => {}) },
-                      ])}
-                    >
-                      <Text style={[S.actionBtnText, { color: '#EF4444' }]}>🗑️ Del</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-      )}
-
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {/* ORDER DETAIL MODAL                                               */}
-      {/* ════════════════════════════════════════════════════════════════ */}
-      <Modal visible={orderModalVisible} animationType="slide" onRequestClose={() => setOrderModalVisible(false)}>
-        <SafeAreaView style={S.modalContainer}>
-          <View style={S.modalHeader}>
-            <TouchableOpacity onPress={() => setOrderModalVisible(false)} style={S.modalCloseBtn}>
-              <Text style={S.modalCloseBtnText}>← Back</Text>
-            </TouchableOpacity>
-            <Text style={S.modalTitle}>Order Details</Text>
-            <View style={{ width: 60 }} />
-          </View>
-
-          {selectedOrder && (
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 80 }}>
-              <Text style={S.modalOrderNum}>{selectedOrder.orderNumber}</Text>
-              <Text style={S.modalOrderDate}>{selectedOrder.date}</Text>
-
-              {/* Customer Info */}
-              <View style={S.modalSection}>
-                <Text style={S.modalSectionTitle}>👤 Customer Details</Text>
-                <Text style={S.modalInfoText}>Name: {selectedOrder.recipient.name}</Text>
-                <Text style={S.modalInfoText}>Phone: {selectedOrder.recipient.phone}</Text>
-                <Text style={S.modalInfoText}>Address: {selectedOrder.recipient.address}</Text>
-                <Text style={S.modalInfoText}>City: {selectedOrder.recipient.city}</Text>
-                <Text style={S.modalInfoText}>Postal: {selectedOrder.recipient.postalCode}</Text>
-                <Text style={S.modalInfoText}>Country: {selectedOrder.recipient.country}</Text>
-                {selectedOrder.paymentMethod && (
-                  <Text style={S.modalInfoText}>Payment: {selectedOrder.paymentMethod}</Text>
-                )}
-              </View>
-
-              {/* Items */}
-              <View style={S.modalSection}>
-                <Text style={S.modalSectionTitle}>📦 Order Items</Text>
-                {selectedOrder.items.map((item, i) => (
-                  <View key={i} style={S.modalItemRow}>
-                    <Image source={{ uri: item.product.image }} style={S.modalItemImage} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={S.modalItemName} numberOfLines={2}>{item.product.name}</Text>
-                      <Text style={S.modalItemMeta}>Qty: {item.quantity} · ₩{(item.product.priceKRW * item.quantity).toLocaleString()}</Text>
-                    </View>
-                  </View>
-                ))}
-              </View>
-
-              {/* Payment Summary */}
-              <View style={S.modalSection}>
-                <Text style={S.modalSectionTitle}>💰 Payment Summary</Text>
-                <View style={S.payRow}><Text style={S.payLabel}>Subtotal</Text><Text style={S.payValue}>₩{selectedOrder.subtotalKRW.toLocaleString()}</Text></View>
-                <View style={S.payRow}><Text style={S.payLabel}>Shipping</Text><Text style={S.payValue}>₩{selectedOrder.shippingFeeKRW.toLocaleString()}</Text></View>
-                {selectedOrder.discountKRW > 0 && <View style={S.payRow}><Text style={[S.payLabel, { color: '#10B981' }]}>Discount</Text><Text style={[S.payValue, { color: '#10B981' }]}>-₩{selectedOrder.discountKRW.toLocaleString()}</Text></View>}
-                <View style={[S.payRow, { borderTopWidth: 1, borderTopColor: isDarkMode ? '#333' : '#eee', marginTop: 8, paddingTop: 8 }]}>
-                  <Text style={[S.payLabel, { fontWeight: '900' }]}>Total</Text>
-                  <Text style={[S.payValue, { fontWeight: '900', fontSize: 18 }]}>₩{selectedOrder.totalKRW.toLocaleString()}</Text>
-                </View>
-              </View>
-
-              {/* Status Update */}
-              <View style={S.modalSection}>
-                <Text style={S.modalSectionTitle}>🔄 Update Status</Text>
-                <View style={S.statusGrid}>
-                  {ORDER_STATUSES.map((s) => (
-                    <TouchableOpacity
-                      key={s.value}
-                      style={[S.statusBtn, selectedOrder.status === s.value && { backgroundColor: s.color + '30', borderColor: s.color }]}
-                      onPress={() => handleUpdateOrderStatus(selectedOrder, s.value)}
-                    >
-                      <Text style={S.statusBtnEmoji}>{s.emoji}</Text>
-                      <Text style={[S.statusBtnText, selectedOrder.status === s.value && { color: s.color }]}>{s.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            </ScrollView>
-          )}
-        </SafeAreaView>
-      </Modal>
-
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {/* PRODUCT MODAL                                                    */}
-      {/* ════════════════════════════════════════════════════════════════ */}
-      <Modal visible={productModalVisible} animationType="slide" onRequestClose={() => setProductModalVisible(false)}>
-        <SafeAreaView style={S.modalContainer}>
-          <View style={S.modalHeader}>
-            <TouchableOpacity onPress={() => setProductModalVisible(false)} style={S.modalCloseBtn}>
-              <Text style={S.modalCloseBtnText}>✕ Cancel</Text>
-            </TouchableOpacity>
-            <Text style={S.modalTitle}>{editingProductId ? 'Edit Product' : 'Add Product'}</Text>
-            <TouchableOpacity style={S.modalSaveBtn} onPress={handleSaveProduct} disabled={productLoading}>
-              <Text style={S.modalSaveBtnText}>{productLoading ? '...' : 'Save'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 80 }}>
-              <ProductFormField label="Product Name *" value={fName} onChangeText={setFName} placeholder="e.g. India Gate Basmati Rice" S={S} />
-              <ProductFormField label="Description" value={fDescription} onChangeText={setFDescription} placeholder="Describe the product..." S={S} multiline />
-              <ProductFormField label="Brand" value={fBrand} onChangeText={setFBrand} placeholder="e.g. India Gate, Aashirvaad" S={S} />
-              <ProductFormField label="Tags (comma-separated)" value={fTags} onChangeText={setFTags} placeholder="rice, basmati, indian" S={S} />
-
-              {/* Category */}
-              <Text style={S.fieldLabel}>Category *</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-                {PRODUCT_CATEGORIES.map((cat) => (
-                  <TouchableOpacity key={cat} style={[S.catChip, fCategory === cat && S.catChipActive]} onPress={() => setFCategory(cat)}>
-                    <Text style={[S.catChipText, fCategory === cat && S.catChipTextActive]}>{cat}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-
-              {/* Origin */}
-              <Text style={S.fieldLabel}>Origin *</Text>
-              <View style={S.chipRow}>
-                {(['India', 'Nepal', 'South Korea'] as const).map((o) => (
-                  <TouchableOpacity key={o} style={[S.catChip, fOrigin === o && S.catChipActive]} onPress={() => setFOrigin(o)}>
-                    <Text style={[S.catChipText, fOrigin === o && S.catChipTextActive]}>{o}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Prices */}
-              <View style={S.fieldRow}>
-                <View style={{ flex: 1 }}>
-                  <ProductFormField label="Selling Price KRW *" value={fPriceKRW} onChangeText={setFPriceKRW} placeholder="15000" S={S} keyboardType="number-pad" />
-                </View>
-                <View style={{ width: 8 }} />
-                <View style={{ flex: 1 }}>
-                  <ProductFormField label="Old Price KRW" value={fOldPriceKRW} onChangeText={setFOldPriceKRW} placeholder="18000" S={S} keyboardType="number-pad" />
-                </View>
-              </View>
-
-              <View style={S.fieldRow}>
-                <View style={{ flex: 1 }}>
-                  <ProductFormField label="MRP (₹/रू)" value={fMRP} onChangeText={setFMRP} placeholder="Optional" S={S} keyboardType="number-pad" />
-                </View>
-                <View style={{ width: 8 }} />
-                <View style={{ flex: 1 }}>
-                  <ProductFormField label="Stock Qty *" value={fStock} onChangeText={setFStock} placeholder="100" S={S} keyboardType="number-pad" />
-                </View>
-              </View>
-
-              <View style={S.fieldRow}>
-                <View style={{ flex: 1 }}>
-                  <ProductFormField label="Size / Unit" value={fSize} onChangeText={setFSize} placeholder="1 kg" S={S} />
-                </View>
-                <View style={{ width: 8 }} />
-                <View style={{ flex: 1 }}>
-                  <ProductFormField label="Weight (kg)" value={fWeightKg} onChangeText={setFWeightKg} placeholder="1.0" S={S} keyboardType="decimal-pad" />
-                </View>
-              </View>
-
-              <ProductFormField label="Image URL *" value={fImage} onChangeText={setFImage} placeholder="https://..." S={S} />
-              <ProductFormField label="Video URL (optional)" value={fVideoUrl} onChangeText={setFVideoUrl} placeholder="https://..." S={S} />
-              <ProductFormField label="Keywords EN (comma-sep)" value={fKeywordsEN} onChangeText={setFKeywordsEN} placeholder="rice, basmati" S={S} />
-              <ProductFormField label="Keywords KR (comma-sep)" value={fKeywordsKR} onChangeText={setFKeywordsKR} placeholder="쌀, 바스마티" S={S} />
-
-              {/* Toggles */}
-              <View style={S.toggleRow}>
-                <Text style={S.toggleLabel}>🏆 Best Seller</Text>
-                <Switch value={fIsBestSeller} onValueChange={setFIsBestSeller} trackColor={{ false: '#767577', true: '#00C851' }} />
-              </View>
-              <View style={S.toggleRow}>
-                <Text style={S.toggleLabel}>🚫 Hide from Store</Text>
-                <Switch value={fIsHidden} onValueChange={setFIsHidden} trackColor={{ false: '#767577', true: '#EF4444' }} />
-              </View>
-
-              {/* Preview */}
-              {fImage ? (
-                <View style={S.imagePreview}>
-                  <Text style={S.fieldLabel}>Image Preview</Text>
-                  <Image source={{ uri: fImage }} style={{ width: '100%', height: 160, borderRadius: 12 }} resizeMode="cover" />
-                </View>
-              ) : null}
-            </ScrollView>
-          </KeyboardAvoidingView>
-        </SafeAreaView>
-      </Modal>
-
-      {/* CATEGORY MODAL */}
-      <Modal visible={categoryModalVisible} animationType="slide" onRequestClose={() => setCategoryModalVisible(false)}>
-        <SafeAreaView style={S.modalContainer}>
-          <View style={S.modalHeader}>
-            <TouchableOpacity onPress={() => setCategoryModalVisible(false)} style={S.modalCloseBtn}>
-              <Text style={S.modalCloseBtnText}>✕ Cancel</Text>
-            </TouchableOpacity>
-            <Text style={S.modalTitle}>{editingCategoryId ? 'Edit Category' : 'Add Category'}</Text>
-            <TouchableOpacity style={S.modalSaveBtn} onPress={handleSaveCategory}>
-              <Text style={S.modalSaveBtnText}>Save</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView contentContainerStyle={{ padding: 16 }}>
-            <ProductFormField label="Category Name *" value={fCatName} onChangeText={setFCatName} placeholder="e.g. Masala" S={S} />
-            <ProductFormField label="Icon Emoji" value={fCatIcon} onChangeText={setFCatIcon} placeholder="🌶️" S={S} />
-            <ProductFormField label="Description" value={fCatDesc} onChangeText={setFCatDesc} placeholder="Spices & Herbs" S={S} />
-            <ProductFormField label="Display Order" value={fCatOrder} onChangeText={setFCatOrder} placeholder="0" S={S} keyboardType="number-pad" />
-            <View style={S.toggleRow}>
-              <Text style={S.toggleLabel}>Active / Visible</Text>
-              <Switch value={fCatActive} onValueChange={setFCatActive} trackColor={{ false: '#767577', true: '#00C851' }} />
             </View>
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
-
-      {/* BANNER MODAL */}
-      <Modal visible={bannerModalVisible} animationType="slide" onRequestClose={() => setBannerModalVisible(false)}>
-        <SafeAreaView style={S.modalContainer}>
-          <View style={S.modalHeader}>
-            <TouchableOpacity onPress={() => setBannerModalVisible(false)} style={S.modalCloseBtn}>
-              <Text style={S.modalCloseBtnText}>✕ Cancel</Text>
-            </TouchableOpacity>
-            <Text style={S.modalTitle}>{editingBannerId ? 'Edit Banner' : 'Add Banner'}</Text>
-            <TouchableOpacity style={S.modalSaveBtn} onPress={handleSaveBanner}>
-              <Text style={S.modalSaveBtnText}>Save</Text>
-            </TouchableOpacity>
           </View>
-          <ScrollView contentContainerStyle={{ padding: 16 }}>
-            <ProductFormField label="Image URL *" value={fBannerImage} onChangeText={setFBannerImage} placeholder="https://..." S={S} />
-            {fBannerImage ? (
-              <Image source={{ uri: fBannerImage }} style={{ width: '100%', height: 160, borderRadius: 12, marginBottom: 12 }} resizeMode="cover" />
-            ) : null}
-            <ProductFormField label="Title" value={fBannerTitle} onChangeText={setFBannerTitle} placeholder="🎉 Festival Sale" S={S} />
-            <ProductFormField label="Subtitle" value={fBannerSubtitle} onChangeText={setFBannerSubtitle} placeholder="Up to 30% off" S={S} />
-            <ProductFormField label="Link Target (category/product)" value={fBannerLink} onChangeText={setFBannerLink} placeholder="Masala" S={S} />
-            <ProductFormField label="Display Order" value={fBannerOrder} onChangeText={setFBannerOrder} placeholder="0" S={S} keyboardType="number-pad" />
-            <View style={S.toggleRow}>
-              <Text style={S.toggleLabel}>Active / Visible</Text>
-              <Switch value={fBannerActive} onValueChange={setFBannerActive} trackColor={{ false: '#767577', true: '#00C851' }} />
-            </View>
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
-    </SafeAreaView>
+        ))
+      )}
+    </View>
   );
 }
 
-// ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
+/**
+ * 3. ADD / EDIT PRODUCT SECTION
+ */
+function AddProductSection({
+  S, isEditing, name, setName, category, setCategory, desc, setDesc,
+  image, setImage, price, setPrice, discountPct, setDiscountPct,
+  calculatedFinalPrice, stock, setStock, available, setAvailable,
+  loading, onPickImage, onSave, onCancel, isDarkMode,
+}: any) {
+  return (
+    <View style={S.panelContainer}>
+      <Text style={S.panelHeading}>{isEditing ? '✏️ Edit Product' : '➕ Add New Product'}</Text>
+      <Text style={S.panelSub}>Fill out the form below to update or publish to the Namaste Mart catalog</Text>
 
-function AdminLoginScreen({ S, isDarkMode, adminEmail, setAdminEmail, adminPassword, setAdminPassword,
-  showPassword, setShowPassword, authLoading, authError, handleAdminLogin }: any) {
+      <View style={[S.card, { marginTop: 14 }]}>
+        {/* Product Name */}
+        <Text style={S.formLabel}>Product Name *</Text>
+        <TextInput
+          style={S.formInput}
+          placeholder="e.g. Royal Basmati Rice 5kg"
+          placeholderTextColor={isDarkMode ? '#666' : '#999'}
+          value={name}
+          onChangeText={setName}
+        />
+
+        {/* Category */}
+        <Text style={S.formLabel}>Category *</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+          {PRODUCT_CATEGORIES.map((cat) => (
+            <TouchableOpacity
+              key={cat}
+              style={[S.filterChip, category === cat && S.filterChipActive]}
+              onPress={() => setCategory(cat)}
+            >
+              <Text style={[S.filterChipText, category === cat && S.filterChipTextActive]}>{cat}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        {/* Description */}
+        <Text style={S.formLabel}>Product Description</Text>
+        <TextInput
+          style={[S.formInput, { height: 75, textAlignVertical: 'top' }]}
+          placeholder="Detailed description, ingredients, weight, origin..."
+          placeholderTextColor={isDarkMode ? '#666' : '#999'}
+          value={desc}
+          onChangeText={setDesc}
+          multiline
+        />
+
+        {/* Product Photo Upload */}
+        <Text style={S.formLabel}>Product Photo *</Text>
+        <View style={S.photoUploadRow}>
+          <Image source={{ uri: image || 'https://via.placeholder.com/100' }} style={S.photoPreview} />
+          <View style={{ flex: 1, gap: 8 }}>
+            <TouchableOpacity style={S.photoPickBtn} onPress={onPickImage}>
+              <Text style={S.photoPickBtnText}>📷 Upload from Device</Text>
+            </TouchableOpacity>
+            <TextInput
+              style={[S.formInput, { marginBottom: 0 }]}
+              placeholder="Or paste image URL"
+              placeholderTextColor={isDarkMode ? '#666' : '#999'}
+              value={image}
+              onChangeText={setImage}
+            />
+          </View>
+        </View>
+
+        {/* Price & Discount */}
+        <View style={S.rowFields}>
+          <View style={{ flex: 1 }}>
+            <Text style={S.formLabel}>Original Price (₩ KRW) *</Text>
+            <TextInput
+              style={S.formInput}
+              placeholder="10000"
+              placeholderTextColor={isDarkMode ? '#666' : '#999'}
+              value={price}
+              onChangeText={setPrice}
+              keyboardType="numeric"
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={S.formLabel}>Discount (%)</Text>
+            <TextInput
+              style={S.formInput}
+              placeholder="0 to 100"
+              placeholderTextColor={isDarkMode ? '#666' : '#999'}
+              value={discountPct}
+              onChangeText={setDiscountPct}
+              keyboardType="numeric"
+            />
+          </View>
+        </View>
+
+        {/* Automatic Price Calculation Display */}
+        <View style={S.liveCalcBanner}>
+          <Text style={S.liveCalcTitle}>⚡ Live Price Calculation</Text>
+          <Text style={S.liveCalcDetail}>
+            Original: ₩{parseInt(price || '0', 10).toLocaleString()} · Discount: {discountPct || 0}%
+          </Text>
+          <Text style={S.liveCalcResult}>
+            Final Selling Price: <Text style={{ color: '#10B981', fontWeight: '900' }}>₩{calculatedFinalPrice.toLocaleString()}</Text>
+          </Text>
+        </View>
+
+        {/* Stock Quantity */}
+        <Text style={S.formLabel}>Available Stock Quantity *</Text>
+        <TextInput
+          style={S.formInput}
+          placeholder="50"
+          placeholderTextColor={isDarkMode ? '#666' : '#999'}
+          value={stock}
+          onChangeText={setStock}
+          keyboardType="numeric"
+        />
+
+        {/* Available Toggle */}
+        <View style={S.switchRow}>
+          <View>
+            <Text style={S.switchLabel}>In Stock & Available for Purchase</Text>
+            <Text style={S.switchSub}>Controls visibility on customer store</Text>
+          </View>
+          <Switch
+            value={available}
+            onValueChange={setAvailable}
+            trackColor={{ false: '#444', true: '#10B981' }}
+          />
+        </View>
+
+        {/* Submit & Cancel Buttons */}
+        <View style={S.formBtnRow}>
+          <TouchableOpacity style={S.cancelBtn} onPress={onCancel}>
+            <Text style={S.cancelBtnText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={S.submitBtn} onPress={onSave} disabled={loading}>
+            <Text style={S.submitBtnText}>{loading ? 'Saving...' : isEditing ? 'Update Product' : '➕ Create Product'}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * 4. COMPLETE ORDERS MANAGEMENT
+ */
+function OrdersManagementSection({
+  S, orders, search, setSearch, statusFilter, setStatusFilter,
+  onSelectOrder, onUpdateStatus, onVerifyPayment, onRejectPayment, onPreviewScreenshot, isDarkMode,
+}: any) {
+  return (
+    <View style={S.panelContainer}>
+      <Text style={S.panelHeading}>Order Management ({orders.length})</Text>
+      <Text style={S.panelSub}>Complete customer order details, South Korean addresses, and payment receipts</Text>
+
+      {/* Search Input */}
+      <View style={S.searchBox}>
+        <Text style={S.searchIcon}>🔍</Text>
+        <TextInput
+          style={S.searchInput}
+          placeholder="Search by customer, email, phone, or order ID..."
+          placeholderTextColor={isDarkMode ? '#666' : '#999'}
+          value={search}
+          onChangeText={setSearch}
+        />
+      </View>
+
+      {/* Status Filter Tabs */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.categoryChipsRow}>
+        {['ALL', ...ORDER_STATUS_LIST].map((st) => (
+          <TouchableOpacity
+            key={st}
+            style={[S.filterChip, statusFilter === st && S.filterChipActive]}
+            onPress={() => setStatusFilter(st)}
+          >
+            <Text style={[S.filterChipText, statusFilter === st && S.filterChipTextActive]}>{st}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* Order Cards */}
+      {orders.length === 0 ? (
+        <View style={S.emptyStateBox}>
+          <Text style={{ fontSize: 40 }}>🛍️</Text>
+          <Text style={S.emptyTitle}>No Orders Found</Text>
+          <Text style={S.emptySub}>All customer orders will appear here automatically.</Text>
+        </View>
+      ) : (
+        orders.map((order: OrderItem) => (
+          <View key={order.id} style={S.orderCard}>
+            <View style={S.orderTopHeader}>
+              <View>
+                <Text style={S.orderIdText}>Order #{order.orderNumber || order.id.slice(-6)}</Text>
+                <Text style={S.orderDateText}>
+                  {order.createdAt ? new Date(order.createdAt).toLocaleString() : 'Recent'}
+                </Text>
+              </View>
+              <View style={S.statusBadgePill}>
+                <Text style={S.statusBadgePillText}>{order.status}</Text>
+              </View>
+            </View>
+
+            {/* Customer & Address Summary */}
+            <View style={S.orderCustomerBox}>
+              <Text style={S.orderCustomerName}>
+                👤 {order.customer?.name || order.recipient?.name || order.senderName || 'Customer'}
+              </Text>
+              <Text style={S.orderCustomerSub}>
+                📞 {order.customer?.phoneNumber || order.customer?.phone || order.recipient?.phone || 'N/A'} · 📧 {order.customer?.email || 'N/A'}
+              </Text>
+              <Text style={S.orderAddressText}>
+                📍 {order.deliveryAddress?.address || order.recipient?.address || 'South Korea'}
+              </Text>
+            </View>
+
+            {/* Order Items Summary */}
+            <Text style={S.orderItemCount}>
+              🛍️ {(order.items || []).length} items · Total: <Text style={{ fontWeight: '900', color: '#10B981' }}>₩{(order.totalAmount || order.totalKRW || 0).toLocaleString()}</Text>
+            </Text>
+
+            {/* Payment Proof Preview if present */}
+            {order.payment?.screenshotUrl || order.paymentScreenshot ? (
+              <View style={S.screenshotRow}>
+                <TouchableOpacity onPress={() => onPreviewScreenshot(order.payment?.screenshotUrl || order.paymentScreenshot)}>
+                  <Image source={{ uri: order.payment?.screenshotUrl || order.paymentScreenshot }} style={S.thumbSmall} />
+                </TouchableOpacity>
+                <View style={{ flex: 1 }}>
+                  <Text style={S.screenshotHint}>Payment proof uploaded</Text>
+                  <Text style={{ fontSize: 11, color: order.payment?.verified ? '#10B981' : '#F59E0B' }}>
+                    {order.payment?.verified ? '✅ Verified' : '⏳ Pending verification'}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+
+            {/* WhatsApp Notification Status Badge & Manual Retry Button */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 8, justifyContent: 'space-between', backgroundColor: isDarkMode ? '#222' : '#F3F4F6', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: (order as any).whatsappNotificationSent ? '#10B981' : '#EF4444' }}>
+                {(order as any).whatsappNotificationSent ? '🟢 WhatsApp Sent (+91 9485703011)' : '🔴 WhatsApp Pending'}
+              </Text>
+              <TouchableOpacity
+                style={{ backgroundColor: '#10B981', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 }}
+                onPress={async () => {
+                  const { retryWhatsAppOrderBackend } = await import('@/services/api');
+                  const res = await retryWhatsAppOrderBackend(order.id);
+                  if (res.success) {
+                    Alert.alert('WhatsApp Retried', 'Order notification dispatched to WhatsApp Business!');
+                  } else {
+                    Alert.alert('Retry Notice', res.message || 'Notification queued.');
+                  }
+                }}
+              >
+                <Text style={{ fontSize: 10, fontWeight: '800', color: '#FFF' }}>📲 Send WhatsApp</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={S.orderActionsBar}>
+              <TouchableOpacity style={S.viewDetailsBtn} onPress={() => onSelectOrder(order)}>
+                <Text style={S.viewDetailsBtnText}>🔍 Full Details</Text>
+              </TouchableOpacity>
+              {order.payment?.verified ? null : (
+                <TouchableOpacity style={S.quickVerifyBtn} onPress={() => onVerifyPayment(order.id)}>
+                  <Text style={S.quickVerifyBtnText}>✅ Verify</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={S.quickStatusBtn}
+                onPress={() => onUpdateStatus(order.id, 'Shipped')}
+              >
+                <Text style={S.quickStatusBtnText}>🚚 Ship</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))
+      )}
+    </View>
+  );
+}
+
+/**
+ * 5. PENDING ORDERS SECTION
+ */
+function PendingOrdersSection({
+  S, orders, search, setSearch, onUpdateStatus, onVerifyPayment, onSelectOrder, onPreviewScreenshot, isDarkMode,
+}: any) {
+  return (
+    <View style={S.panelContainer}>
+      <Text style={S.panelHeading}>Pending Orders ({orders.length})</Text>
+      <Text style={S.panelSub}>Orders awaiting payment verification, preparation, or parcel dispatch</Text>
+
+      <View style={S.searchBox}>
+        <Text style={S.searchIcon}>🔍</Text>
+        <TextInput
+          style={S.searchInput}
+          placeholder="Search pending orders..."
+          placeholderTextColor={isDarkMode ? '#666' : '#999'}
+          value={search}
+          onChangeText={setSearch}
+        />
+      </View>
+
+      {orders.length === 0 ? (
+        <View style={S.emptyStateBox}>
+          <Text style={{ fontSize: 40 }}>🎉</Text>
+          <Text style={S.emptyTitle}>All Caught Up!</Text>
+          <Text style={S.emptySub}>No pending orders waiting for action.</Text>
+        </View>
+      ) : (
+        orders.map((order: OrderItem) => (
+          <View key={order.id} style={S.orderCard}>
+            <View style={S.orderTopHeader}>
+              <Text style={S.orderIdText}>Order #{order.orderNumber || order.id.slice(-6)}</Text>
+              <View style={[S.statusBadgePill, { backgroundColor: '#F59E0B20' }]}>
+                <Text style={[S.statusBadgePillText, { color: '#F59E0B' }]}>{order.status}</Text>
+              </View>
+            </View>
+
+            <Text style={S.orderCustomerName}>
+              👤 {order.customer?.name || order.recipient?.name || 'Customer'} · 📞 {order.customer?.phoneNumber || order.customer?.phone || 'N/A'}
+            </Text>
+            <Text style={S.orderAddressText}>
+              📍 {order.deliveryAddress?.address || order.recipient?.address || 'South Korea'}
+            </Text>
+            <Text style={S.orderItemCount}>
+              Total: ₩{(order.totalAmount || order.totalKRW || 0).toLocaleString()}
+            </Text>
+
+            {/* Quick action buttons per prompt */}
+            <View style={S.pendingBtnGrid}>
+              <TouchableOpacity style={S.pendingActionBtn} onPress={() => onVerifyPayment(order.id)}>
+                <Text style={S.pendingActionText}>✅ Confirm Payment</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.pendingActionBtn} onPress={() => onUpdateStatus(order.id, 'Order Confirmed')}>
+                <Text style={S.pendingActionText}>🤝 Confirm Order</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.pendingActionBtn} onPress={() => onUpdateStatus(order.id, 'Preparing Order')}>
+                <Text style={S.pendingActionText}>⚙️ Start Preparing</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.pendingActionBtn} onPress={() => onUpdateStatus(order.id, 'Ready for Dispatch')}>
+                <Text style={S.pendingActionText}>📦 Ready for Parcel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.pendingActionBtn} onPress={() => onUpdateStatus(order.id, 'Shipped')}>
+                <Text style={S.pendingActionText}>🚚 Mark Shipped</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[S.pendingActionBtn, { backgroundColor: '#EF444420' }]}
+                onPress={() => onUpdateStatus(order.id, 'Cancelled')}
+              >
+                <Text style={[S.pendingActionText, { color: '#EF4444' }]}>❌ Cancel Order</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))
+      )}
+    </View>
+  );
+}
+
+/**
+ * 6. PARCEL MANAGEMENT SYSTEM
+ */
+function ParcelManagementSection({ S, parcels, search, setSearch, onUpdateParcelStatus, isDarkMode }: any) {
+  return (
+    <View style={S.panelContainer}>
+      <Text style={S.panelHeading}>Parcel Management System ({parcels.length})</Text>
+      <Text style={S.panelSub}>Track shipments, dispatch status, carrier updates, and direct delivery</Text>
+
+      <View style={S.searchBox}>
+        <Text style={S.searchIcon}>🔍</Text>
+        <TextInput
+          style={S.searchInput}
+          placeholder="Search parcels by ID, recipient, or phone..."
+          placeholderTextColor={isDarkMode ? '#666' : '#999'}
+          value={search}
+          onChangeText={setSearch}
+        />
+      </View>
+
+      {parcels.length === 0 ? (
+        <View style={S.emptyStateBox}>
+          <Text style={{ fontSize: 40 }}>🚚</Text>
+          <Text style={S.emptyTitle}>No Parcels Recorded</Text>
+          <Text style={S.emptySub}>All customer shipments will appear here automatically.</Text>
+        </View>
+      ) : (
+        parcels.map((parcel: any) => (
+          <View key={parcel.id} style={S.parcelCard}>
+            <View style={S.parcelHeaderRow}>
+              <View>
+                <Text style={S.parcelIdTitle}>📦 Parcel ID: {parcel.id}</Text>
+                <Text style={S.parcelDateSub}>{new Date(parcel.orderDate).toLocaleString()}</Text>
+              </View>
+              <View style={S.parcelBadgePill}>
+                <Text style={S.parcelBadgePillText}>{parcel.parcelStatus}</Text>
+              </View>
+            </View>
+
+            <View style={S.parcelDetailsBox}>
+              <Text style={S.parcelDetailRow}><Text style={S.bold}>Customer:</Text> {parcel.customerName}</Text>
+              <Text style={S.parcelDetailRow}><Text style={S.bold}>Contact:</Text> {parcel.phone} · {parcel.email}</Text>
+              <Text style={S.parcelDetailRow}><Text style={S.bold}>Delivery Address:</Text> {parcel.deliveryAddress}</Text>
+              <Text style={S.parcelDetailRow}><Text style={S.bold}>Items:</Text> {parcel.itemsSummary}</Text>
+              <Text style={S.parcelDetailRow}><Text style={S.bold}>Total Quantity:</Text> {parcel.totalQuantity} items</Text>
+            </View>
+
+            {/* Parcel Quick Status Updates per Prompt */}
+            <Text style={S.parcelActionLabel}>Update Parcel Status:</Text>
+            <View style={S.parcelActionsGrid}>
+              <TouchableOpacity style={S.parcelBtn} onPress={() => onUpdateParcelStatus(parcel.orderId, 'Parcel Received')}>
+                <Text style={S.parcelBtnText}>📥 Parcel Received</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.parcelBtn} onPress={() => onUpdateParcelStatus(parcel.orderId, 'Preparing for Dispatch')}>
+                <Text style={S.parcelBtnText}>📦 Preparing Dispatch</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.parcelBtn} onPress={() => onUpdateParcelStatus(parcel.orderId, 'Shipped')}>
+                <Text style={S.parcelBtnText}>🚚 Shipped</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.parcelBtn} onPress={() => onUpdateParcelStatus(parcel.orderId, 'Out for Delivery')}>
+                <Text style={S.parcelBtnText}>🏃 Out for Delivery</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[S.parcelBtn, { backgroundColor: '#10B98120' }]} onPress={() => onUpdateParcelStatus(parcel.orderId, 'Delivered')}>
+                <Text style={[S.parcelBtnText, { color: '#10B981' }]}>✅ Mark Delivered</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))
+      )}
+    </View>
+  );
+}
+
+/**
+ * 7. CUSTOMER MANAGEMENT SECTION
+ */
+function CustomerManagementSection({ S, customers, search, setSearch, isDarkMode }: any) {
+  return (
+    <View style={S.panelContainer}>
+      <Text style={S.panelHeading}>Customer Management ({customers.length})</Text>
+      <Text style={S.panelSub}>Registered customers, South Korean addresses, order counts, and lifetime value</Text>
+
+      <View style={S.searchBox}>
+        <Text style={S.searchIcon}>🔍</Text>
+        <TextInput
+          style={S.searchInput}
+          placeholder="Search by customer name, email, or phone..."
+          placeholderTextColor={isDarkMode ? '#666' : '#999'}
+          value={search}
+          onChangeText={setSearch}
+        />
+      </View>
+
+      {customers.length === 0 ? (
+        <View style={S.emptyStateBox}>
+          <Text style={{ fontSize: 40 }}>👥</Text>
+          <Text style={S.emptyTitle}>No Customers Found</Text>
+          <Text style={S.emptySub}>Registered users from Firestore will appear here.</Text>
+        </View>
+      ) : (
+        customers.map((c: any) => (
+          <View key={c.uid} style={S.customerCard}>
+            <Image source={{ uri: c.avatar || 'https://via.placeholder.com/50' }} style={S.customerAvatar} />
+            <View style={{ flex: 1 }}>
+              <Text style={S.customerName}>{c.name || 'Namaste Mart Customer'}</Text>
+              <Text style={S.customerSub}>
+                📧 {c.email || 'No email'} · {c.emailVerified ? '✅ Verified Email' : '⚠️ Unverified Email'}
+              </Text>
+              <Text style={S.customerSub}>📞 {c.phoneNumber || 'No phone'}</Text>
+              <Text style={S.customerAddress}>📍 {c.primaryAddress}</Text>
+              <View style={S.customerStatsRow}>
+                <Text style={S.customerStatPill}>🛍️ {c.orderCount} Orders</Text>
+                <Text style={S.customerStatPill}>💰 ₩{c.totalSpent.toLocaleString()} Spent</Text>
+                <Text style={S.customerStatPill}>🏡 {c.addresses?.length || (c.primaryAddress !== 'No address saved yet' ? 1 : 0)} Address(es)</Text>
+              </View>
+            </View>
+          </View>
+        ))
+      )}
+    </View>
+  );
+}
+
+/**
+ * 8. SALES AND ANALYTICS SECTION
+ */
+function SalesAnalyticsSection({ S, stats, isDarkMode }: any) {
+  return (
+    <View style={S.panelContainer}>
+      <Text style={S.panelHeading}>Sales & Business Analytics</Text>
+      <Text style={S.panelSub}>Comprehensive revenue tracking, order volumes, and sales charts</Text>
+
+      {/* Overview Cards */}
+      <View style={S.statsGrid}>
+        <MetricCard S={S} emoji="📅" label="Today's Revenue" value={`₩${stats.todaySalesAmount.toLocaleString()}`} color="#10B981" />
+        <MetricCard S={S} emoji="📆" label="Monthly Revenue" value={`₩${stats.monthSalesAmount.toLocaleString()}`} color="#3B82F6" />
+        <MetricCard S={S} emoji="📦" label="Units Sold Today" value={stats.todayProductsSold.toString()} color="#8B5CF6" />
+      </View>
+
+      {/* 7-Day Chart */}
+      <View style={[S.card, { marginTop: 16 }]}>
+        <Text style={S.cardTitle}>📊 Daily Sales Breakdown (Past 7 Days)</Text>
+        <View style={S.barChartRow}>
+          {stats.last7Days.map((d: any, idx: number) => {
+            const barHeight = Math.max(12, (d.revenue / stats.maxDayRev) * 110);
+            return (
+              <View key={idx} style={S.barCol}>
+                <Text style={S.barValueText}>₩{Math.round(d.revenue / 1000)}k</Text>
+                <View style={[S.barVisual, { height: barHeight, backgroundColor: d.revenue > 0 ? '#3B82F6' : '#444' }]} />
+                <Text style={S.barDayText}>{d.label}</Text>
+              </View>
+            );
+          })}
+        </View>
+      </View>
+
+      {/* Top 5 Products */}
+      <View style={[S.card, { marginTop: 16 }]}>
+        <Text style={S.cardTitle}>🏆 Top Revenue Generating Products</Text>
+        {stats.topSelling.length === 0 ? (
+          <Text style={S.emptyHint}>No sales recorded yet.</Text>
+        ) : (
+          stats.topSelling.map((p: any, idx: number) => (
+            <View key={idx} style={S.topProductItem}>
+              <Text style={S.topRankBadge}>#{idx + 1}</Text>
+              <Image source={{ uri: p.image || 'https://via.placeholder.com/50' }} style={S.topProductThumb} />
+              <View style={{ flex: 1 }}>
+                <Text style={S.topProductName}>{p.name}</Text>
+                <Text style={S.topProductSub}>{p.units} units sold</Text>
+              </View>
+              <Text style={S.topProductRev}>₩{p.revenue.toLocaleString()}</Text>
+            </View>
+          ))
+        )}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * 9. INVENTORY MANAGEMENT SECTION
+ */
+function InventoryManagementSection({ S, products, filter, setFilter, threshold, onAdjustStock, isDarkMode }: any) {
+  const filtered = useMemo(() => {
+    return products.filter((p: Product) => {
+      const s = p.stock ?? 0;
+      if (filter === 'LOW') return s > 0 && s <= threshold;
+      if (filter === 'OUT') return s <= 0;
+      return true;
+    });
+  }, [products, filter, threshold]);
+
+  return (
+    <View style={S.panelContainer}>
+      <Text style={S.panelHeading}>Inventory & Stock Control ({filtered.length})</Text>
+      <Text style={S.panelSub}>Monitor live inventory levels, low stock warnings, and quick adjustments</Text>
+
+      {/* Filter Tabs */}
+      <View style={S.tabRowButtons}>
+        <TouchableOpacity style={[S.tabChip, filter === 'ALL' && S.tabChipActive]} onPress={() => setFilter('ALL')}>
+          <Text style={[S.tabChipText, filter === 'ALL' && S.tabChipTextActive]}>All Items</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[S.tabChip, filter === 'LOW' && S.tabChipActive]} onPress={() => setFilter('LOW')}>
+          <Text style={[S.tabChipText, filter === 'LOW' && S.tabChipTextActive]}>⚠️ Low Stock (&lt;{threshold})</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[S.tabChip, filter === 'OUT' && S.tabChipActive]} onPress={() => setFilter('OUT')}>
+          <Text style={[S.tabChipText, filter === 'OUT' && S.tabChipTextActive]}>🚫 Out of Stock</Text>
+        </TouchableOpacity>
+      </View>
+
+      {filtered.map((p: Product) => (
+        <View key={p.id} style={S.inventoryCard}>
+          <Image source={{ uri: p.image || p.imageUrl }} style={S.inventoryThumb} />
+          <View style={{ flex: 1 }}>
+            <Text style={S.inventoryName}>{p.name}</Text>
+            <Text style={S.inventorySub}>Current Stock: <Text style={{ fontWeight: '900', color: (p.stock ?? 0) <= 0 ? '#EF4444' : (p.stock ?? 0) < threshold ? '#F59E0B' : '#10B981' }}>{p.stock ?? 0} units</Text></Text>
+            <View style={S.stockAdjustRow}>
+              <TouchableOpacity style={S.adjustBtn} onPress={() => onAdjustStock(p, -5)}>
+                <Text style={S.adjustBtnText}>-5</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.adjustBtn} onPress={() => onAdjustStock(p, -1)}>
+                <Text style={S.adjustBtnText}>-1</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.adjustBtn} onPress={() => onAdjustStock(p, 1)}>
+                <Text style={S.adjustBtnText}>+1</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.adjustBtn} onPress={() => onAdjustStock(p, 5)}>
+                <Text style={S.adjustBtnText}>+5</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.adjustBtn} onPress={() => onAdjustStock(p, 10)}>
+                <Text style={S.adjustBtnText}>+10</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/**
+ * 10. DISCOUNTS MANAGEMENT SECTION
+ */
+function DiscountsManagementSection({ S, products, filter, setFilter, onApplyDiscount, isDarkMode }: any) {
+  const filtered = useMemo(() => {
+    return products.filter((p: Product) => {
+      if (filter === 'DISCOUNTED') return (p.discountPercent ?? 0) > 0;
+      return true;
+    });
+  }, [products, filter]);
+
+  return (
+    <View style={S.panelContainer}>
+      <Text style={S.panelHeading}>Discounts Management</Text>
+      <Text style={S.panelSub}>Set product-specific discounts, edit discount percentages, and view live prices</Text>
+
+      <View style={S.tabRowButtons}>
+        <TouchableOpacity style={[S.tabChip, filter === 'ALL' && S.tabChipActive]} onPress={() => setFilter('ALL')}>
+          <Text style={[S.tabChipText, filter === 'ALL' && S.tabChipTextActive]}>All Products</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[S.tabChip, filter === 'DISCOUNTED' && S.tabChipActive]} onPress={() => setFilter('DISCOUNTED')}>
+          <Text style={[S.tabChipText, filter === 'DISCOUNTED' && S.tabChipTextActive]}>🏷️ Discounted Only</Text>
+        </TouchableOpacity>
+      </View>
+
+      {filtered.map((p: Product) => (
+        <View key={p.id} style={S.discountCard}>
+          <Image source={{ uri: p.image || p.imageUrl }} style={S.inventoryThumb} />
+          <View style={{ flex: 1 }}>
+            <Text style={S.inventoryName}>{p.name}</Text>
+            <View style={S.priceRow}>
+              <Text style={S.finalPriceText}>₩{(p.finalPrice || p.priceKRW).toLocaleString()}</Text>
+              {(p.discountPercent ?? 0) > 0 ? (
+                <>
+                  <Text style={S.originalPriceText}>₩{p.priceKRW.toLocaleString()}</Text>
+                  <Text style={S.discountTag}>{p.discountPercent}% OFF</Text>
+                </>
+              ) : (
+                <Text style={{ fontSize: 11, color: '#888' }}>No discount active</Text>
+              )}
+            </View>
+
+            {/* Discount Presets */}
+            <View style={S.discountPresetsRow}>
+              {[0, 10, 15, 20, 25, 30, 50].map((pct) => (
+                <TouchableOpacity
+                  key={pct}
+                  style={[S.discountChipBtn, p.discountPercent === pct && S.discountChipBtnActive]}
+                  onPress={() => onApplyDiscount(p, pct)}
+                >
+                  <Text style={[S.discountChipText, p.discountPercent === pct && S.discountChipTextActive]}>
+                    {pct === 0 ? 'Clear' : `${pct}%`}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/**
+ * 11. SETTINGS SECTION
+ */
+function SettingsSection({ S, lowStockThreshold, setLowStockThreshold, storeCurrency, isDarkMode, adminEmail }: any) {
+  return (
+    <View style={S.panelContainer}>
+      <Text style={S.panelHeading}>Admin Settings & Configurations</Text>
+      <Text style={S.panelSub}>Configure store parameters, inventory alerts, and banking details</Text>
+
+      <View style={[S.card, { marginTop: 14 }]}>
+        <Text style={S.cardTitle}>⚠️ Inventory Low-Stock Alert Threshold</Text>
+        <Text style={S.settingSub}>
+          Products with stock less than or equal to this number will trigger a Low Stock alert.
+        </Text>
+        <TextInput
+          style={S.formInput}
+          value={lowStockThreshold.toString()}
+          onChangeText={(v) => setLowStockThreshold(Math.max(1, parseInt(v || '1', 10)))}
+          keyboardType="numeric"
+        />
+
+        <Text style={[S.cardTitle, { marginTop: 16 }]}>💰 Currency & Country Lock</Text>
+        <Text style={S.settingSub}>Operating Country: South Korea (대한민국)</Text>
+        <Text style={S.settingSub}>Active Currency: {storeCurrency}</Text>
+
+        <Text style={[S.cardTitle, { marginTop: 16 }]}>🏦 Bank Transfer Receiving Accounts</Text>
+        {KOREA_BANK_ACCOUNTS.map((bank: BankAccountInfo, idx: number) => (
+          <View key={idx} style={S.bankSettingRow}>
+            <Text style={{ fontSize: 20 }}>{bank.logo || '🏦'}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={S.bankSettingName}>{bank.bankName} ({bank.bankNameKr})</Text>
+              <Text style={S.bankSettingAcc}>Account: {bank.accountNumber} · Holder: {bank.accountHolder}</Text>
+            </View>
+          </View>
+        ))}
+
+        <Text style={[S.cardTitle, { marginTop: 16 }]}>👑 Active Administrator</Text>
+        <Text style={S.settingSub}>Email: {adminEmail}</Text>
+        <Text style={S.settingSub}>Role: Master Admin (namaste-mart-28c93)</Text>
+      </View>
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SHARED REUSABLE COMPONENTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function SidebarNav({ S, isDarkMode, activeTab, setActiveTab, items, onLogout, adminName }: any) {
+  return (
+    <View style={S.sidebarContainer}>
+      <View style={S.sidebarHeader}>
+        <Text style={S.sidebarBrandTitle}>🏪 Namaste Mart</Text>
+        <Text style={S.sidebarBrandSub}>👑 {adminName}</Text>
+      </View>
+
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+        {items.map((item: SidebarItem) => {
+          const isActive = activeTab === item.id;
+          return (
+            <TouchableOpacity
+              key={item.id}
+              style={[S.sidebarItem, isActive && S.sidebarItemActive]}
+              onPress={() => setActiveTab(item.id)}
+            >
+              <Text style={S.sidebarItemIcon}>{item.icon}</Text>
+              <Text style={[S.sidebarItemLabel, isActive && S.sidebarItemLabelActive]}>
+                {item.label}
+              </Text>
+              {item.badge !== undefined && item.badge > 0 ? (
+                <View style={S.sidebarBadge}>
+                  <Text style={S.sidebarBadgeText}>{item.badge}</Text>
+                </View>
+              ) : null}
+            </TouchableOpacity>
+          );
+        })}
+
+        <TouchableOpacity style={[S.sidebarItem, { marginTop: 14 }]} onPress={onLogout}>
+          <Text style={S.sidebarItemIcon}>🚪</Text>
+          <Text style={[S.sidebarItemLabel, { color: '#EF4444' }]}>Logout</Text>
+        </TouchableOpacity>
+      </ScrollView>
+
+      <View style={S.sidebarFooter}>
+        <Text style={S.sidebarFooterText}>NamasteMart v2.4 Admin</Text>
+      </View>
+    </View>
+  );
+}
+
+function MetricCard({ S, emoji, label, value, color }: any) {
+  return (
+    <View style={[S.metricCard, { borderTopColor: color, borderTopWidth: 3 }]}>
+      <Text style={S.metricEmoji}>{emoji}</Text>
+      <Text style={[S.metricValue, { color }]}>{value}</Text>
+      <Text style={S.metricLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function AdminLoginScreen({
+  S, isDarkMode, adminEmail, setAdminEmail, adminPassword, setAdminPassword,
+  showPassword, setShowPassword, authLoading, authError, handleAdminLogin,
+}: any) {
   return (
     <SafeAreaView style={S.container}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
@@ -1124,12 +2230,12 @@ function AdminLoginScreen({ S, isDarkMode, adminEmail, setAdminEmail, adminPassw
             <Text style={S.loginTitle}>NamasteMart Admin</Text>
             <Text style={S.loginSub}>Secure admin access only</Text>
 
-            <Text style={S.fieldLabel}>Admin Email</Text>
+            <Text style={S.fieldLabel}>Admin Login ID / Email</Text>
             <TextInput
               style={S.loginInput}
               value={adminEmail}
               onChangeText={setAdminEmail}
-              placeholder="admin@namastemart.com"
+              placeholder="admin (or admin@namastemart.com)"
               placeholderTextColor={isDarkMode ? '#555' : '#aaa'}
               autoCapitalize="none"
               keyboardType="email-address"
@@ -1141,7 +2247,7 @@ function AdminLoginScreen({ S, isDarkMode, adminEmail, setAdminEmail, adminPassw
                 style={[S.loginInput, { flex: 1, marginBottom: 0 }]}
                 value={adminPassword}
                 onChangeText={setAdminPassword}
-                placeholder="Enter password"
+                placeholder="1234"
                 placeholderTextColor={isDarkMode ? '#555' : '#aaa'}
                 secureTextEntry={!showPassword}
                 onSubmitEditing={handleAdminLogin}
@@ -1157,7 +2263,17 @@ function AdminLoginScreen({ S, isDarkMode, adminEmail, setAdminEmail, adminPassw
               <Text style={S.loginBtnText}>{authLoading ? 'Signing In...' : '🔐 Sign In to Admin'}</Text>
             </TouchableOpacity>
 
-            <Text style={S.loginHint}>Demo: email = "admin" · password = "admin123"</Text>
+            <TouchableOpacity
+              style={S.autoFillBtn}
+              onPress={() => {
+                setAdminEmail('admin');
+                setAdminPassword('1234');
+              }}
+            >
+              <Text style={S.autoFillBtnText}>⚡ Auto-Fill: ID: admin · Password: 1234</Text>
+            </TouchableOpacity>
+
+            <Text style={S.loginHint}>Master Admin Login: ID = "admin" · Password = "1234"</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -1165,185 +2281,634 @@ function AdminLoginScreen({ S, isDarkMode, adminEmail, setAdminEmail, adminPassw
   );
 }
 
-function StatCard({ S, emoji, label, value, color }: any) {
-  return (
-    <View style={[S.statCard, { borderTopColor: color, borderTopWidth: 3 }]}>
-      <Text style={S.statEmoji}>{emoji}</Text>
-      <Text style={[S.statValue, { color }]}>{value}</Text>
-      <Text style={S.statLabel}>{label}</Text>
-    </View>
-  );
+// ─── HELPER FUNCTIONS ─────────────────────────────────────────────────────────
+
+function mapOrderStatusToParcel(status?: string): string {
+  if (!status) return 'Waiting for Parcel Processing';
+  const s = status.toLowerCase();
+  if (s.includes('deliver')) return 'Delivered';
+  if (s.includes('out') || s.includes('transit')) return 'Out for Delivery';
+  if (s.includes('ship')) return 'Shipped';
+  if (s.includes('prepar') || s.includes('pack')) return 'Preparing for Dispatch';
+  if (s.includes('confirm') || s.includes('verif')) return 'Parcel Received';
+  return 'Waiting for Parcel Processing';
 }
 
-function ProductFormField({ S, label, value, onChangeText, placeholder, multiline, keyboardType }: any) {
-  return (
-    <View style={{ marginBottom: 12 }}>
-      <Text style={S.fieldLabel}>{label}</Text>
-      <TextInput
-        style={[S.fieldInput, multiline && { height: 80, textAlignVertical: 'top' }]}
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        multiline={multiline}
-        keyboardType={keyboardType || 'default'}
-      />
-    </View>
-  );
-}
+// ═══════════════════════════════════════════════════════════════════════════
+// RESPONSIVE PROFESSIONAL STYLES
+// ═══════════════════════════════════════════════════════════════════════════
 
-// ─── STYLES ───────────────────────────────────────────────────────────────────
 const getStyles = (isDark: boolean) => {
-  const bg = isDark ? '#0A0A0F' : '#F0FFF4';
-  const cardBg = isDark ? 'rgba(18,24,18,0.98)' : '#FFFFFF';
-  const textMain = isDark ? '#FFFFFF' : '#0A1A0A';
-  const textSub = isDark ? '#8A9A8A' : '#4A6A4A';
-  const border = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,128,0,0.1)';
-  const inputBg = isDark ? '#111A11' : '#F0FFF4';
-  const GREEN = '#00C851';
-  const DARK_GREEN = '#007A30';
+  const bg = isDark ? '#0A0C10' : '#F4F6F9';
+  const cardBg = isDark ? '#141820' : '#FFFFFF';
+  const textMain = isDark ? '#FFFFFF' : '#111827';
+  const textSub = isDark ? '#9CA3AF' : '#6B7280';
+  const border = isDark ? '#262D3D' : '#E5E7EB';
+  const inputBg = isDark ? '#1C2230' : '#FFFFFF';
+  const primary = '#10B981';
 
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: bg },
-    // Header
-    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: isDark ? '#0D1A0D' : '#FFFFFF', borderBottomWidth: 1, borderBottomColor: border },
-    headerTitle: { fontSize: 18, fontWeight: '900', color: GREEN },
-    headerSub: { fontSize: 12, color: textSub, marginTop: 2 },
-    logoutBtn: { backgroundColor: isDark ? 'rgba(239,68,68,0.15)' : 'rgba(239,68,68,0.08)', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6 },
-    logoutText: { fontSize: 12, fontWeight: '800', color: '#EF4444' },
-    // Tabs
-    tabBar: { maxHeight: 46, backgroundColor: isDark ? '#0D1A0D' : '#FFFFFF', borderBottomWidth: 1, borderBottomColor: border },
-    tabBarContent: { paddingHorizontal: 12, alignItems: 'center', gap: 6, paddingVertical: 6 },
-    tabBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: 'transparent' },
-    tabBtnActive: { backgroundColor: isDark ? 'rgba(0,200,81,0.15)' : 'rgba(0,200,81,0.1)', borderWidth: 1, borderColor: GREEN },
-    tabBtnText: { fontSize: 12, fontWeight: '700', color: textSub },
-    tabBtnTextActive: { color: GREEN },
-    // Scroll
-    scrollArea: { flex: 1 },
-    // Stats
-    statsGrid: { flexDirection: 'row', flexWrap: 'wrap', padding: 8, gap: 8 },
-    statCard: { flex: 1, minWidth: '30%', backgroundColor: cardBg, borderRadius: 12, padding: 12, alignItems: 'center', borderWidth: 1, borderColor: border },
-    statEmoji: { fontSize: 22, marginBottom: 4 },
-    statValue: { fontSize: 22, fontWeight: '900' },
-    statLabel: { fontSize: 11, color: textSub, textAlign: 'center', marginTop: 2 },
-    // Chart
-    sectionCard: { margin: 12, marginTop: 4, backgroundColor: cardBg, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: border },
-    sectionTitle: { fontSize: 15, fontWeight: '800', color: textMain, marginBottom: 12 },
-    barChart: { flexDirection: 'row', alignItems: 'flex-end', height: 110, gap: 6, justifyContent: 'space-between' },
-    barColumn: { flex: 1, alignItems: 'center', justifyContent: 'flex-end' },
-    bar: { width: '100%', borderRadius: 4, minHeight: 4 },
-    barLabel: { fontSize: 9, color: textSub, marginTop: 4, fontWeight: '700' },
-    barValue: { fontSize: 8, color: textSub, marginBottom: 2 },
-    // Top Products
-    topProductRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: border, gap: 8 },
-    topProductRank: { fontSize: 16, fontWeight: '900', color: GREEN, width: 28 },
+    dashboardLayout: { flex: 1, flexDirection: 'row' },
+
+    // ── SIDEBAR STYLES ──
+    sidebarContainer: {
+      width: 250,
+      backgroundColor: isDark ? '#0F131C' : '#FFFFFF',
+      borderRightWidth: 1,
+      borderRightColor: border,
+      paddingVertical: 18,
+      paddingHorizontal: 12,
+    },
+    sidebarHeader: {
+      paddingBottom: 16,
+      marginBottom: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+    },
+    sidebarBrandTitle: { fontSize: 18, fontWeight: '900', color: primary },
+    sidebarBrandSub: { fontSize: 11, color: textSub, marginTop: 3, fontWeight: '600' },
+    sidebarItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 10,
+      marginBottom: 4,
+    },
+    sidebarItemActive: {
+      backgroundColor: isDark ? '#1B2433' : '#ECFDF5',
+      borderLeftWidth: 3,
+      borderLeftColor: primary,
+    },
+    sidebarItemIcon: { fontSize: 16, marginRight: 10 },
+    sidebarItemLabel: { fontSize: 13, fontWeight: '600', color: textSub, flex: 1 },
+    sidebarItemLabelActive: { color: primary, fontWeight: '800' },
+    sidebarBadge: {
+      backgroundColor: primary,
+      borderRadius: 10,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+    },
+    sidebarBadgeText: { fontSize: 10, fontWeight: '800', color: '#FFFFFF' },
+    sidebarFooter: {
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: border,
+      alignItems: 'center',
+    },
+    sidebarFooterText: { fontSize: 10, color: textSub },
+
+    // ── MOBILE DRAWER ──
+    mobileDrawerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', flexDirection: 'row' },
+    mobileDrawerContent: { width: 280, backgroundColor: isDark ? '#0F131C' : '#FFFFFF', height: '100%' },
+    mobileDrawerHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+    },
+
+    // ── MAIN CONTENT AREA ──
+    mainContentArea: { flex: 1 },
+    topHeaderBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 14,
+      backgroundColor: isDark ? '#0F131C' : '#FFFFFF',
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+      gap: 12,
+    },
+    menuToggleBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 8,
+      backgroundColor: isDark ? '#1C2230' : '#F3F4F6',
+      borderRadius: 8,
+      gap: 6,
+    },
+    menuToggleIcon: { fontSize: 16, color: textMain },
+    menuToggleText: { fontSize: 12, fontWeight: '700', color: textMain },
+    topHeaderTitle: { fontSize: 18, fontWeight: '900', color: textMain },
+    topHeaderSub: { fontSize: 11, color: textSub },
+    topHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    quickAddBtn: {
+      backgroundColor: primary,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 8,
+    },
+    quickAddText: { fontSize: 12, fontWeight: '800', color: '#FFFFFF' },
+    logoutIconBtn: {
+      padding: 8,
+      backgroundColor: isDark ? '#1C2230' : '#F3F4F6',
+      borderRadius: 8,
+    },
+    logoutIconText: { fontSize: 16 },
+
+    // ── SCROLL CONTENT ──
+    scrollContainer: { flex: 1 },
+    scrollContent: { padding: 18 },
+    panelContainer: { width: '100%' },
+    panelHeading: { fontSize: 18, fontWeight: '900', color: textMain },
+    panelSub: { fontSize: 12, color: textSub, marginTop: 2, marginBottom: 14 },
+    panelHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 14,
+    },
+    actionAddBtn: {
+      backgroundColor: primary,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 8,
+    },
+    actionAddBtnText: { fontSize: 12, fontWeight: '800', color: '#FFFFFF' },
+
+    // ── CARDS & METRICS ──
+    statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+    metricCard: {
+      flex: 1,
+      minWidth: 140,
+      backgroundColor: cardBg,
+      borderRadius: 12,
+      padding: 14,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: border,
+    },
+    metricEmoji: { fontSize: 24, marginBottom: 4 },
+    metricValue: { fontSize: 18, fontWeight: '900' },
+    metricLabel: { fontSize: 11, color: textSub, textAlign: 'center', marginTop: 4 },
+    card: {
+      backgroundColor: cardBg,
+      borderRadius: 12,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    cardTitle: { fontSize: 14, fontWeight: '800', color: textMain, marginBottom: 8 },
+
+    // ── CHARTS ──
+    barChartRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      height: 140,
+      gap: 8,
+      paddingTop: 10,
+      justifyContent: 'space-between',
+    },
+    barCol: { flex: 1, alignItems: 'center', justifyContent: 'flex-end' },
+    barVisual: { width: '100%', borderRadius: 6, minHeight: 6 },
+    barDayText: { fontSize: 10, fontWeight: '700', color: textSub, marginTop: 6 },
+    barValueText: { fontSize: 9, color: textSub, marginBottom: 4 },
+
+    // ── TOP PRODUCTS ──
+    topProductItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+      gap: 10,
+    },
+    topRankBadge: { fontSize: 14, fontWeight: '900', color: primary, width: 28 },
+    topProductThumb: { width: 42, height: 42, borderRadius: 8 },
     topProductName: { fontSize: 13, fontWeight: '700', color: textMain },
     topProductSub: { fontSize: 11, color: textSub },
-    topProductRev: { fontSize: 13, fontWeight: '800', color: GREEN },
-    // Out of Stock
-    outOfStockRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
-    outOfStockName: { flex: 1, fontSize: 13, color: textMain },
-    restockBtn: { backgroundColor: GREEN + '20', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4 },
-    restockBtnText: { fontSize: 12, fontWeight: '800', color: GREEN },
-    // Orders
-    searchRow: { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8 },
-    searchInput: { flex: 1, backgroundColor: inputBg, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: textMain, borderWidth: 1, borderColor: border },
-    filterRow: { paddingHorizontal: 12, paddingBottom: 8, maxHeight: 46 },
-    filterChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: inputBg, marginRight: 6, borderWidth: 1, borderColor: border },
-    filterChipActive: { backgroundColor: GREEN + '20', borderColor: GREEN },
+    topProductRev: { fontSize: 13, fontWeight: '900', color: primary },
+
+    // ── SEARCH & FILTERS ──
+    searchBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: inputBg,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: border,
+      paddingHorizontal: 12,
+      height: 44,
+      marginBottom: 12,
+    },
+    searchIcon: { fontSize: 14, marginRight: 8 },
+    searchInput: { flex: 1, fontSize: 13, color: textMain },
+    categoryChipsRow: { marginBottom: 14 },
+    filterChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      backgroundColor: inputBg,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: border,
+      marginRight: 6,
+    },
+    filterChipActive: { backgroundColor: primary, borderColor: primary },
     filterChipText: { fontSize: 11, fontWeight: '700', color: textSub },
-    filterChipTextActive: { color: GREEN },
-    orderCard: { backgroundColor: cardBg, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: border },
-    orderCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-    orderNumber: { fontSize: 15, fontWeight: '900', color: textMain },
-    statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-    statusBadgeText: { fontSize: 11, fontWeight: '800' },
-    orderCustomer: { fontSize: 13, color: textSub, marginBottom: 2 },
-    orderAddress: { fontSize: 12, color: textSub, marginBottom: 8 },
-    orderFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    orderTotal: { fontSize: 15, fontWeight: '900', color: GREEN },
-    orderDate: { fontSize: 11, color: textSub },
-    orderItems: { fontSize: 11, color: textSub },
-    addBtn: { backgroundColor: GREEN, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 },
-    addBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '900' },
-    // Products
-    productCard: { flexDirection: 'row', backgroundColor: cardBg, borderRadius: 14, marginBottom: 10, borderWidth: 1, borderColor: border, overflow: 'hidden' },
-    productCardImage: { width: 90, height: 90 },
-    productCardBody: { flex: 1, padding: 10 },
-    productCardHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 4 },
-    productCardName: { flex: 1, fontSize: 13, fontWeight: '800', color: textMain },
-    productCardMeta: { fontSize: 11, color: textSub, marginBottom: 8 },
-    productCardActions: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
-    actionBtn: { backgroundColor: inputBg, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
-    actionBtnText: { fontSize: 11, fontWeight: '700', color: textSub },
-    oosTag: { backgroundColor: '#EF444420', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
-    oosTagText: { fontSize: 9, fontWeight: '900', color: '#EF4444' },
-    hiddenTag: { backgroundColor: '#F59E0B20', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
-    hiddenTagText: { fontSize: 9, fontWeight: '900', color: '#F59E0B' },
-    // Categories
-    categoryRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: cardBg, borderRadius: 12, padding: 12, marginBottom: 8, gap: 10, borderWidth: 1, borderColor: border },
-    catIcon: { fontSize: 24 },
-    catName: { fontSize: 14, fontWeight: '800', color: textMain },
-    catDesc: { fontSize: 12, color: textSub },
-    activeDot: { width: 8, height: 8, borderRadius: 4 },
-    catEditBtn: { backgroundColor: inputBg, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
-    catEditText: { fontSize: 12, fontWeight: '700', color: textSub },
-    // Banners
-    bannerCard: { backgroundColor: cardBg, borderRadius: 14, marginBottom: 12, overflow: 'hidden', borderWidth: 1, borderColor: border },
-    bannerCardImage: { width: '100%', height: 120 },
-    bannerCardBody: { padding: 12 },
-    bannerCardTitle: { fontSize: 15, fontWeight: '800', color: textMain, marginBottom: 2 },
-    bannerCardSub: { fontSize: 12, color: textSub, marginBottom: 4 },
-    bannerCardLink: { fontSize: 11, color: GREEN, marginBottom: 8 },
-    emptyText: { textAlign: 'center', color: textSub, fontSize: 14, marginTop: 40 },
-    // Modal
-    modalContainer: { flex: 1, backgroundColor: bg },
-    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: border },
-    modalCloseBtn: { padding: 4 },
-    modalCloseBtnText: { fontSize: 14, fontWeight: '700', color: GREEN },
+    filterChipTextActive: { color: '#FFFFFF' },
+
+    // ── PRODUCT CARDS ──
+    productCard: {
+      flexDirection: 'row',
+      backgroundColor: cardBg,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: border,
+      padding: 12,
+      marginBottom: 10,
+      gap: 12,
+    },
+    productCardImg: { width: 80, height: 80, borderRadius: 10 },
+    productHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+    productName: { fontSize: 14, fontWeight: '800', color: textMain, flex: 1 },
+    productCategory: { fontSize: 11, color: textSub, marginTop: 2 },
+    priceRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+    finalPriceText: { fontSize: 14, fontWeight: '900', color: primary },
+    originalPriceText: { fontSize: 11, color: textSub, textDecorationLine: 'line-through' },
+    discountTag: { fontSize: 10, fontWeight: '800', color: '#EF4444' },
+    stockBadge: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+    stockBadgeIn: { backgroundColor: '#10B98120' },
+    stockBadgeLow: { backgroundColor: '#F59E0B20' },
+    stockBadgeOut: { backgroundColor: '#EF444420' },
+    stockBadgeText: { fontSize: 10, fontWeight: '800', color: textMain },
+    productActionsRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+    editBtn: { backgroundColor: isDark ? '#1C2230' : '#F3F4F6', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 },
+    editBtnText: { fontSize: 11, fontWeight: '700', color: textMain },
+    toggleStockBtn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 },
+    toggleStockText: { fontSize: 11, fontWeight: '700' },
+    deleteBtn: { backgroundColor: '#EF444415', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 },
+    deleteBtnText: { fontSize: 11, fontWeight: '700', color: '#EF4444' },
+
+    // ── ADD / EDIT PRODUCT FORM ──
+    formLabel: { fontSize: 12, fontWeight: '700', color: textMain, marginBottom: 6 },
+    formInput: {
+      backgroundColor: inputBg,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: border,
+      paddingHorizontal: 12,
+      height: 44,
+      fontSize: 13,
+      color: textMain,
+      marginBottom: 12,
+    },
+    rowFields: { flexDirection: 'row', gap: 10 },
+    photoUploadRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
+    photoPreview: { width: 68, height: 68, borderRadius: 10, borderWidth: 1, borderColor: border },
+    photoPickBtn: {
+      backgroundColor: isDark ? '#1C2230' : '#F3F4F6',
+      borderRadius: 8,
+      padding: 10,
+      alignItems: 'center',
+    },
+    photoPickBtnText: { fontSize: 12, fontWeight: '700', color: textMain },
+    liveCalcBanner: {
+      backgroundColor: isDark ? '#13211B' : '#E6F9F0',
+      borderRadius: 10,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: primary,
+      marginBottom: 14,
+    },
+    liveCalcTitle: { fontSize: 12, fontWeight: '800', color: primary },
+    liveCalcDetail: { fontSize: 11, color: textSub, marginTop: 2 },
+    liveCalcResult: { fontSize: 13, fontWeight: '700', color: textMain, marginTop: 4 },
+    switchRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    switchLabel: { fontSize: 13, fontWeight: '700', color: textMain },
+    switchSub: { fontSize: 11, color: textSub },
+    formBtnRow: { flexDirection: 'row', gap: 10, marginTop: 8 },
+    cancelBtn: {
+      flex: 1,
+      backgroundColor: isDark ? '#1C2230' : '#F3F4F6',
+      borderRadius: 10,
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    cancelBtnText: { fontSize: 13, fontWeight: '700', color: textMain },
+    submitBtn: {
+      flex: 2,
+      backgroundColor: primary,
+      borderRadius: 10,
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    submitBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
+
+    // ── ORDERS & PENDING ORDERS ──
+    orderCard: {
+      backgroundColor: cardBg,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: border,
+      padding: 14,
+      marginBottom: 12,
+    },
+    orderTopHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    orderIdText: { fontSize: 14, fontWeight: '800', color: textMain },
+    orderDateText: { fontSize: 10, color: textSub, marginTop: 2 },
+    statusBadgePill: {
+      backgroundColor: '#10B98120',
+      borderRadius: 12,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    statusBadgePillText: { fontSize: 10, fontWeight: '800', color: primary },
+    orderCustomerBox: { marginVertical: 8 },
+    orderCustomerName: { fontSize: 12, fontWeight: '700', color: textMain },
+    orderCustomerSub: { fontSize: 11, color: textSub, marginTop: 2 },
+    orderAddressText: { fontSize: 11, color: textSub, marginTop: 2 },
+    orderItemCount: { fontSize: 12, color: textMain, marginTop: 4 },
+    screenshotRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
+    thumbSmall: { width: 44, height: 44, borderRadius: 6, borderWidth: 1, borderColor: border },
+    screenshotHint: { fontSize: 11, fontWeight: '700', color: textMain },
+    orderActionsBar: { flexDirection: 'row', gap: 8, marginTop: 10 },
+    viewDetailsBtn: {
+      backgroundColor: isDark ? '#1C2230' : '#F3F4F6',
+      borderRadius: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+    },
+    viewDetailsBtnText: { fontSize: 11, fontWeight: '700', color: textMain },
+    quickVerifyBtn: { backgroundColor: '#10B98120', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+    quickVerifyBtnText: { fontSize: 11, fontWeight: '700', color: '#10B981' },
+    quickStatusBtn: { backgroundColor: '#3B82F620', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+    quickStatusBtnText: { fontSize: 11, fontWeight: '700', color: '#3B82F6' },
+    pendingBtnGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+    pendingActionBtn: {
+      backgroundColor: isDark ? '#1C2230' : '#F3F4F6',
+      borderRadius: 6,
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+    },
+    pendingActionText: { fontSize: 10, fontWeight: '700', color: textMain },
+
+    // ── PARCELS ──
+    parcelCard: {
+      backgroundColor: cardBg,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: border,
+      padding: 14,
+      marginBottom: 12,
+    },
+    parcelHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    parcelIdTitle: { fontSize: 13, fontWeight: '800', color: textMain },
+    parcelDateSub: { fontSize: 10, color: textSub },
+    parcelBadgePill: { backgroundColor: '#3B82F620', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3 },
+    parcelBadgePillText: { fontSize: 10, fontWeight: '800', color: '#3B82F6' },
+    parcelDetailsBox: { marginVertical: 8 },
+    parcelDetailRow: { fontSize: 11, color: textSub, marginBottom: 2 },
+    bold: { fontWeight: '700', color: textMain },
+    parcelActionLabel: { fontSize: 10, fontWeight: '800', color: textSub, marginTop: 6, marginBottom: 4 },
+    parcelActionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+    parcelBtn: {
+      backgroundColor: isDark ? '#1C2230' : '#F3F4F6',
+      borderRadius: 6,
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+    },
+    parcelBtnText: { fontSize: 10, fontWeight: '700', color: textMain },
+
+    // ── CUSTOMERS ──
+    customerCard: {
+      flexDirection: 'row',
+      backgroundColor: cardBg,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: border,
+      padding: 12,
+      marginBottom: 10,
+      gap: 12,
+    },
+    customerAvatar: { width: 50, height: 50, borderRadius: 25 },
+    customerName: { fontSize: 13, fontWeight: '800', color: textMain },
+    customerSub: { fontSize: 11, color: textSub, marginTop: 1 },
+    customerAddress: { fontSize: 11, color: textSub, marginTop: 3 },
+    customerStatsRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+    customerStatPill: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: textMain,
+      backgroundColor: isDark ? '#1C2230' : '#F3F4F6',
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 6,
+    },
+
+    // ── INVENTORY & DISCOUNTS ──
+    tabRowButtons: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+    tabChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 20,
+      backgroundColor: inputBg,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    tabChipActive: { backgroundColor: primary, borderColor: primary },
+    tabChipText: { fontSize: 11, fontWeight: '700', color: textSub },
+    tabChipTextActive: { color: '#FFFFFF' },
+    inventoryCard: {
+      flexDirection: 'row',
+      backgroundColor: cardBg,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: border,
+      padding: 12,
+      marginBottom: 8,
+      gap: 12,
+    },
+    inventoryThumb: { width: 60, height: 60, borderRadius: 8 },
+    inventoryName: { fontSize: 13, fontWeight: '800', color: textMain },
+    inventorySub: { fontSize: 11, color: textSub, marginTop: 2 },
+    stockAdjustRow: { flexDirection: 'row', gap: 6, marginTop: 8 },
+    adjustBtn: {
+      backgroundColor: isDark ? '#1C2230' : '#F3F4F6',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 6,
+    },
+    adjustBtnText: { fontSize: 11, fontWeight: '800', color: textMain },
+    discountCard: {
+      flexDirection: 'row',
+      backgroundColor: cardBg,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: border,
+      padding: 12,
+      marginBottom: 10,
+      gap: 12,
+    },
+    discountPresetsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+    discountChipBtn: {
+      backgroundColor: isDark ? '#1C2230' : '#F3F4F6',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 6,
+    },
+    discountChipBtnActive: { backgroundColor: '#EF4444' },
+    discountChipText: { fontSize: 10, fontWeight: '800', color: textMain },
+    discountChipTextActive: { color: '#FFFFFF' },
+
+    // ── SETTINGS ──
+    settingSub: { fontSize: 12, color: textSub, marginBottom: 8 },
+    bankSettingRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+    },
+    bankSettingName: { fontSize: 12, fontWeight: '700', color: textMain },
+    bankSettingAcc: { fontSize: 11, color: textSub },
+
+    // ── MODALS ──
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.65)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 16,
+    },
+    orderModalContent: {
+      width: '100%',
+      maxWidth: 580,
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 18,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
     modalTitle: { fontSize: 16, fontWeight: '900', color: textMain },
-    modalSaveBtn: { backgroundColor: GREEN, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 6 },
-    modalSaveBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '900' },
-    // Order Modal
-    modalOrderNum: { fontSize: 22, fontWeight: '900', color: textMain, marginBottom: 4 },
-    modalOrderDate: { fontSize: 13, color: textSub, marginBottom: 16 },
-    modalSection: { backgroundColor: cardBg, borderRadius: 14, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: border },
-    modalSectionTitle: { fontSize: 14, fontWeight: '900', color: textMain, marginBottom: 10 },
-    modalInfoText: { fontSize: 13, color: textSub, marginBottom: 4 },
-    modalItemRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
-    modalItemImage: { width: 60, height: 60, borderRadius: 8 },
-    modalItemName: { fontSize: 13, fontWeight: '700', color: textMain },
-    modalItemMeta: { fontSize: 12, color: textSub, marginTop: 2 },
-    payRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-    payLabel: { fontSize: 14, color: textSub },
-    payValue: { fontSize: 14, fontWeight: '700', color: textMain },
-    statusGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    statusBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1.5, borderColor: border, backgroundColor: inputBg },
-    statusBtnEmoji: { fontSize: 16 },
-    statusBtnText: { fontSize: 12, fontWeight: '700', color: textSub },
-    // Product Form
-    fieldLabel: { fontSize: 11, fontWeight: '800', color: textSub, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
-    fieldInput: { backgroundColor: inputBg, borderWidth: 1, borderColor: border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 11, fontSize: 14, color: textMain },
-    fieldRow: { flexDirection: 'row', gap: 8 },
-    chipRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-    catChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: inputBg, borderWidth: 1.5, borderColor: 'transparent', marginRight: 6 },
-    catChipActive: { backgroundColor: GREEN + '20', borderColor: GREEN },
-    catChipText: { fontSize: 13, fontWeight: '700', color: textSub },
-    catChipTextActive: { color: GREEN },
-    toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: border, marginBottom: 4 },
-    toggleLabel: { fontSize: 14, fontWeight: '700', color: textMain },
-    imagePreview: { marginTop: 12 },
-    // Login
-    loginCard: { width: '100%', maxWidth: 400, backgroundColor: cardBg, borderRadius: 24, padding: 28, alignItems: 'center', borderWidth: 1, borderColor: GREEN + '40', shadowColor: GREEN, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 10 },
-    loginIconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: GREEN + '20', justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
-    loginTitle: { fontSize: 24, fontWeight: '900', color: textMain, marginBottom: 4 },
-    loginSub: { fontSize: 13, color: textSub, marginBottom: 24 },
-    loginInput: { width: '100%', backgroundColor: inputBg, borderWidth: 1, borderColor: border, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, fontSize: 15, color: textMain, marginBottom: 12 },
-    passwordRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, width: '100%' },
-    showPassBtn: { padding: 10 },
-    showPassText: { fontSize: 20 },
-    authErrorText: { fontSize: 13, color: '#EF4444', textAlign: 'center', marginBottom: 12, fontWeight: '600' },
-    loginBtn: { backgroundColor: GREEN, borderRadius: 14, paddingVertical: 15, width: '100%', alignItems: 'center', shadowColor: GREEN, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 6 },
-    loginBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '900' },
-    loginHint: { fontSize: 11, color: textSub, marginTop: 16, textAlign: 'center' },
+    modalSubtitle: { fontSize: 11, color: textSub },
+    modalSection: { marginBottom: 12, borderBottomWidth: 1, borderBottomColor: border, paddingBottom: 10 },
+    modalSectionTitle: { fontSize: 12, fontWeight: '800', color: primary, marginBottom: 6 },
+    modalText: { fontSize: 11, color: textSub, marginBottom: 2 },
+    modalItemRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
+    modalItemImg: { width: 36, height: 36, borderRadius: 6 },
+    modalItemName: { fontSize: 11, fontWeight: '700', color: textMain },
+    modalItemSub: { fontSize: 10, color: textSub },
+    modalItemTotal: { fontSize: 11, fontWeight: '800', color: textMain },
+    modalTotalRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: border },
+    modalTotalLabel: { fontSize: 12, fontWeight: '800', color: textMain },
+    modalTotalValue: { fontSize: 14, fontWeight: '900', color: primary },
+    modalScreenshotThumb: { width: 140, height: 140, borderRadius: 10, marginTop: 6 },
+    modalActionsRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+    actionBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
+    actionBtnText: { fontSize: 11, fontWeight: '800', color: '#FFFFFF' },
+    zoomModalOverlay: { flex: 1, backgroundColor: '#000000', justifyContent: 'center', alignItems: 'center' },
+    zoomCloseBtn: { position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 10 },
+    zoomImage: { width: '90%', height: '80%' },
+
+    // ── ACCESS DENIED & LOGIN ──
+    accessDeniedCard: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 24,
+      maxWidth: 460,
+      alignSelf: 'center',
+    },
+    accessDeniedTitle: { fontSize: 22, fontWeight: '900', color: '#EF4444', marginTop: 14 },
+    accessDeniedSub: { fontSize: 13, color: textSub, textAlign: 'center', marginTop: 8, lineHeight: 20 },
+    primaryBtn: {
+      backgroundColor: primary,
+      borderRadius: 10,
+      paddingVertical: 12,
+      paddingHorizontal: 24,
+      marginTop: 20,
+      width: '100%',
+      alignItems: 'center',
+    },
+    primaryBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
+    secondaryBtn: {
+      backgroundColor: isDark ? '#1C2230' : '#F3F4F6',
+      borderRadius: 10,
+      paddingVertical: 12,
+      paddingHorizontal: 24,
+      width: '100%',
+      alignItems: 'center',
+    },
+    secondaryBtnText: { fontSize: 13, fontWeight: '700', color: textMain },
+    loginCard: {
+      width: '100%',
+      maxWidth: 420,
+      backgroundColor: cardBg,
+      borderRadius: 16,
+      padding: 24,
+      borderWidth: 1,
+      borderColor: border,
+      alignItems: 'center',
+    },
+    loginIconCircle: {
+      width: 72,
+      height: 72,
+      borderRadius: 36,
+      backgroundColor: isDark ? '#13211B' : '#E6F9F0',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    loginTitle: { fontSize: 20, fontWeight: '900', color: textMain },
+    loginSub: { fontSize: 12, color: textSub, marginBottom: 18 },
+    fieldLabel: { alignSelf: 'flex-start', fontSize: 12, fontWeight: '700', color: textMain, marginBottom: 4 },
+    loginInput: {
+      width: '100%',
+      height: 46,
+      backgroundColor: inputBg,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: border,
+      paddingHorizontal: 12,
+      fontSize: 13,
+      color: textMain,
+      marginBottom: 12,
+    },
+    passwordRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      width: '100%',
+      marginBottom: 12,
+    },
+    showPassBtn: { position: 'absolute', right: 12 },
+    showPassText: { fontSize: 16 },
+    authErrorText: { color: '#EF4444', fontSize: 12, marginBottom: 10, textAlign: 'center' },
+    loginBtn: {
+      width: '100%',
+      height: 46,
+      backgroundColor: primary,
+      borderRadius: 10,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginTop: 6,
+    },
+    loginBtnText: { fontSize: 14, fontWeight: '800', color: '#FFFFFF' },
+    autoFillBtn: {
+      marginTop: 12,
+      padding: 10,
+      backgroundColor: isDark ? '#1C2230' : '#F3F4F6',
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: border,
+      alignItems: 'center',
+      width: '100%',
+    },
+    autoFillBtnText: { fontSize: 11, fontWeight: '800', color: isDark ? '#D4AF37' : '#C88D2B' },
+    loginHint: { fontSize: 10, color: textSub, marginTop: 10 },
+    emptyStateBox: { alignItems: 'center', padding: 40 },
+    emptyTitle: { fontSize: 16, fontWeight: '800', color: textMain, marginTop: 8 },
+    emptySub: { fontSize: 12, color: textSub, marginTop: 2, textAlign: 'center' },
+    emptyHint: { fontSize: 12, color: textSub, textAlign: 'center', padding: 20 },
   });
 };
