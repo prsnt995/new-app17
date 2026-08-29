@@ -125,8 +125,8 @@ Content-Type: application/json
   "email": "user@example.com",
   "phoneCountryCode": "+82",
   "phone": "1012345678",
-  "firstName": "John",
-  "lastName": "Doe",
+  "firstName": "Parshant",
+  "lastName": "tanwar",
   "password": "SecurePassword123!"
 }
 ```
