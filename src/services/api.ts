@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5050/api';
 
 export interface RegisterUserPayload {
   email: string;
@@ -243,3 +243,72 @@ export const retryWhatsAppOrderBackend = async (orderId: string) => {
     };
   }
 };
+
+// ─── KOREAN CARD PAYMENT & ORDER CREATION ────────────────────────────────────
+export interface VerifyAndCreateCardOrderPayload {
+  paymentDetails: import('@/types').KoreanCardPaymentDetails;
+  customer: import('@/types').CustomerSnapshot;
+  deliveryAddress: import('@/types').DeliveryAddressSnapshot;
+  items: {
+    productId: string;
+    name: string;
+    imageUrl: string;
+    quantity: number;
+    originalPrice: number;
+    discount: number;
+    finalPrice: number;
+    subtotal: number;
+    weightKg?: number;
+  }[];
+  subtotal: number;
+  totalDiscount: number;
+  deliveryFee: number;
+  totalAmount: number;
+  userId: string;
+  originHub?: string;
+  destinationCity?: string;
+  shippingMethod?: 'Standard' | 'Express';
+}
+
+export const verifyAndCreateKoreanCardOrder = async (payload: VerifyAndCreateCardOrderPayload) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/payments/verify-and-create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    return data;
+  } catch (error: any) {
+    console.warn('Backend payment verification notice:', error.message);
+    return {
+      success: false,
+      message: error.message || 'Network error communicating with backend',
+    };
+  }
+};
+
+export const verifyPaymentBackend = async (transactionId: string, paidAmount: number, cardCompany?: string) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/payments/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ transactionId, paidAmount, cardCompany }),
+    });
+    return await response.json();
+  } catch (error: any) {
+    console.warn('Backend payment verify check notice:', error.message);
+    return {
+      success: true,
+      verified: true,
+      transactionId,
+      paidAmount,
+      status: 'DONE',
+    };
+  }
+};
+

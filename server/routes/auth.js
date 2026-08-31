@@ -151,7 +151,6 @@ router.post('/send-otp', async (req, res) => {
       message: error.message || 'Failed to send verification code',
     });
   }
-  }
 });
 
 /**

@@ -1342,22 +1342,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const uploadPaymentScreenshot = async (orderId: string, fileUri: string): Promise<string> => {
     const { uploadAndLinkPaymentScreenshot } = await import('@/services/paymentService');
-    const dlUrl = await uploadAndLinkPaymentScreenshot(fileUri, authUid || user.id, orderId);
+    const uploadRes = await uploadAndLinkPaymentScreenshot(fileUri, authUid || user.id, orderId);
+    const dlUrl = uploadRes.downloadUrl;
     setOrders((prev) =>
       prev.map((o) =>
         o.id === orderId
           ? {
               ...o,
               paymentScreenshot: dlUrl,
+              paymentProofUrl: dlUrl,
+              paymentStatus: 'PENDING_VERIFICATION',
+              paymentRejectionReason: undefined,
+              orderStatus: 'PENDING',
               payment: {
+                ...o.payment,
                 screenshotUrl: dlUrl,
                 uploaded: true,
                 verified: false,
                 verifiedAt: null,
                 verifiedBy: null,
-                status: 'uploaded',
+                status: 'PENDING_VERIFICATION',
               },
-              status: 'payment_uploaded',
+              status: 'Payment Submitted',
             }
           : o
       )

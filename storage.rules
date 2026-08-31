@@ -19,11 +19,19 @@ service firebase.storage {
       allow write: if isAdmin();
     }
 
-    // Payment screenshots: secure path payment-screenshots/{userId}/{orderId}/{fileName}
+    // Payment proofs: secure path payment-proofs/{userId}/{orderId}/{fileName}
+    match /payment-proofs/{userId}/{orderId}/{fileName} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAuthenticated() && (request.auth.uid == userId || isAdmin()) &&
+                      request.resource.size < 5 * 1024 * 1024 &&
+                      request.resource.contentType.matches('image/.*');
+    }
+
+    // Payment screenshots: legacy alias path payment-screenshots/{userId}/{orderId}/{fileName}
     match /payment-screenshots/{userId}/{orderId}/{fileName} {
       allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
       allow write: if isAuthenticated() && (request.auth.uid == userId || isAdmin()) &&
-                      request.resource.size < 10 * 1024 * 1024 &&
+                      request.resource.size < 5 * 1024 * 1024 &&
                       request.resource.contentType.matches('image/.*');
     }
 

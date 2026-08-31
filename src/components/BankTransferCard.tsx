@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Alert,
   Image,
@@ -8,65 +8,155 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  ActivityIndicator,
+  Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { BankAccountInfo, KOREA_BANK_ACCOUNTS, getRandomBankAccount } from '@/data/mockData';
+import { BankTransferSettings } from '@/types';
+import { getBankTransferSettings, DEFAULT_BANK_SETTINGS } from '@/services/bankSettingsService';
+import { BankAccountInfo, KOREA_BANK_ACCOUNTS } from '@/data/mockData';
 
 interface BankTransferCardProps {
-  selectedBank: BankAccountInfo;
-  onSelectBank: (bank: BankAccountInfo) => void;
+  orderAmountKRW?: number;
+  orderIdPreview?: string;
   senderName: string;
   onChangeSenderName: (name: string) => void;
   paymentScreenshot: string | null;
   onSelectScreenshot: (uri: string | null) => void;
   isDarkMode?: boolean;
+  bankSettings?: BankTransferSettings;
+  selectedBank?: BankAccountInfo;
+  onSelectBank?: (bank: BankAccountInfo) => void;
+  isUploading?: boolean;
+  uploadProgress?: number;
 }
 
 export function BankTransferCard({
-  selectedBank,
-  onSelectBank,
+  orderAmountKRW = 0,
+  orderIdPreview,
   senderName,
   onChangeSenderName,
   paymentScreenshot,
   onSelectScreenshot,
   isDarkMode = false,
+  bankSettings: initialSettings,
+  selectedBank,
+  onSelectBank,
+  isUploading = false,
+  uploadProgress = 0,
 }: BankTransferCardProps) {
-  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [bankSettings, setBankSettings] = useState<BankTransferSettings>(() => {
+    if (initialSettings) return initialSettings;
+    if (selectedBank) {
+      return {
+        bankName: `${selectedBank.bankName} (${selectedBank.bankNameKr})`,
+        bankNameKr: selectedBank.bankNameKr,
+        accountNumber: selectedBank.accountNumber,
+        accountHolder: selectedBank.accountHolder,
+        instructions: DEFAULT_BANK_SETTINGS.instructions,
+        paymentDeadlineHours: 24,
+        enabled: true,
+      };
+    }
+    return DEFAULT_BANK_SETTINGS;
+  });
 
-  const handleCopyAccount = () => {
-    Alert.alert(
-      'Account Number Copied!',
-      `${selectedBank.bankNameKr} (${selectedBank.bankName})\nAccount: ${selectedBank.accountNumber}\nHolder: ${selectedBank.accountHolder}`
-    );
+  const [activeBankId, setActiveBankId] = useState<string>(() => {
+    if (selectedBank?.id) return selectedBank.id;
+    return 'woori';
+  });
+
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [copiedNotification, setCopiedNotification] = useState(false);
+
+  useEffect(() => {
+    if (initialSettings) {
+      setBankSettings(initialSettings);
+    } else if (selectedBank) {
+      setBankSettings({
+        bankName: `${selectedBank.bankName} (${selectedBank.bankNameKr})`,
+        bankNameKr: selectedBank.bankNameKr,
+        accountNumber: selectedBank.accountNumber,
+        accountHolder: selectedBank.accountHolder,
+        instructions: DEFAULT_BANK_SETTINGS.instructions,
+        paymentDeadlineHours: 24,
+        enabled: true,
+      });
+      setActiveBankId(selectedBank.id);
+    } else {
+      getBankTransferSettings().then((s) => {
+        setBankSettings(s);
+      });
+    }
+  }, [initialSettings, selectedBank]);
+
+  const handleSelectBankChip = (b: BankAccountInfo) => {
+    setActiveBankId(b.id);
+    setBankSettings((prev) => ({
+      ...prev,
+      bankName: `${b.bankName} (${b.bankNameKr})`,
+      bankNameKr: b.bankNameKr,
+      accountNumber: b.accountNumber,
+      accountHolder: b.accountHolder,
+    }));
+    if (onSelectBank) {
+      onSelectBank(b);
+    }
   };
 
-  const handleRandomizeBank = () => {
-    const nextBank = getRandomBankAccount();
-    onSelectBank(nextBank);
+  const handleCopyAccount = async () => {
+    try {
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(bankSettings.accountNumber);
+      }
+      setCopiedNotification(true);
+      setTimeout(() => setCopiedNotification(false), 3000);
+      
+      Alert.alert(
+        '계좌번호 복사 완료 (Copied!)',
+        `[${bankSettings.bankName}]\n계좌번호: ${bankSettings.accountNumber}\n예금주: ${bankSettings.accountHolder}`
+      );
+    } catch {
+      Alert.alert('Account Number', bankSettings.accountNumber);
+    }
   };
 
   const handlePickImage = async () => {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (permissionResult.granted === false) {
-        Alert.alert('Permission Needed', 'Please allow access to photos to upload your payment screenshot.');
+        Alert.alert(
+          'Permission Needed / 권한 필요',
+          'Please allow photo library access to upload payment screenshot (사진 접근 권한이 필요합니다).'
+        );
         return;
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         allowsEditing: true,
-        quality: 0.8,
+        quality: 0.85,
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        onSelectScreenshot(result.assets[0].uri);
+        const asset = result.assets[0];
+        
+        // 5MB Size Validation (if fileSize available)
+        if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
+          Alert.alert(
+            'File Too Large / 파일 크기 초과',
+            'Image exceeds 5 MB limit. Please choose a smaller image file (최대 5MB 이하의 이미지만 업로드 가능합니다).'
+          );
+          return;
+        }
+
+        onSelectScreenshot(asset.uri);
       }
-    } catch (e) {
-      // Fallback for web or non-supported platforms: pick sample screenshot demo
+    } catch (e: any) {
+      console.warn('Image picker notice:', e.message);
       Alert.alert(
-        'Upload Receipt Screenshot',
-        'Sample payment receipt proof attached successfully.',
+        'Attach Receipt Proof',
+        'Attach demo payment receipt proof?',
         [
           {
             text: 'Attach Sample Proof',
@@ -85,132 +175,232 @@ export function BankTransferCard({
 
   return (
     <View style={styles.cardContainer}>
-      {/* RANDOM ASSIGNMENT HEADER BADGE */}
+      {/* 1. BANK TRANSFER INSTRUCTION BANNER */}
       <View style={styles.headerRow}>
-        <View style={styles.randomBadge}>
-          <Text style={styles.randomBadgeText}>🎲 SYSTEM ASSIGNED BANK</Text>
-        </View>
-        <TouchableOpacity style={styles.randomizeBtn} onPress={handleRandomizeBank}>
-          <Text style={styles.randomizeBtnText}>🔄 Pick Random</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* SELECTED BANK INFO BOX */}
-      <View style={[styles.bankBox, { borderColor: selectedBank.color }]}>
-        <View style={styles.bankTopRow}>
-          <View style={styles.bankIconCircle}>
-            <Text style={{ fontSize: 24 }}>{selectedBank.logo}</Text>
-          </View>
-          <View style={{ flex: 1, marginLeft: 10 }}>
-            <View style={styles.bankTitleRow}>
-              <Text style={styles.bankNameKr}>{selectedBank.bankNameKr}</Text>
-              <Text style={styles.bankNameEn}>({selectedBank.bankName})</Text>
-            </View>
-            <Text style={styles.accountHolderText}>
-              예금주 (Account Holder): <Text style={styles.holderBold}>{selectedBank.accountHolder}</Text>
-            </Text>
-          </View>
-        </View>
-
-        {/* ACCOUNT NUMBER HIGHLIGHT & COPY */}
-        <View style={styles.accountDisplayRow}>
+        <View style={styles.titleWithIcon}>
+          <Text style={{ fontSize: 20 }}>🏦</Text>
           <View>
-            <Text style={styles.accountLabel}>Account Number (계좌번호):</Text>
-            <Text style={styles.accountNumberText}>{selectedBank.accountNumber}</Text>
+            <Text style={styles.cardHeaderTitle}>Bank Transfer / 계좌이체</Text>
+            <Text style={styles.cardHeaderSub}>Direct Transfer to PARSHANT</Text>
           </View>
-
-          <TouchableOpacity style={styles.copyBtn} onPress={handleCopyAccount}>
-            <Text style={styles.copyBtnText}>📋 Copy</Text>
-          </TouchableOpacity>
+        </View>
+        <View style={styles.deadlineBadge}>
+          <Text style={styles.deadlineBadgeText}>
+            ⏱️ {bankSettings.paymentDeadlineHours || 24}H Deadline
+          </Text>
         </View>
       </View>
 
-      {/* ALL 4 BANK ACCOUNTS SELECTOR CHIPS */}
-      <Text style={styles.selectorLabel}>Or Select Preferred Korean Bank:</Text>
-      <View style={styles.bankChipsRow}>
-        {KOREA_BANK_ACCOUNTS.map((bank) => {
-          const isSelected = selectedBank.id === bank.id;
+      {/* 2. BANK SELECTION CHIPS (우리, 국민, 신한, 토스) */}
+      <Text style={styles.selectorSectionTitle}>Select Bank (입금 은행 선택):</Text>
+      <View style={styles.bankChipsContainer}>
+        {KOREA_BANK_ACCOUNTS.map((b) => {
+          const isSelected =
+            activeBankId === b.id || bankSettings.accountNumber === b.accountNumber;
           return (
             <TouchableOpacity
-              key={bank.id}
+              key={b.id}
               style={[
-                styles.bankChip,
-                isSelected && { borderColor: bank.color, backgroundColor: isDarkMode ? '#2A241A' : '#FFF9ED' },
+                styles.bankSelectChip,
+                isSelected && styles.bankSelectChipActive,
+                isSelected && { borderColor: b.color },
               ]}
-              onPress={() => onSelectBank(bank)}
+              onPress={() => handleSelectBankChip(b)}
+              activeOpacity={0.85}
             >
-              <Text style={{ fontSize: 13 }}>{bank.logo}</Text>
-              <Text style={[styles.bankChipText, isSelected && { color: bank.color, fontWeight: '900' }]}>
-                {bank.bankNameKr}
-              </Text>
+              <Text style={styles.bankSelectLogo}>{b.logo}</Text>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={[
+                    styles.bankSelectNameKr,
+                    isSelected && { color: b.color, fontWeight: '900' },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {b.bankNameKr}
+                </Text>
+                <Text style={styles.bankSelectAccNum} numberOfLines={1}>
+                  {b.accountNumber}
+                </Text>
+              </View>
+              {isSelected && (
+                <View style={[styles.bankSelectedDot, { backgroundColor: b.color }]} />
+              )}
             </TouchableOpacity>
           );
         })}
       </View>
 
-      {/* SENDER NAME INPUT */}
+      {/* 3. OFFICIAL BANK DETAILS BOX */}
+      <View style={styles.bankBox}>
+        {/* Bank & Holder */}
+        <View style={styles.bankInfoRow}>
+          <Text style={styles.bankFieldLabel}>Bank (입금은행):</Text>
+          <Text style={styles.bankFieldValueBold}>{bankSettings.bankName}</Text>
+        </View>
+
+        <View style={styles.bankInfoRow}>
+          <Text style={styles.bankFieldLabel}>Account Holder (예금주):</Text>
+          <Text style={[styles.bankFieldValueBold, { color: '#2563EB' }]}>
+            {bankSettings.accountHolder}
+          </Text>
+        </View>
+
+        {/* Account Number & Copy Button */}
+        <View style={styles.accountNumberCard}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.accountCardLabel}>Account Number (계좌번호):</Text>
+            <Text style={styles.accountNumberDigits} selectable>
+              {bankSettings.accountNumber}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.copyBtn, copiedNotification && styles.copyBtnSuccess]}
+            onPress={handleCopyAccount}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.copyBtnText}>
+              {copiedNotification ? '✓ Copied!' : '📋 Copy Account Number (계좌번호 복사)'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Exact Amount & Order ID */}
+        {orderAmountKRW > 0 ? (
+          <View style={styles.amountNoticeGrid}>
+            <View style={styles.noticeCell}>
+              <Text style={styles.noticeCellLabel}>Exact Order Amount (입금 금액):</Text>
+              <Text style={styles.noticeAmountValue}>₩{orderAmountKRW.toLocaleString()}</Text>
+            </View>
+
+            {orderIdPreview ? (
+              <View style={styles.noticeCell}>
+                <Text style={styles.noticeCellLabel}>Order ID (주문번호):</Text>
+                <Text style={styles.noticeOrderIdValue}>{orderIdPreview}</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+
+        {/* Instructions */}
+        <View style={styles.instructionBanner}>
+          <Text style={styles.instructionIcon}>💡</Text>
+          <Text style={styles.instructionText}>
+            {bankSettings.instructions ||
+              'Please transfer the exact amount and upload your payment screenshot below. Your order will be confirmed after admin verification.'}
+          </Text>
+        </View>
+      </View>
+
+      {/* 3. SENDER NAME INPUT */}
       <View style={styles.inputSection}>
-        <Text style={styles.fieldLabel}>Sender Name for Verification (입금자명) *</Text>
+        <Text style={styles.fieldLabel}>
+          Sender Name for Verification (입금자명) <Text style={{ color: '#EF4444' }}>*</Text>
+        </Text>
         <TextInput
           style={styles.textInput}
           value={senderName}
           onChangeText={onChangeSenderName}
-          placeholder="e.g. PARSHANT / SENDER NAME"
+          placeholder="e.g. PARSHANT / HONG GILDONG"
           placeholderTextColor="#A0A0A0"
         />
         <Text style={styles.fieldHint}>
-          Please make sure this matches your bank transfer deposit name.
+          Please enter the exact depositor name used in your bank mobile app or ATM.
         </Text>
       </View>
 
-      {/* PAYMENT SCREENSHOT UPLOADER */}
+      {/* 4. PAYMENT SCREENSHOT PROOF UPLOADER */}
       <View style={styles.uploadSection}>
-        <Text style={styles.fieldLabel}>Proof of Payment / Screenshot (입금 영수증 스크린샷)</Text>
-        
+        <View style={styles.uploadHeaderRow}>
+          <Text style={styles.fieldLabel}>
+            Upload Payment Screenshot / 입금 확인증 업로드 <Text style={{ color: '#EF4444' }}>*</Text>
+          </Text>
+          <Text style={styles.formatTag}>Max 5MB • JPG, PNG, WEBP</Text>
+        </View>
+
         {paymentScreenshot ? (
           <View style={styles.screenshotPreviewCard}>
             <TouchableOpacity onPress={() => setIsPreviewOpen(true)} activeOpacity={0.9}>
               <Image source={{ uri: paymentScreenshot }} style={styles.screenshotImage} />
+              <View style={styles.zoomBadge}>
+                <Text style={styles.zoomBadgeText}>🔍 Zoom</Text>
+              </View>
             </TouchableOpacity>
-            
+
             <View style={styles.screenshotInfo}>
               <View style={styles.attachedBadge}>
-                <Text style={styles.attachedBadgeText}>✓ Screenshot Attached</Text>
+                <Text style={styles.attachedBadgeText}>✓ Proof Attached (확인증 첨부됨)</Text>
               </View>
-              <Text style={styles.tapToViewText}>Tap image to expand preview</Text>
-              
-              <View style={styles.screenshotActions}>
-                <TouchableOpacity style={styles.changeBtn} onPress={handlePickImage}>
-                  <Text style={styles.changeBtnText}>📷 Change</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.removeBtn} onPress={() => onSelectScreenshot(null)}>
-                  <Text style={styles.removeBtnText}>🗑 Remove</Text>
-                </TouchableOpacity>
-              </View>
+              <Text style={styles.tapToViewText}>Tap thumbnail to inspect fullscreen</Text>
+
+              {isUploading ? (
+                <View style={styles.uploadProgressRow}>
+                  <ActivityIndicator size="small" color="#D4AF37" />
+                  <Text style={styles.uploadProgressText}>
+                    Uploading to secure storage ({uploadProgress}%)...
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.screenshotActions}>
+                  <TouchableOpacity
+                    style={styles.changeBtn}
+                    onPress={handlePickImage}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.changeBtnText}>📷 Replace (변경)</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.removeBtn}
+                    onPress={() => onSelectScreenshot(null)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.removeBtnText}>🗑 Remove (삭제)</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           </View>
         ) : (
-          <TouchableOpacity style={styles.uploadBoxBtn} onPress={handlePickImage} activeOpacity={0.8}>
-            <Text style={{ fontSize: 32 }}>📸</Text>
-            <Text style={styles.uploadBoxTitle}>Attach Payment Screenshot</Text>
+          <TouchableOpacity
+            style={styles.uploadBoxBtn}
+            onPress={handlePickImage}
+            activeOpacity={0.8}
+          >
+            <Text style={{ fontSize: 34 }}>📸</Text>
+            <Text style={styles.uploadBoxTitle}>
+              Upload Payment Screenshot / 입금 확인증 업로드
+            </Text>
             <Text style={styles.uploadBoxSub}>
-              Upload receipt or bank transfer screenshot to confirm order fast
+              Take a screenshot from your banking app showing the transfer details
             </Text>
             <View style={styles.uploadBadgePill}>
-              <Text style={styles.uploadBadgePillText}>+ Choose File / Image</Text>
+              <Text style={styles.uploadBadgePillText}>+ Choose File / Image (파일 선택)</Text>
             </View>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* FULLSCREEN IMAGE PREVIEW MODAL */}
-      <Modal visible={isPreviewOpen} transparent animationType="fade" onRequestClose={() => setIsPreviewOpen(false)}>
+      {/* 5. FULLSCREEN IMAGE PREVIEW MODAL */}
+      <Modal
+        visible={isPreviewOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsPreviewOpen(false)}
+      >
         <View style={styles.modalOverlay}>
-          <TouchableOpacity style={styles.closeModalBtn} onPress={() => setIsPreviewOpen(false)}>
+          <TouchableOpacity
+            style={styles.closeModalBtn}
+            onPress={() => setIsPreviewOpen(false)}
+          >
             <Text style={styles.closeModalText}>✕ Close Preview</Text>
           </TouchableOpacity>
           {paymentScreenshot && (
-            <Image source={{ uri: paymentScreenshot }} style={styles.fullModalImage} resizeMode="contain" />
+            <Image
+              source={{ uri: paymentScreenshot }}
+              style={styles.fullModalImage}
+              resizeMode="contain"
+            />
           )}
         </View>
       </Modal>
@@ -220,10 +410,11 @@ export function BankTransferCard({
 
 const getStyles = (isDark: boolean) => {
   const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
-  const textMain = isDark ? '#FFFFFF' : '#212121';
-  const textSub = isDark ? '#A0A0A0' : '#706D65';
-  const border = isDark ? '#333333' : '#EFEBE4';
+  const textMain = isDark ? '#FFFFFF' : '#1A1A1A';
+  const textSub = isDark ? '#A0A0A0' : '#6B7280';
+  const border = isDark ? '#333333' : '#E5E7EB';
   const accent = isDark ? '#D4AF37' : '#C88D2B';
+  const primary = isDark ? '#60A5FA' : '#2563EB';
 
   return StyleSheet.create({
     cardContainer: {
@@ -238,150 +429,211 @@ const getStyles = (isDark: boolean) => {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: 12,
+      marginBottom: 14,
     },
-    randomBadge: {
-      backgroundColor: isDark ? '#2D271E' : '#FFF5E6',
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-      borderRadius: 6,
+    titleWithIcon: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    cardHeaderTitle: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: textMain,
+    },
+    cardHeaderSub: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: textSub,
+      marginTop: 1,
+    },
+    deadlineBadge: {
+      backgroundColor: isDark ? '#2D271E' : '#FFFBEB',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 8,
       borderWidth: 1,
       borderColor: accent,
     },
-    randomBadgeText: {
-      fontSize: 9,
-      fontWeight: '900',
-      color: accent,
-      letterSpacing: 0.5,
-    },
-    randomizeBtn: {
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-      borderRadius: 6,
-      backgroundColor: isDark ? '#2B2B2B' : '#F2EFE9',
-    },
-    randomizeBtnText: {
+    deadlineBadgeText: {
       fontSize: 10,
+      fontWeight: '800',
+      color: accent,
+    },
+    selectorSectionTitle: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: textMain,
+      marginBottom: 8,
+    },
+    bankChipsContainer: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 14,
+    },
+    bankSelectChip: {
+      flex: 1,
+      minWidth: '47%',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      padding: 10,
+      borderRadius: 12,
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
+      borderWidth: 1.5,
+      borderColor: isDark ? '#3E3E3E' : '#E5E7EB',
+    },
+    bankSelectChipActive: {
+      backgroundColor: isDark ? '#1F2937' : '#EFF6FF',
+    },
+    bankSelectLogo: {
+      fontSize: 18,
+    },
+    bankSelectNameKr: {
+      fontSize: 12,
       fontWeight: '700',
       color: textMain,
     },
+    bankSelectAccNum: {
+      fontSize: 10,
+      color: textSub,
+      marginTop: 2,
+      fontFamily: Platform.select({ ios: 'Courier', default: 'monospace' }),
+    },
+    bankSelectedDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
     bankBox: {
-      backgroundColor: isDark ? '#262626' : '#F9F8F5',
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
       borderRadius: 14,
       padding: 14,
-      borderWidth: 2,
-      marginBottom: 12,
+      borderWidth: 1.5,
+      borderColor: isDark ? '#3E3E3E' : '#E5E7EB',
+      marginBottom: 14,
     },
-    bankTopRow: {
+    bankInfoRow: {
       flexDirection: 'row',
+      justifyContent: 'space-between',
       alignItems: 'center',
+      marginBottom: 6,
     },
-    bankIconCircle: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      backgroundColor: isDark ? '#333' : '#FFF',
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    bankTitleRow: {
-      flexDirection: 'row',
-      alignItems: 'baseline',
-      gap: 6,
-    },
-    bankNameKr: {
-      fontSize: 17,
-      fontWeight: '900',
-      color: textMain,
-    },
-    bankNameEn: {
+    bankFieldLabel: {
       fontSize: 12,
       fontWeight: '700',
       color: textSub,
     },
-    accountHolderText: {
-      fontSize: 11,
-      color: textSub,
-      marginTop: 2,
-    },
-    holderBold: {
+    bankFieldValueBold: {
+      fontSize: 13,
       fontWeight: '900',
-      color: accent,
+      color: textMain,
     },
-    accountDisplayRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      backgroundColor: isDark ? '#1A1A1A' : '#FFFFFF',
+    accountNumberCard: {
+      backgroundColor: isDark ? '#171717' : '#FFFFFF',
+      borderRadius: 12,
       padding: 12,
-      borderRadius: 10,
-      marginTop: 12,
+      marginTop: 8,
+      marginBottom: 12,
       borderWidth: 1,
-      borderColor: border,
+      borderColor: isDark ? '#333333' : '#D1D5DB',
+      flexDirection: 'column',
+      gap: 8,
     },
-    accountLabel: {
-      fontSize: 9,
+    accountCardLabel: {
+      fontSize: 10,
       fontWeight: '800',
       color: textSub,
       textTransform: 'uppercase',
+      letterSpacing: 0.5,
     },
-    accountNumberText: {
-      fontSize: 17,
+    accountNumberDigits: {
+      fontSize: 18,
       fontWeight: '900',
-      color: textMain,
-      letterSpacing: 1,
-      marginTop: 2,
+      color: primary,
+      letterSpacing: 1.2,
+      marginVertical: 2,
     },
     copyBtn: {
-      backgroundColor: accent,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
+      backgroundColor: primary,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
       borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    copyBtnSuccess: {
+      backgroundColor: '#10B981',
     },
     copyBtnText: {
       color: '#FFFFFF',
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: '900',
+      letterSpacing: 0.3,
     },
-    selectorLabel: {
-      fontSize: 11,
-      fontWeight: '800',
-      color: textSub,
-      marginBottom: 8,
-    },
-    bankChipsRow: {
+    amountNoticeGrid: {
       flexDirection: 'row',
-      gap: 6,
-      marginBottom: 16,
-    },
-    bankChip: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 4,
-      paddingVertical: 8,
+      backgroundColor: isDark ? '#1E293B' : '#EFF6FF',
       borderRadius: 10,
-      backgroundColor: isDark ? '#262626' : '#F3F0EA',
-      borderWidth: 1.5,
-      borderColor: 'transparent',
+      padding: 10,
+      marginBottom: 10,
+      borderWidth: 1,
+      borderColor: isDark ? '#334155' : '#DBEAFE',
+      gap: 12,
     },
-    bankChipText: {
-      fontSize: 11,
+    noticeCell: {
+      flex: 1,
+    },
+    noticeCellLabel: {
+      fontSize: 10,
       fontWeight: '700',
+      color: isDark ? '#94A3B8' : '#3B82F6',
+    },
+    noticeAmountValue: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: isDark ? '#38BDF8' : '#1D4ED8',
+      marginTop: 2,
+    },
+    noticeOrderIdValue: {
+      fontSize: 14,
+      fontWeight: '900',
       color: textMain,
+      marginTop: 2,
+    },
+    instructionBanner: {
+      flexDirection: 'row',
+      backgroundColor: isDark ? '#2B261D' : '#FEF3C7',
+      borderRadius: 10,
+      padding: 10,
+      borderWidth: 1,
+      borderColor: isDark ? '#554124' : '#FDE68A',
+      gap: 8,
+      alignItems: 'flex-start',
+    },
+    instructionIcon: {
+      fontSize: 14,
+      marginTop: 1,
+    },
+    instructionText: {
+      flex: 1,
+      fontSize: 11,
+      lineHeight: 16,
+      fontWeight: '600',
+      color: isDark ? '#FDE68A' : '#92400E',
     },
     inputSection: {
       marginBottom: 14,
     },
     fieldLabel: {
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: '800',
       color: textMain,
       marginBottom: 6,
     },
     textInput: {
-      backgroundColor: isDark ? '#262626' : '#F8F7F3',
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
       borderRadius: 10,
       paddingHorizontal: 14,
       paddingVertical: 10,
@@ -397,34 +649,47 @@ const getStyles = (isDark: boolean) => {
       marginTop: 4,
     },
     uploadSection: {
-      marginTop: 4,
+      marginTop: 6,
+    },
+    uploadHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 6,
+    },
+    formatTag: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: textSub,
     },
     uploadBoxBtn: {
-      backgroundColor: isDark ? '#262626' : '#F9F8F5',
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
       borderRadius: 14,
       borderWidth: 2,
-      borderColor: border,
+      borderColor: isDark ? '#444444' : '#D1D5DB',
       borderStyle: 'dashed',
-      padding: 18,
+      padding: 20,
       alignItems: 'center',
     },
     uploadBoxTitle: {
       fontSize: 13,
       fontWeight: '800',
       color: textMain,
-      marginTop: 6,
+      marginTop: 8,
+      textAlign: 'center',
     },
     uploadBoxSub: {
-      fontSize: 10,
+      fontSize: 11,
       color: textSub,
       textAlign: 'center',
-      marginTop: 3,
-      marginBottom: 10,
+      marginTop: 4,
+      marginBottom: 12,
+      paddingHorizontal: 10,
     },
     uploadBadgePill: {
       backgroundColor: accent,
-      paddingHorizontal: 12,
-      paddingVertical: 6,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
       borderRadius: 8,
     },
     uploadBadgePillText: {
@@ -434,33 +699,48 @@ const getStyles = (isDark: boolean) => {
     },
     screenshotPreviewCard: {
       flexDirection: 'row',
-      backgroundColor: isDark ? '#262626' : '#F8F7F3',
-      borderRadius: 12,
-      padding: 10,
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
+      borderRadius: 14,
+      padding: 12,
       borderWidth: 1,
       borderColor: border,
       gap: 12,
+      alignItems: 'center',
     },
     screenshotImage: {
-      width: 70,
-      height: 70,
-      borderRadius: 8,
+      width: 80,
+      height: 80,
+      borderRadius: 10,
       backgroundColor: '#000',
+    },
+    zoomBadge: {
+      position: 'absolute',
+      bottom: 4,
+      right: 4,
+      backgroundColor: 'rgba(0,0,0,0.7)',
+      borderRadius: 4,
+      paddingHorizontal: 4,
+      paddingVertical: 2,
+    },
+    zoomBadgeText: {
+      color: '#FFF',
+      fontSize: 8,
+      fontWeight: '800',
     },
     screenshotInfo: {
       flex: 1,
       justifyContent: 'center',
     },
     attachedBadge: {
-      backgroundColor: '#2E7D32',
+      backgroundColor: '#059669',
       alignSelf: 'flex-start',
-      paddingHorizontal: 6,
-      paddingVertical: 2,
-      borderRadius: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 6,
     },
     attachedBadgeText: {
       color: '#FFFFFF',
-      fontSize: 9,
+      fontSize: 10,
       fontWeight: '900',
     },
     tapToViewText: {
@@ -468,36 +748,47 @@ const getStyles = (isDark: boolean) => {
       color: textSub,
       marginTop: 4,
     },
-    screenshotActions: {
+    uploadProgressRow: {
       flexDirection: 'row',
+      alignItems: 'center',
       gap: 8,
       marginTop: 8,
     },
+    uploadProgressText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: accent,
+    },
+    screenshotActions: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 10,
+    },
     changeBtn: {
       backgroundColor: accent,
-      paddingHorizontal: 10,
-      paddingVertical: 4,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
       borderRadius: 6,
     },
     changeBtnText: {
       color: '#FFFFFF',
-      fontSize: 10,
+      fontSize: 11,
       fontWeight: '800',
     },
     removeBtn: {
-      backgroundColor: isDark ? '#3E1F1F' : '#FFEBEE',
-      paddingHorizontal: 10,
-      paddingVertical: 4,
+      backgroundColor: isDark ? '#3E1F1F' : '#FEE2E2',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
       borderRadius: 6,
     },
     removeBtnText: {
-      color: '#E53935',
-      fontSize: 10,
+      color: '#DC2626',
+      fontSize: 11,
       fontWeight: '800',
     },
     modalOverlay: {
       flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.9)',
+      backgroundColor: 'rgba(0,0,0,0.92)',
       justifyContent: 'center',
       alignItems: 'center',
       padding: 20,
@@ -507,14 +798,14 @@ const getStyles = (isDark: boolean) => {
       top: 50,
       right: 20,
       backgroundColor: 'rgba(255,255,255,0.2)',
-      paddingHorizontal: 14,
+      paddingHorizontal: 16,
       paddingVertical: 8,
       borderRadius: 20,
       zIndex: 10,
     },
     closeModalText: {
       color: '#FFFFFF',
-      fontSize: 12,
+      fontSize: 13,
       fontWeight: '900',
     },
     fullModalImage: {

@@ -504,9 +504,8 @@ export default function OnboardingScreen() {
                   <View style={styles.stepIconCircle}>
                     <Text style={styles.stepIconEmoji}>📧</Text>
                   </View>
-                  <Text style={styles.stepTitle}>Verify Your Email</Text>
                   <Text style={styles.stepSubtitle}>
-                    We'll send a 6-digit code to activate your account.
+                    We will send a 6-digit code to activate your account.
                   </Text>
 
                   {/* Email Display */}

@@ -124,6 +124,14 @@ export default function OrdersScreen() {
 
   const getStatusBadge = (status: OrderItem['status']) => {
     switch (status) {
+      case 'PAID':
+      case 'Payment Confirmed':
+      case 'payment_verified':
+        return {
+          label: 'PAID (결제완료) 💳',
+          bg: isDarkMode ? '#142E1F' : '#E8F5E9',
+          text: isDarkMode ? '#81C784' : '#2E7D32',
+        };
       case 'IN_TRANSIT':
       case 'PICKED_UP':
       case 'ORDER_PLACED':
@@ -137,6 +145,13 @@ export default function OrdersScreen() {
           label: 'Delivered ✓',
           bg: isDarkMode ? '#1E2D1E' : '#E8F5E9',
           text: isDarkMode ? '#81C784' : '#2E7D32',
+        };
+      case 'Payment Pending':
+      case 'payment_pending':
+        return {
+          label: 'Payment Pending ⏳',
+          bg: isDarkMode ? '#2D2014' : '#FFF8E1',
+          text: isDarkMode ? '#FFB74D' : '#F57C00',
         };
       default:
         return {
@@ -281,7 +296,7 @@ export default function OrdersScreen() {
                   <Text style={styles.emptyEmoji}>🛍️</Text>
                   <Text style={styles.emptyTitle}>No Product Orders Found</Text>
                   <Text style={styles.emptySubtitle}>
-                    You haven't placed any grocery or shop product orders in this category yet.
+                    You have not placed any grocery or shop product orders in this category yet.
                   </Text>
                   <TouchableOpacity
                     style={styles.emptyButton}
@@ -301,7 +316,7 @@ export default function OrdersScreen() {
                           <Text style={styles.orderNumberText}>{order.orderNumber}</Text>
                           <Text style={styles.orderDateText}>{order.date}</Text>
                           {(() => {
-                            const pBadge = getPaymentStatusBadge(order.payment);
+                            const pBadge = getPaymentStatusBadge(order.payment, order.paymentMethod);
                             return (
                               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
                                 <View
@@ -354,17 +369,17 @@ export default function OrdersScreen() {
                         </View>
 
                         <View style={styles.actionBtnGroup}>
-                          {(!order.payment?.uploaded || order.payment?.status === 'rejected') && (
+                          {(order.paymentStatus === 'REJECTED' || order.payment?.status === 'rejected' || (!order.paymentProofUrl && !order.paymentScreenshot && order.paymentMethod?.includes('BANK_TRANSFER'))) && (
                             <TouchableOpacity
                               style={[
                                 styles.reorderBtn,
-                                { backgroundColor: order.payment?.status === 'rejected' ? '#EF4444' : '#F59E0B' },
+                                { backgroundColor: (order.paymentStatus === 'REJECTED' || order.payment?.status === 'rejected') ? '#EF4444' : '#F59E0B' },
                               ]}
                               onPress={() => handleUploadScreenshotForOrder(order)}
                               disabled={isUploadingScreenshot}
                             >
                               <Text style={[styles.reorderBtnText, { color: '#FFF' }]}>
-                                {isUploadingScreenshot ? '...' : '📷 Proof'}
+                                {isUploadingScreenshot ? '...' : (order.paymentStatus === 'REJECTED' || order.payment?.status === 'rejected') ? '📷 Re-upload' : '📷 Proof'}
                               </Text>
                             </TouchableOpacity>
                           )}
@@ -777,7 +792,7 @@ export default function OrdersScreen() {
                         )}
 
                         {/* REJECTION REASON NOTIFICATION */}
-                        {selectedProductOrder.payment?.status === 'rejected' && (
+                        {(selectedProductOrder.paymentStatus === 'REJECTED' || selectedProductOrder.payment?.status === 'rejected') && (
                           <View
                             style={{
                               marginTop: 8,
@@ -789,12 +804,16 @@ export default function OrdersScreen() {
                             }}
                           >
                             <Text style={{ fontSize: 11, fontWeight: '800', color: '#B91C1C' }}>
-                              ❌ Payment Receipt Rejected
+                              ❌ Payment Proof Rejected (입금 반려)
                             </Text>
-                            <Text style={{ fontSize: 10, color: '#991B1B', marginTop: 2 }}>
+                            <Text style={{ fontSize: 11, color: '#991B1B', marginTop: 3, fontWeight: '600' }}>
                               Reason:{' '}
-                              {selectedProductOrder.payment?.rejectionReason ||
-                                'Receipt was unclear or transfer could not be matched.'}
+                              {selectedProductOrder.paymentRejectionReason ||
+                                selectedProductOrder.payment?.rejectionReason ||
+                                'Receipt was unclear or deposit was not found in bank records.'}
+                            </Text>
+                            <Text style={{ fontSize: 10, color: '#7F1D1D', marginTop: 2, fontStyle: 'italic' }}>
+                              Please attach a clear screenshot of your bank transfer receipt below to continue processing.
                             </Text>
                           </View>
                         )}
@@ -854,13 +873,13 @@ export default function OrdersScreen() {
                             </TouchableOpacity>
 
                             {/* Option to re-upload if rejected */}
-                            {selectedProductOrder.payment?.status === 'rejected' && (
+                            {(selectedProductOrder.paymentStatus === 'REJECTED' || selectedProductOrder.payment?.status === 'rejected') && (
                               <TouchableOpacity
                                 style={{
                                   marginTop: 10,
-                                  paddingVertical: 8,
-                                  paddingHorizontal: 12,
-                                  backgroundColor: '#EA580C',
+                                  paddingVertical: 10,
+                                  paddingHorizontal: 14,
+                                  backgroundColor: '#DC2626',
                                   borderRadius: 8,
                                   alignItems: 'center',
                                 }}
@@ -869,8 +888,8 @@ export default function OrdersScreen() {
                                 }
                                 disabled={isUploadingScreenshot}
                               >
-                                <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '800' }}>
-                                  {isUploadingScreenshot ? 'Uploading...' : '📷 Upload New Receipt'}
+                                <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '900' }}>
+                                  {isUploadingScreenshot ? 'Uploading New Proof...' : '📷 Upload New Payment Proof (새 영수증 업로드)'}
                                 </Text>
                               </TouchableOpacity>
                             )}

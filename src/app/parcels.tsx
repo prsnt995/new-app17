@@ -146,7 +146,7 @@ export default function ParcelsScreen() {
               <Text style={styles.emptyEmoji}>📦</Text>
               <Text style={styles.emptyTitle}>No Parcels Found</Text>
               <Text style={styles.emptySubtitle}>
-                You haven't sent any courier parcels in this category yet.
+                You have not sent any courier parcels in this category yet.
               </Text>
               <TouchableOpacity
                 style={styles.emptyButton}

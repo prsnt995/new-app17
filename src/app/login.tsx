@@ -1035,7 +1035,7 @@ export default function LoginScreen() {
                         </TouchableOpacity>
 
                         <Text style={styles.passwordlessNotice}>
-                          🔒 Zero passwords required. We'll send a 6-digit verification code to your email.
+                          🔒 Zero passwords required. We will send a 6-digit verification code to your email.
                         </Text>
                       </View>
                     )}

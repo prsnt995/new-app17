@@ -62,13 +62,76 @@ export type PaymentStatus =
   | 'payment_pending'
   | 'payment_uploaded'
   | 'payment_verified'
+  | 'PENDING_VERIFICATION'
+  | 'PAID'
+  | 'REJECTED'
   | 'rejected'
   | 'paid'
   | 'failed'
   | 'refunded';
 
+// ─── BANK TRANSFER SETTINGS ──────────────────────────────────────────────────
+export interface BankTransferSettings {
+  bankName: string;
+  bankNameKr?: string;
+  accountNumber: string;
+  accountHolder: string;
+  instructions: string;
+  paymentDeadlineHours: number;
+  enabled: boolean;
+  updatedAt?: any;
+  updatedBy?: string;
+}
 
-// ─── PRODUCT ──────────────────────────────────────────────────────────────────
+// ─── PAYMENT VERIFICATION AUDIT LOG ──────────────────────────────────────────
+export interface PaymentVerificationLog {
+  id?: string;
+  orderId: string;
+  orderNumber?: string;
+  action: 'VERIFIED' | 'REJECTED';
+  adminUserId: string;
+  adminEmail?: string;
+  reason?: string;
+  amount?: number;
+  customerName?: string;
+  timestamp: any;
+}
+
+// ─── KOREAN CARD PG PAYMENT DETAILS ───────────────────────────────────────────
+export interface KoreanCardPaymentDetails {
+  cardCompany: string;
+  cardCode?: string;
+  cardNumberMasked: string;
+  installment: string;
+  transactionId: string;
+  approvalNumber: string;
+  paidAmount: number;
+  currency?: string;
+  paidAt?: number;
+  paymentKey?: string;
+  methodTitle?: string;
+}
+
+// ─── PAYMENT ──────────────────────────────────────────────────────────────────
+export interface PaymentInfo {
+  screenshotUrl: string | null;
+  storagePath?: string | null;
+  paymentProofUrl?: string | null;
+  paymentProofStoragePath?: string | null;
+  paymentProofUploadedAt?: any;
+  uploaded: boolean;
+  verified: boolean;
+  verifiedAt: any | null; // Firestore timestamp or number
+  verifiedBy: string | null; // Admin UID or system verification id
+  status?: 'required' | 'uploaded' | 'under_verification' | 'PENDING_VERIFICATION' | 'verified' | 'rejected' | 'REJECTED' | 'paid' | 'PAID';
+  rejectionReason?: string;
+  paymentRejectedAt?: any;
+  paymentRejectedBy?: string | null;
+  paymentType?: 'KOREAN_CARD' | 'BANK_TRANSFER';
+  cardDetails?: KoreanCardPaymentDetails;
+  paidAmount?: number;
+  transactionId?: string;
+}
 export interface Product {
   id: string;
   name: string;
@@ -177,17 +240,6 @@ export interface Address {
 
 export type FirestoreAddress = KoreanAddress;
 
-// ─── PAYMENT INFO ─────────────────────────────────────────────────────────────
-export interface PaymentInfo {
-  screenshotUrl: string | null;
-  uploaded: boolean;
-  verified: boolean;
-  verifiedAt: any | null; // Firestore timestamp or number
-  verifiedBy: string | null; // Admin UID
-  status?: 'required' | 'uploaded' | 'under_verification' | 'verified' | 'rejected';
-  rejectionReason?: string;
-}
-
 // ─── ORDER SNAPSHOTS ──────────────────────────────────────────────────────────
 export interface CustomerSnapshot {
   name: string;
@@ -260,6 +312,15 @@ export interface OrderItem {
   };
   senderName?: string;
   paymentScreenshot?: string;
+  paymentProofUrl?: string;
+  paymentProofStoragePath?: string;
+  paymentProofUploadedAt?: any;
+  paymentVerifiedAt?: any;
+  paymentVerifiedBy?: string | null;
+  paymentRejectedAt?: any;
+  paymentRejectedBy?: string | null;
+  paymentRejectionReason?: string | null;
+  orderStatus?: 'PENDING' | 'CONFIRMED' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED' | string;
   customerName?: string;
   customerEmail?: string;
   customerPhone?: string;

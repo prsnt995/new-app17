@@ -66,7 +66,9 @@ service cloud.firestore {
                        request.auth.uid == resource.data.userId));
       allow create: if isAuthenticated() &&
                        (request.resource.data.customerUid == request.auth.uid ||
-                        request.resource.data.userId == request.auth.uid);
+                        request.resource.data.userId == request.auth.uid) &&
+                       request.resource.data.paymentVerifiedBy == null &&
+                       request.resource.data.paymentVerifiedAt == null;
       allow update: if hasAdminAccess() ||
                        (isAuthenticated() &&
                         (request.auth.uid == resource.data.customerUid ||
@@ -76,7 +78,13 @@ service cloud.firestore {
                            request.resource.data.status == 'cancelled') ||
                           (request.resource.data.payment.verified == false &&
                            request.resource.data.payment.verifiedBy == null &&
-                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['payment', 'paymentScreenshot', 'status', 'updatedAt']))
+                           request.resource.data.paymentVerifiedBy == null &&
+                           request.resource.data.paymentStatus != 'PAID' &&
+                           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                             'payment', 'paymentScreenshot', 'paymentProofUrl',
+                             'paymentProofStoragePath', 'paymentProofUploadedAt',
+                             'paymentStatus', 'status', 'updatedAt'
+                           ]))
                         ));
       allow delete: if hasAdminAccess();
     }
@@ -102,6 +110,21 @@ service cloud.firestore {
     match /banners/{bannerId} {
       allow read: if true;
       allow create, update, delete: if hasAdminAccess();
+    }
+
+    // ── SETTINGS ──────────────────────────────────────────────────────────
+    // Public read for bank transfer & general shop settings; Admin-only write
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if hasAdminAccess();
+    }
+
+    // ── PAYMENT VERIFICATION LOGS (AUDIT TRAIL) ───────────────────────────
+    // Immutable audit logs: Admin-only read and create
+    match /paymentVerificationLogs/{logId} {
+      allow read: if hasAdminAccess();
+      allow create: if hasAdminAccess();
+      allow update, delete: if false;
     }
 
     // ── USERS ────────────────────────────────────────────────────────────

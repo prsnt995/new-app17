@@ -48,6 +48,8 @@ export interface CreateOrderPayload {
   deliveryFee: number;
   totalAmount: number;
   paymentMethod?: string;
+  paymentStatus?: import('@/types').PaymentStatus;
+  paymentDetails?: import('@/types').KoreanCardPaymentDetails;
   bankAccount?: OrderItem['bankAccount'];
   senderName?: string;
   paymentScreenshotUri?: string | null;
@@ -129,16 +131,46 @@ export const createOrderWithStockSafety = async (
     subtotal: it.subtotal,
   }));
 
-  const initialPayment: PaymentInfo = {
-    screenshotUrl: null,
-    uploaded: false,
-    verified: false,
-    verifiedAt: null,
-    verifiedBy: null,
-    status: 'required',
-  };
+  const isCardPayment = !!payload.paymentDetails;
 
-  const initialStatus: OrderStatus = payload.paymentScreenshotUri ? 'payment_uploaded' : 'pending';
+  const initialPayment: PaymentInfo = isCardPayment
+    ? {
+        screenshotUrl: null,
+        uploaded: true,
+        verified: true,
+        verifiedAt: Date.now(),
+        verifiedBy: 'korean_card_pg',
+        status: 'paid',
+        paymentType: 'KOREAN_CARD',
+        cardDetails: payload.paymentDetails,
+        paidAmount: payload.totalAmount,
+        transactionId: payload.paymentDetails?.transactionId,
+      }
+    : {
+        screenshotUrl: payload.paymentScreenshotUri || null,
+        paymentProofUrl: payload.paymentScreenshotUri || null,
+        paymentProofUploadedAt: payload.paymentScreenshotUri ? Date.now() : null,
+        uploaded: !!payload.paymentScreenshotUri,
+        verified: false,
+        verifiedAt: null,
+        verifiedBy: null,
+        status: payload.paymentScreenshotUri ? 'PENDING_VERIFICATION' : 'required',
+        paymentType: 'BANK_TRANSFER',
+      };
+
+  const initialPaymentStatus = isCardPayment
+    ? 'PAID'
+    : payload.paymentScreenshotUri
+    ? 'PENDING_VERIFICATION'
+    : 'payment_pending';
+
+  const initialStatus: OrderStatus = isCardPayment
+    ? 'Payment Confirmed'
+    : payload.paymentScreenshotUri
+    ? 'Payment Submitted'
+    : 'Payment Pending';
+
+  const initialOrderStatus = isCardPayment ? 'CONFIRMED' : 'PENDING';
 
   const orderDocData: any = {
     orderId: orderNumber,
@@ -169,8 +201,18 @@ export const createOrderWithStockSafety = async (
     totalKRW: payload.totalAmount,
     totalWeightKg: payload.items.reduce((sum, it) => sum + (it.weightKg || 1) * it.quantity, 0),
     status: initialStatus,
+    orderStatus: initialOrderStatus,
+    paymentStatus: initialPaymentStatus,
     payment: initialPayment,
-    paymentMethod: payload.paymentMethod || 'Bank Transfer',
+    paymentMethod: payload.paymentMethod || 'BANK_TRANSFER',
+    paymentScreenshot: payload.paymentScreenshotUri || null,
+    paymentProofUrl: payload.paymentScreenshotUri || null,
+    paymentProofUploadedAt: payload.paymentScreenshotUri ? Date.now() : null,
+    paymentVerifiedAt: null,
+    paymentVerifiedBy: null,
+    paymentRejectedAt: null,
+    paymentRejectedBy: null,
+    paymentRejectionReason: null,
     bankAccount: payload.bankAccount,
     senderName: payload.senderName || payload.customer.name,
     originHub: payload.originHub || 'Seoul Hub',

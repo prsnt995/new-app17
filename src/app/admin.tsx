@@ -33,10 +33,27 @@ import {
   updateParcelStatusByAdmin,
 } from '@/services/orderService';
 import { subscribeAllUsersAdmin } from '@/services/userService';
-import { verifyOrderPayment, rejectOrderPayment } from '@/services/paymentService';
+import {
+  verifyOrderPayment,
+  rejectOrderPayment,
+  getPaymentVerificationLogs,
+} from '@/services/paymentService';
+import {
+  getBankTransferSettings,
+  updateBankTransferSettings,
+  subscribeBankTransferSettings,
+  DEFAULT_BANK_SETTINGS,
+} from '@/services/bankSettingsService';
 import { uploadProductImage } from '@/services/storage';
 import { BankAccountInfo, KOREA_BANK_ACCOUNTS } from '@/data/mockData';
-import { FirestoreUser, OrderItem, OrderStatus, Product } from '@/types';
+import {
+  FirestoreUser,
+  OrderItem,
+  OrderStatus,
+  Product,
+  BankTransferSettings,
+  PaymentVerificationLog,
+} from '@/types';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -56,6 +73,7 @@ const PRODUCT_CATEGORIES = [
 
 // ─── ORDER STATUSES PER SPEC ──────────────────────────────────────────────
 const ORDER_STATUS_LIST = [
+  'PAID (결제완료)',
   'Payment Pending',
   'Payment Submitted',
   'Payment Confirmed',
@@ -82,6 +100,7 @@ const PARCEL_STATUS_LIST = [
 // ─── TABS ─────────────────────────────────────────────────────────────────
 type AdminTab =
   | 'DASHBOARD'
+  | 'PAYMENT_VERIFICATION'
   | 'PRODUCTS'
   | 'ADD_PRODUCT'
   | 'ORDERS'
@@ -139,6 +158,17 @@ export default function AdminScreen() {
   // ── CONFIGURABLE SETTINGS ───────────────────────────────────────────────
   const [lowStockThreshold, setLowStockThreshold] = useState<number>(5);
   const [storeCurrency] = useState<string>('KRW (₩)');
+  const [bankSettings, setBankSettings] = useState<BankTransferSettings>(DEFAULT_BANK_SETTINGS);
+  const [isSavingBankSettings, setIsSavingBankSettings] = useState(false);
+
+  // ── PAYMENT VERIFICATION & AUDIT TRAIL STATES ───────────────────────────
+  const [verificationLogs, setVerificationLogs] = useState<PaymentVerificationLog[]>([]);
+  const [paymentVerificationSearch, setPaymentVerificationSearch] = useState('');
+  const [paymentVerificationSubTab, setPaymentVerificationSubTab] = useState<'PENDING' | 'AUDIT_LOGS'>('PENDING');
+  const [rejectModalOrder, setRejectModalOrder] = useState<OrderItem | null>(null);
+  const [rejectReasonText, setRejectReasonText] = useState('입금자명 또는 입금액 불일치 (Sender name or amount mismatch)');
+  const [screenshotModalUrl, setScreenshotModalUrl] = useState<string | null>(null);
+  const [isProcessingAction, setIsProcessingAction] = useState(false);
 
   // ── SEARCH & FILTER STATES ──────────────────────────────────────────────
   const [productSearch, setProductSearch] = useState('');
@@ -634,39 +664,170 @@ export default function AdminScreen() {
     }
   };
 
-  const handleVerifyPayment = async (orderId: string) => {
+  const loadVerificationLogs = useCallback(async () => {
     try {
-      await verifyOrderPayment(orderId, user?.id || 'admin');
-      Alert.alert('Payment Verified ✅', 'Payment marked as verified and approved.');
-      if (selectedOrder) {
-        setSelectedOrder({
-          ...selectedOrder,
-          status: 'Payment Confirmed' as any,
-          payment: { ...selectedOrder.payment, verified: true, status: 'verified' } as any,
-        });
+      const logs = await getPaymentVerificationLogs(50);
+      setVerificationLogs(logs);
+    } catch (e) {
+      console.warn('Error loading logs:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadVerificationLogs();
+    }
+  }, [isAuthenticated, loadVerificationLogs]);
+
+  const handleVerifyPayment = async (orderId: string, amount?: number, custName?: string, oNum?: string) => {
+    try {
+      setIsProcessingAction(true);
+      const targetOrder = allOrders.find((o) => o.id === orderId);
+      const finalAmount = amount || targetOrder?.totalAmount || targetOrder?.totalKRW || 0;
+      const finalCustName = custName || targetOrder?.customerName || targetOrder?.customer?.name || 'Customer';
+      const finalOrderNumber = oNum || targetOrder?.orderNumber || orderId;
+
+      await verifyOrderPayment(
+        orderId,
+        user?.id || 'admin',
+        user?.email || 'admin@namastemart.com',
+        finalAmount,
+        finalCustName,
+        finalOrderNumber
+      );
+
+      // Optimistically update local orders
+      setAllOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                paymentStatus: 'PAID' as any,
+                status: 'Payment Confirmed' as any,
+                orderStatus: 'CONFIRMED' as any,
+                payment: {
+                  ...o.payment,
+                  verified: true,
+                  status: 'paid' as any,
+                  verifiedAt: Date.now(),
+                  verifiedBy: user?.id || 'admin',
+                } as any,
+              }
+            : o
+        )
+      );
+
+      if (selectedOrder && selectedOrder.id === orderId) {
+        setSelectedOrder((prev) =>
+          prev
+            ? {
+                ...prev,
+                paymentStatus: 'PAID' as any,
+                status: 'Payment Confirmed' as any,
+                orderStatus: 'CONFIRMED' as any,
+                payment: {
+                  ...prev.payment,
+                  verified: true,
+                  status: 'paid' as any,
+                  verifiedAt: Date.now(),
+                  verifiedBy: user?.id || 'admin',
+                } as any,
+              }
+            : null
+        );
       }
+
+      loadVerificationLogs();
+      setIsProcessingAction(false);
+      Alert.alert('Payment Verified ✅', `Order ${finalOrderNumber} marked as PAID. Status updated to Confirmed.`);
     } catch (err: any) {
-      Alert.alert('Verification Error', err.message);
+      setIsProcessingAction(false);
+      Alert.alert('Verification Error', err.message || 'Failed to verify payment.');
     }
   };
 
-  const handleRejectPayment = async (orderId: string) => {
-    Alert.prompt
-      ? Alert.prompt('Reject Payment Proof', 'Enter reason for rejecting screenshot (e.g. illegible / incorrect amount):', [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Reject',
-            style: 'destructive',
-            onPress: async (reason?: string) => {
-              await rejectOrderPayment(orderId, user?.id || 'admin', reason || 'Screenshot illegible');
-              Alert.alert('Rejected ❌', 'Payment marked as rejected. Customer can re-upload.');
-            },
-          },
-        ])
-      : (() => {
-          rejectOrderPayment(orderId, user?.id || 'admin', 'Receipt illegible');
-          Alert.alert('Rejected ❌', 'Payment rejected. Customer will re-upload.');
-        })();
+  const handleOpenRejectModal = (order: OrderItem) => {
+    setRejectModalOrder(order);
+    setRejectReasonText('입금자명 또는 입금액 불일치 (Sender name or amount mismatch)');
+  };
+
+  const handleConfirmRejection = async () => {
+    if (!rejectModalOrder) return;
+    const orderId = rejectModalOrder.id;
+    const reason = rejectReasonText.trim() || '입금 확인증 식별 불가 (Screenshot illegible / Invalid proof)';
+
+    try {
+      setIsProcessingAction(true);
+      await rejectOrderPayment(
+        orderId,
+        user?.id || 'admin',
+        reason,
+        user?.email || 'admin@namastemart.com',
+        rejectModalOrder.totalAmount || rejectModalOrder.totalKRW || 0,
+        rejectModalOrder.customerName || rejectModalOrder.customer?.name || 'Customer',
+        rejectModalOrder.orderNumber || orderId
+      );
+
+      // Optimistically update local orders
+      setAllOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                paymentStatus: 'REJECTED' as any,
+                paymentRejectionReason: reason,
+                status: 'Payment Pending' as any,
+                orderStatus: 'PENDING' as any,
+                payment: {
+                  ...o.payment,
+                  verified: false,
+                  status: 'REJECTED' as any,
+                  rejectionReason: reason,
+                } as any,
+              }
+            : o
+        )
+      );
+
+      if (selectedOrder && selectedOrder.id === orderId) {
+        setSelectedOrder((prev) =>
+          prev
+            ? {
+                ...prev,
+                paymentStatus: 'REJECTED' as any,
+                paymentRejectionReason: reason,
+                payment: {
+                  ...prev.payment,
+                  verified: false,
+                  status: 'REJECTED' as any,
+                  rejectionReason: reason,
+                } as any,
+              }
+            : null
+        );
+      }
+
+      setRejectModalOrder(null);
+      loadVerificationLogs();
+      setIsProcessingAction(false);
+      Alert.alert('Payment Rejected ❌', `Order marked as REJECTED. Customer has been notified to upload new proof.`);
+    } catch (err: any) {
+      setIsProcessingAction(false);
+      Alert.alert('Rejection Error', err.message || 'Failed to reject payment.');
+    }
+  };
+
+  const handleSaveBankSettings = async (newSettings: BankTransferSettings) => {
+    try {
+      setIsSavingBankSettings(true);
+      await updateBankTransferSettings(newSettings, user?.id || 'admin');
+      setBankSettings(newSettings);
+      setIsSavingBankSettings(false);
+      Alert.alert('Settings Saved 🏦', 'Bank transfer receiving account details have been updated.');
+    } catch (err: any) {
+      setIsSavingBankSettings(false);
+      Alert.alert('Save Error', err.message || 'Failed to update bank transfer settings.');
+    }
   };
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -708,8 +869,17 @@ export default function AdminScreen() {
         cPhone.includes(q) ||
         oid.includes(q);
 
+      const isPaidOrder =
+        order.status?.toLowerCase() === 'paid' ||
+        order.status?.toLowerCase() === 'payment confirmed' ||
+        order.paymentStatus === 'paid' ||
+        order.payment?.status === 'paid' ||
+        order.payment?.verified === true;
+
       const matchesStatus =
         orderStatusFilter === 'ALL' ||
+        (orderStatusFilter === 'PAID (결제완료)' && isPaidOrder) ||
+        (orderStatusFilter === 'Payment Confirmed' && isPaidOrder) ||
         order.status?.toLowerCase() === orderStatusFilter.toLowerCase();
 
       return matchesSearch && matchesStatus;
@@ -793,12 +963,47 @@ export default function AdminScreen() {
     });
   }, [allCustomers, allOrders, customerSearch]);
 
+  // Pending Bank Payment Verification Orders Dataset
+  const pendingPaymentOrders = useMemo(() => {
+    return allOrders.filter((order) => {
+      const isBankTransfer =
+        order.paymentMethod === 'BANK_TRANSFER' ||
+        order.paymentMethod?.includes('Bank') ||
+        order.paymentMethod?.includes('계좌이체') ||
+        order.payment?.paymentType === 'BANK_TRANSFER';
+
+      const isPendingVerification =
+        order.paymentStatus === 'PENDING_VERIFICATION' ||
+        order.payment?.status === 'PENDING_VERIFICATION' ||
+        order.payment?.status === 'uploaded' ||
+        order.status === 'Payment Submitted' ||
+        order.status === 'payment_uploaded' ||
+        (!order.payment?.verified && order.paymentStatus !== 'PAID' && order.paymentStatus !== 'REJECTED' && order.status !== 'Cancelled');
+
+      if (!isBankTransfer || !isPendingVerification) return false;
+
+      if (!paymentVerificationSearch) return true;
+      const q = paymentVerificationSearch.toLowerCase();
+      const oNum = (order.orderNumber || order.orderId || order.id || '').toLowerCase();
+      const cName = (order.customerName || order.customer?.name || order.recipient?.name || '').toLowerCase();
+      const sName = (order.senderName || '').toLowerCase();
+      const phone = (order.customerPhone || order.customer?.phoneNumber || order.deliveryAddress?.phoneNumber || '').toLowerCase();
+      return oNum.includes(q) || cName.includes(q) || sName.includes(q) || phone.includes(q);
+    });
+  }, [allOrders, paymentVerificationSearch]);
+
   // ═══════════════════════════════════════════════════════════════════════
   // SIDEBAR NAVIGATION ITEMS DEFINITION
   // ═══════════════════════════════════════════════════════════════════════
 
   const SIDEBAR_ITEMS: SidebarItem[] = [
     { id: 'DASHBOARD', label: 'Dashboard', icon: '📊' },
+    {
+      id: 'PAYMENT_VERIFICATION',
+      label: 'Payment Verification (입금 확인)',
+      icon: '💳',
+      badge: pendingPaymentOrders.length > 0 ? pendingPaymentOrders.length : undefined,
+    },
     { id: 'PRODUCTS', label: 'Products / Items', icon: '📦' },
     { id: 'ADD_PRODUCT', label: 'Add New Product', icon: '➕' },
     { id: 'ORDERS', label: 'Orders', icon: '🛍️', badge: allOrders.length },
@@ -961,6 +1166,24 @@ export default function AdminScreen() {
               />
             )}
 
+            {activeTab === 'PAYMENT_VERIFICATION' && (
+              <PaymentVerificationSection
+                S={S}
+                orders={pendingPaymentOrders}
+                logs={verificationLogs}
+                subTab={paymentVerificationSubTab}
+                setSubTab={setPaymentVerificationSubTab}
+                search={paymentVerificationSearch}
+                setSearch={setPaymentVerificationSearch}
+                onVerifyPayment={handleVerifyPayment}
+                onOpenRejectModal={handleOpenRejectModal}
+                onSelectOrder={setSelectedOrder}
+                onPreviewScreenshot={setScreenshotModalUrl}
+                isProcessing={isProcessingAction}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
             {activeTab === 'PRODUCTS' && (
               <ProductsManagementSection
                 S={S}
@@ -1099,6 +1322,9 @@ export default function AdminScreen() {
                 storeCurrency={storeCurrency}
                 isDarkMode={isDarkMode}
                 adminEmail={user?.email || 'admin@namastemart.com'}
+                bankSettings={bankSettings}
+                onSaveBankSettings={handleSaveBankSettings}
+                isSavingBankSettings={isSavingBankSettings}
               />
             )}
 
@@ -1186,9 +1412,35 @@ export default function AdminScreen() {
 
                 {/* Payment Screenshot & Verification */}
                 <View style={S.modalSection}>
-                  <Text style={S.modalSectionTitle}>💳 Payment Details</Text>
-                  <Text style={S.modalText}>Method: {selectedOrder.paymentMethod || 'Direct Bank Transfer'}</Text>
-                  <Text style={S.modalText}>Status: {selectedOrder.status}</Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <Text style={S.modalSectionTitle}>💳 Payment Details</Text>
+                    {selectedOrder.payment?.verified || selectedOrder.status === 'Payment Confirmed' || selectedOrder.paymentStatus === 'paid' ? (
+                      <View style={{ backgroundColor: '#10B981', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                        <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '800' }}>PAID (결제완료) ✅</Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  <Text style={S.modalText}>Method: {selectedOrder.paymentMethod || 'Credit/Debit Card'}</Text>
+                  <Text style={S.modalText}>Order Status: {selectedOrder.status}</Text>
+
+                  {/* Structured Korean Card Payment Receipt */}
+                  {selectedOrder.payment?.cardDetails ? (
+                    <View style={{ backgroundColor: isDarkMode ? '#142850' : '#E8F2FF', padding: 12, borderRadius: 10, marginTop: 8, borderWidth: 1, borderColor: '#0064FF' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#0064FF', marginBottom: 4 }}>
+                        💳 전자 결제 영수증 (Korean Card PG Receipt)
+                      </Text>
+                      <Text style={S.modalText}>카드사: {selectedOrder.payment.cardDetails.cardCompany}</Text>
+                      <Text style={S.modalText}>카드번호: {selectedOrder.payment.cardDetails.cardNumberMasked}</Text>
+                      <Text style={S.modalText}>할부: {selectedOrder.payment.cardDetails.installment}</Text>
+                      <Text style={S.modalText}>승인번호: {selectedOrder.payment.cardDetails.approvalNumber}</Text>
+                      <Text style={S.modalText}>거래 ID: {selectedOrder.payment.cardDetails.transactionId}</Text>
+                      <Text style={[S.modalText, { fontWeight: '800', color: '#0064FF', marginTop: 4 }]}>
+                        결제금액: ₩{(selectedOrder.payment.cardDetails.paidAmount || selectedOrder.totalAmount || 0).toLocaleString()} (승인완료)
+                      </Text>
+                    </View>
+                  ) : null}
+
                   {selectedOrder.payment?.screenshotUrl || selectedOrder.paymentScreenshot ? (
                     <View style={{ marginTop: 8 }}>
                       <Text style={S.modalText}>Receipt Screenshot (Tap to expand):</Text>
@@ -1207,11 +1459,11 @@ export default function AdminScreen() {
                         />
                       </TouchableOpacity>
                     </View>
-                  ) : (
+                  ) : !selectedOrder.payment?.cardDetails ? (
                     <Text style={[S.modalText, { color: '#EF4444', marginTop: 4 }]}>
                       ⚠️ No payment screenshot uploaded yet.
                     </Text>
-                  )}
+                  ) : null}
                 </View>
               </ScrollView>
 
@@ -1241,18 +1493,120 @@ export default function AdminScreen() {
         </Modal>
       )}
 
+      {/* ── REJECT REASON MODAL ────────────────────────────────────────── */}
+      {rejectModalOrder && (
+        <Modal visible transparent animationType="fade">
+          <View style={S.modalOverlay}>
+            <View style={[S.orderModalContent, { maxWidth: 500 }]}>
+              <View style={S.modalHeader}>
+                <View>
+                  <Text style={[S.modalTitle, { color: '#EF4444' }]}>
+                    ❌ Reject Payment Proof (입금 반려)
+                  </Text>
+                  <Text style={S.modalSubtitle}>
+                    Order #{rejectModalOrder.orderNumber || rejectModalOrder.id.slice(-6)} · {rejectModalOrder.customerName || rejectModalOrder.customer?.name || 'Customer'}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => setRejectModalOrder(null)}>
+                  <Text style={{ fontSize: 20, color: '#999' }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#CCC' : '#374151', marginTop: 12, marginBottom: 6 }}>
+                Select Rejection Reason (반려 사유 선택):
+              </Text>
+
+              {/* Quick preset chips */}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                {[
+                  '입금자명 불일치 (Sender name mismatch)',
+                  '입금액 부족/불일치 (Incorrect amount)',
+                  '영수증 식별 불가 (Screenshot illegible)',
+                  '은행 입금 내역 미확인 (No deposit found in bank)',
+                  '중복 영수증 제출 (Duplicate proof submitted)',
+                ].map((reasonChip) => (
+                  <TouchableOpacity
+                    key={reasonChip}
+                    style={{
+                      backgroundColor: rejectReasonText === reasonChip ? '#EF4444' : (isDarkMode ? '#333' : '#F3F4F6'),
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: rejectReasonText === reasonChip ? '#EF4444' : (isDarkMode ? '#444' : '#E5E7EB'),
+                    }}
+                    onPress={() => setRejectReasonText(reasonChip)}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        fontWeight: '700',
+                        color: rejectReasonText === reasonChip ? '#FFFFFF' : (isDarkMode ? '#DDD' : '#374151'),
+                      }}
+                    >
+                      {reasonChip}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#CCC' : '#374151', marginBottom: 4 }}>
+                Detailed Reason / Note to Customer:
+              </Text>
+              <TextInput
+                style={[S.formInput, { height: 60, textAlignVertical: 'top' }]}
+                value={rejectReasonText}
+                onChangeText={setRejectReasonText}
+                multiline
+                placeholder="Enter specific explanation for customer..."
+              />
+
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+                <TouchableOpacity
+                  style={[S.secondaryBtn, { flex: 1 }]}
+                  onPress={() => setRejectModalOrder(null)}
+                >
+                  <Text style={S.secondaryBtnText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#EF4444',
+                    paddingVertical: 12,
+                    borderRadius: 10,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: isProcessingAction ? 0.6 : 1,
+                  }}
+                  disabled={isProcessingAction}
+                  onPress={handleConfirmRejection}
+                >
+                  <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '900' }}>
+                    {isProcessingAction ? 'Processing...' : 'Confirm Rejection (반려 확정)'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
       {/* ── FULL SCREENSHOT ZOOM MODAL ─────────────────────────────────── */}
-      {screenshotPreview && (
+      {(screenshotPreview || screenshotModalUrl) && (
         <Modal visible transparent animationType="fade">
           <View style={S.zoomModalOverlay}>
             <TouchableOpacity
               style={S.zoomCloseBtn}
-              onPress={() => setScreenshotPreview(null)}
+              onPress={() => {
+                setScreenshotPreview(null);
+                setScreenshotModalUrl(null);
+              }}
             >
               <Text style={{ fontSize: 24, color: '#FFFFFF' }}>✕</Text>
             </TouchableOpacity>
             <Image
-              source={{ uri: screenshotPreview }}
+              source={{ uri: screenshotPreview || screenshotModalUrl || '' }}
               style={S.zoomImage}
               resizeMode="contain"
             />
@@ -1274,7 +1628,7 @@ function DashboardOverviewSection({ S, stats, isDarkMode, setActiveTab }: any) {
   return (
     <View style={S.panelContainer}>
       {/* 1. Today's Sales Cards */}
-      <Text style={S.panelHeading}>📅 Today's Sales</Text>
+      <Text style={S.panelHeading}>📅 Today Sales</Text>
       <View style={S.statsGrid}>
         <MetricCard S={S} emoji="🛒" label="Orders Received Today" value={stats.todayOrdersCount.toString()} color="#3B82F6" />
         <MetricCard S={S} emoji="💰" label="Total Sales Today" value={`₩${stats.todaySalesAmount.toLocaleString()}`} color="#10B981" />
@@ -1290,7 +1644,7 @@ function DashboardOverviewSection({ S, stats, isDarkMode, setActiveTab }: any) {
       </View>
 
       {/* 3. This Month's Sales */}
-      <Text style={[S.panelHeading, { marginTop: 18 }]}>📊 This Month's Performance</Text>
+      <Text style={[S.panelHeading, { marginTop: 18 }]}>📊 This Month Performance</Text>
       <View style={S.statsGrid}>
         <MetricCard S={S} emoji="📈" label="Total Orders (Month)" value={stats.monthOrdersCount.toString()} color="#6366F1" />
         <MetricCard S={S} emoji="💵" label="Total Revenue (Month)" value={`₩${stats.monthSalesAmount.toLocaleString()}`} color="#10B981" />
@@ -1648,9 +2002,17 @@ function OrdersManagementSection({
                   {order.createdAt ? new Date(order.createdAt).toLocaleString() : 'Recent'}
                 </Text>
               </View>
-              <View style={S.statusBadgePill}>
-                <Text style={S.statusBadgePillText}>{order.status}</Text>
-              </View>
+              {order.payment?.verified || order.status === 'Payment Confirmed' || order.status === 'PAID' || order.paymentStatus === 'paid' ? (
+                <View style={[S.statusBadgePill, { backgroundColor: '#10B981' }]}>
+                  <Text style={[S.statusBadgePillText, { color: '#FFFFFF', fontWeight: '900' }]}>
+                    💳 PAID (결제완료)
+                  </Text>
+                </View>
+              ) : (
+                <View style={S.statusBadgePill}>
+                  <Text style={S.statusBadgePillText}>{order.status}</Text>
+                </View>
+              )}
             </View>
 
             {/* Customer & Address Summary */}
@@ -1665,6 +2027,23 @@ function OrdersManagementSection({
                 📍 {order.deliveryAddress?.address || order.recipient?.address || 'South Korea'}
               </Text>
             </View>
+
+            {/* Korean Card Payment Badge if present */}
+            {order.payment?.cardDetails ? (
+              <View style={{ backgroundColor: isDarkMode ? '#142850' : '#E8F2FF', padding: 8, borderRadius: 8, marginTop: 6, borderWidth: 1, borderColor: '#0064FF' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: '#0064FF' }}>
+                    💳 {order.payment.cardDetails.cardCompany} 결제완료 (PAID)
+                  </Text>
+                  <Text style={{ fontSize: 10, fontWeight: '800', color: '#10B981' }}>
+                    {order.payment.cardDetails.installment}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 10, color: isDarkMode ? '#93C5FD' : '#4B6B94', marginTop: 2 }}>
+                  승인: {order.payment.cardDetails.approvalNumber} · 카드: {order.payment.cardDetails.cardNumberMasked} · TX: {order.payment.cardDetails.transactionId}
+                </Text>
+              </View>
+            ) : null}
 
             {/* Order Items Summary */}
             <Text style={S.orderItemCount}>
@@ -2114,14 +2493,464 @@ function DiscountsManagementSection({ S, products, filter, setFilter, onApplyDis
 }
 
 /**
- * 11. SETTINGS SECTION
+ * 2. PAYMENT VERIFICATION SECTION (DEDICATED QUEUE & AUDIT TRAIL)
  */
-function SettingsSection({ S, lowStockThreshold, setLowStockThreshold, storeCurrency, isDarkMode, adminEmail }: any) {
+function PaymentVerificationSection({
+  S,
+  orders,
+  logs,
+  subTab,
+  setSubTab,
+  search,
+  setSearch,
+  onVerifyPayment,
+  onOpenRejectModal,
+  onSelectOrder,
+  onPreviewScreenshot,
+  isProcessing,
+  isDarkMode,
+}: any) {
+  return (
+    <View style={S.panelContainer}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <View style={{ flex: 1 }}>
+          <Text style={S.panelHeading}>Payment Verification ({orders.length})</Text>
+          <Text style={S.panelSub}>
+            Inspect customer bank transfer screenshot proofs & verify receipt into bank account
+          </Text>
+        </View>
+        <View style={[S.statusBadgePill, { backgroundColor: '#F59E0B' }]}>
+          <Text style={[S.statusBadgePillText, { color: '#FFFFFF', fontWeight: '900' }]}>
+            {orders.length} PENDING
+          </Text>
+        </View>
+      </View>
+
+      {/* Sub-tab Switcher: Pending Queue vs Audit Logs */}
+      <View style={[S.categoryChipsRow, { marginTop: 12, marginBottom: 8 }]}>
+        <TouchableOpacity
+          style={[S.filterChip, subTab === 'PENDING' && S.filterChipActive]}
+          onPress={() => setSubTab('PENDING')}
+        >
+          <Text style={[S.filterChipText, subTab === 'PENDING' && S.filterChipTextActive]}>
+            ⏳ Pending Verification ({orders.length})
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[S.filterChip, subTab === 'AUDIT_LOGS' && S.filterChipActive]}
+          onPress={() => setSubTab('AUDIT_LOGS')}
+        >
+          <Text style={[S.filterChipText, subTab === 'AUDIT_LOGS' && S.filterChipTextActive]}>
+            📋 Verification Audit Trail ({logs.length})
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {subTab === 'PENDING' ? (
+        <>
+          {/* Search Box */}
+          <View style={S.searchBox}>
+            <Text style={S.searchIcon}>🔍</Text>
+            <TextInput
+              style={S.searchInput}
+              placeholder="Search by order ID, sender name, customer, or phone..."
+              placeholderTextColor={isDarkMode ? '#666' : '#999'}
+              value={search}
+              onChangeText={setSearch}
+            />
+          </View>
+
+          {/* Pending Queue Orders */}
+          {orders.length === 0 ? (
+            <View style={S.emptyStateBox}>
+              <Text style={{ fontSize: 44 }}>🎉</Text>
+              <Text style={S.emptyTitle}>All Bank Payments Verified</Text>
+              <Text style={S.emptySub}>
+                There are no bank transfer orders awaiting verification right now.
+              </Text>
+            </View>
+          ) : (
+            orders.map((order: OrderItem) => {
+              const screenshotUri =
+                order.paymentProofUrl ||
+                order.payment?.screenshotUrl ||
+                order.paymentScreenshot;
+              const sender = order.senderName || order.customerName || order.customer?.name || order.recipient?.name || 'Customer';
+              const totalKRW = order.totalAmount || order.totalKRW || 0;
+
+              return (
+                <View key={order.id} style={[S.orderCard, { borderLeftWidth: 4, borderLeftColor: '#F59E0B' }]}>
+                  {/* Header */}
+                  <View style={S.orderTopHeader}>
+                    <View>
+                      <Text style={S.orderIdText}>Order #{order.orderNumber || order.id.slice(-8)}</Text>
+                      <Text style={S.orderDateText}>
+                        Placed: {order.createdAt ? new Date(order.createdAt).toLocaleString() : 'Recent'}
+                      </Text>
+                    </View>
+                    <View style={[S.statusBadgePill, { backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#F59E0B' }]}>
+                      <Text style={{ fontSize: 11, fontWeight: '900', color: '#92400E' }}>
+                        🟡 Pending Verification (입금 확인 중)
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Customer and Depositor Info */}
+                  <View style={S.orderCustomerBox}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={S.orderCustomerName}>
+                        👤 Customer: {order.customer?.name || order.recipient?.name || sender}
+                      </Text>
+                      <Text style={{ fontSize: 13, fontWeight: '900', color: '#2563EB' }}>
+                        입금자명 (Sender): {order.senderName || sender}
+                      </Text>
+                    </View>
+                    <Text style={S.orderCustomerSub}>
+                      📞 {order.customer?.phoneNumber || order.customer?.phone || order.recipient?.phone || 'N/A'} · 📧 {order.customer?.email || 'N/A'}
+                    </Text>
+                    <Text style={S.orderAddressText}>
+                      📍 {order.deliveryAddress?.address || order.recipient?.address || 'South Korea'} {order.deliveryAddress?.detailAddress ? `(${order.deliveryAddress.detailAddress})` : ''}
+                    </Text>
+                  </View>
+
+                  {/* Bank Details & Expected Amount */}
+                  <View style={{ backgroundColor: isDarkMode ? '#222' : '#F3F4F6', padding: 10, borderRadius: 8, marginTop: 6 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#CCC' : '#4B5563' }}>
+                        Expected Transfer Amount:
+                      </Text>
+                      <Text style={{ fontSize: 16, fontWeight: '900', color: '#10B981' }}>
+                        ₩{totalKRW.toLocaleString()}
+                      </Text>
+                    </View>
+                    {order.bankAccount && (
+                      <Text style={{ fontSize: 11, color: isDarkMode ? '#AAA' : '#6B7280', marginTop: 3 }}>
+                        Target Account: {order.bankAccount.bankName} · {order.bankAccount.accountNumber} ({order.bankAccount.accountHolder})
+                      </Text>
+                    )}
+                  </View>
+
+                  {/* Items summary */}
+                  <Text style={[S.orderItemCount, { marginTop: 8 }]}>
+                    🛍️ {(order.items || []).length} items: {(order.items || []).map((it: any) => `${it.name || it.product?.name || 'Item'} (x${it.quantity || 1})`).join(', ')}
+                  </Text>
+
+                  {/* Payment Proof Screenshot Box */}
+                  <View style={{ marginTop: 10, backgroundColor: isDarkMode ? '#1E1E1E' : '#F9FAFB', padding: 10, borderRadius: 10, borderWidth: 1, borderColor: isDarkMode ? '#333' : '#E5E7EB' }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: isDarkMode ? '#E5E7EB' : '#374151', marginBottom: 6 }}>
+                      📸 Customer Payment Screenshot / Transfer Proof:
+                    </Text>
+                    {screenshotUri ? (
+                      <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+                        <TouchableOpacity onPress={() => onPreviewScreenshot(screenshotUri)}>
+                          <Image source={{ uri: screenshotUri }} style={{ width: 100, height: 100, borderRadius: 8, backgroundColor: '#000' }} />
+                        </TouchableOpacity>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#10B981' }}>
+                            ✓ Proof attached
+                          </Text>
+                          {order.paymentProofUploadedAt && (
+                            <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
+                              Uploaded: {new Date(order.paymentProofUploadedAt).toLocaleString()}
+                            </Text>
+                          )}
+                          <TouchableOpacity
+                            style={{ backgroundColor: '#2563EB', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, alignSelf: 'flex-start', marginTop: 8 }}
+                            onPress={() => onPreviewScreenshot(screenshotUri)}
+                          >
+                            <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '800' }}>🔍 Zoom / Expand (확대보기)</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ) : (
+                      <View style={{ padding: 12, alignItems: 'center', backgroundColor: isDarkMode ? '#2D1F1F' : '#FEF2F2', borderRadius: 8 }}>
+                        <Text style={{ color: '#DC2626', fontSize: 12, fontWeight: '700' }}>
+                          ⚠️ No screenshot attached with this order
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* ACTION BUTTONS: VERIFY OR REJECT */}
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        backgroundColor: '#059669',
+                        paddingVertical: 12,
+                        borderRadius: 10,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        opacity: isProcessing ? 0.6 : 1,
+                      }}
+                      disabled={isProcessing}
+                      onPress={() => {
+                        Alert.alert(
+                          'Confirm Bank Transfer Verification',
+                          `Verify that ₩${totalKRW.toLocaleString()} was received from "${sender}" into your bank account?\n\nThis will mark the order as PAID and confirm the order.`,
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                              text: '✅ Confirm & Mark PAID',
+                              onPress: () => onVerifyPayment(order.id, totalKRW, sender, order.orderNumber),
+                            },
+                          ]
+                        );
+                      }}
+                    >
+                      <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '900' }}>
+                        ✅ Verify Payment (입금 확인 완료)
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: isDarkMode ? '#3E1F1F' : '#FEE2E2',
+                        borderWidth: 1,
+                        borderColor: '#DC2626',
+                        paddingHorizontal: 16,
+                        paddingVertical: 12,
+                        borderRadius: 10,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        opacity: isProcessing ? 0.6 : 1,
+                      }}
+                      disabled={isProcessing}
+                      onPress={() => onOpenRejectModal(order)}
+                    >
+                      <Text style={{ color: '#DC2626', fontSize: 13, fontWeight: '900' }}>
+                        ❌ Reject (입금 반려)
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </>
+      ) : (
+        /* AUDIT TRAIL LOGS VIEW */
+        <View style={{ marginTop: 8 }}>
+          <Text style={{ fontSize: 13, fontWeight: '800', color: isDarkMode ? '#FFF' : '#111', marginBottom: 8 }}>
+            Payment Verification History & Audit Trail ({logs.length} entries)
+          </Text>
+          {logs.length === 0 ? (
+            <View style={S.emptyStateBox}>
+              <Text style={{ fontSize: 36 }}>📜</Text>
+              <Text style={S.emptyTitle}>No Verification Logs Yet</Text>
+              <Text style={S.emptySub}>All approve and reject actions by administrators are logged here.</Text>
+            </View>
+          ) : (
+            logs.map((log: PaymentVerificationLog) => (
+              <View
+                key={log.id}
+                style={{
+                  backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+                  borderRadius: 10,
+                  padding: 12,
+                  marginBottom: 8,
+                  borderWidth: 1,
+                  borderColor: isDarkMode ? '#333' : '#E5E7EB',
+                  borderLeftWidth: 4,
+                  borderLeftColor: log.action === 'VERIFIED' ? '#10B981' : '#EF4444',
+                }}
+              >
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 13, fontWeight: '900', color: log.action === 'VERIFIED' ? '#10B981' : '#EF4444' }}>
+                    {log.action === 'VERIFIED' ? '✅ PAYMENT VERIFIED (승인)' : '❌ PAYMENT REJECTED (반려)'}
+                  </Text>
+                  <Text style={{ fontSize: 10, color: '#9CA3AF' }}>
+                    {log.timestamp ? new Date(log.timestamp).toLocaleString() : 'Recent'}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: isDarkMode ? '#EEE' : '#1F2937', marginTop: 4 }}>
+                  Order: #{log.orderNumber || log.orderId} · Customer: {log.customerName || 'N/A'} · Amount: ₩{(log.amount || 0).toLocaleString()}
+                </Text>
+                <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>
+                  Admin: {log.adminEmail || log.adminUserId}
+                </Text>
+                {log.reason && (
+                  <Text style={{ fontSize: 11, color: '#EF4444', fontWeight: '700', marginTop: 4 }}>
+                    Reason: {log.reason}
+                  </Text>
+                )}
+              </View>
+            ))
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+/**
+ * 11. SETTINGS SECTION (WITH DYNAMIC BANK ACCOUNT CONFIGURATION)
+ */
+function SettingsSection({
+  S,
+  lowStockThreshold,
+  setLowStockThreshold,
+  storeCurrency,
+  isDarkMode,
+  adminEmail,
+  bankSettings,
+  onSaveBankSettings,
+  isSavingBankSettings,
+}: any) {
+  const [bankName, setBankName] = useState(bankSettings?.bankName || 'Woori Bank (우리은행)');
+  const [accountNumber, setAccountNumber] = useState(bankSettings?.accountNumber || '1002364650197');
+  const [accountHolder, setAccountHolder] = useState(bankSettings?.accountHolder || 'PARSHANT');
+  const [instructions, setInstructions] = useState(
+    bankSettings?.instructions || 'Please transfer the exact amount to PARSHANT (우리: 1002364650197 / 국민: 80640200121099 / 신한: 110623385560 / 토스뱅크: 1002-7078-9681) and upload your payment screenshot below.'
+  );
+  const [deadlineHours, setDeadlineHours] = useState((bankSettings?.paymentDeadlineHours || 24).toString());
+  const [enabled, setEnabled] = useState(bankSettings?.enabled !== false);
+
+  useEffect(() => {
+    if (bankSettings) {
+      setBankName(bankSettings.bankName || 'Woori Bank (우리은행)');
+      setAccountNumber(bankSettings.accountNumber || '1002364650197');
+      setAccountHolder(bankSettings.accountHolder || 'PARSHANT');
+      setInstructions(bankSettings.instructions || '');
+      setDeadlineHours((bankSettings.paymentDeadlineHours || 24).toString());
+      setEnabled(bankSettings.enabled !== false);
+    }
+  }, [bankSettings]);
+
+  const handleSaveBank = () => {
+    onSaveBankSettings({
+      bankName: bankName.trim(),
+      bankNameKr: bankName.trim(),
+      accountNumber: accountNumber.trim(),
+      accountHolder: accountHolder.trim(),
+      instructions: instructions.trim(),
+      paymentDeadlineHours: parseInt(deadlineHours, 10) || 24,
+      enabled,
+    });
+  };
+
+  const handleApplyPreset = (preset: BankAccountInfo) => {
+    setBankName(`${preset.bankName} (${preset.bankNameKr})`);
+    setAccountNumber(preset.accountNumber);
+    setAccountHolder(preset.accountHolder);
+  };
+
   return (
     <View style={S.panelContainer}>
       <Text style={S.panelHeading}>Admin Settings & Configurations</Text>
       <Text style={S.panelSub}>Configure store parameters, inventory alerts, and banking details</Text>
 
+      {/* BANK TRANSFER SETTINGS CARD */}
+      <View style={[S.card, { marginTop: 14, borderLeftWidth: 4, borderLeftColor: '#2563EB' }]}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View>
+            <Text style={[S.cardTitle, { color: '#2563EB' }]}>🏦 Bank Transfer Payment Settings (계좌이체 설정)</Text>
+            <Text style={S.settingSub}>Active Bank Accounts for PARSHANT</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: enabled ? '#10B981' : '#EF4444' }}>
+              {enabled ? 'Active' : 'Disabled'}
+            </Text>
+            <Switch
+              value={enabled}
+              onValueChange={setEnabled}
+              trackColor={{ false: '#767577', true: '#10B981' }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+        </View>
+
+        {/* QUICK PRESET CHIPS */}
+        <Text style={[S.settingLabel, { marginTop: 12 }]}>⚡ Quick Select Account for PARSHANT:</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 8 }}>
+          {KOREA_BANK_ACCOUNTS.map((b) => (
+            <TouchableOpacity
+              key={b.id}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                backgroundColor: isDarkMode ? '#222' : '#F3F4F6',
+                borderWidth: 1,
+                borderColor: b.accountNumber === accountNumber ? b.color : (isDarkMode ? '#444' : '#E5E7EB'),
+                borderRadius: 8,
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+              }}
+              onPress={() => handleApplyPreset(b)}
+            >
+              <Text style={{ fontSize: 14 }}>{b.logo}</Text>
+              <Text style={{ fontSize: 11, fontWeight: '800', color: isDarkMode ? '#FFF' : '#111' }}>
+                {b.bankNameKr}
+              </Text>
+              <Text style={{ fontSize: 10, color: '#6B7280', fontFamily: Platform.select({ ios: 'Courier', default: 'monospace' }) }}>
+                {b.accountNumber}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <Text style={[S.settingLabel, { marginTop: 12 }]}>Bank Name (은행명):</Text>
+        <TextInput
+          style={S.formInput}
+          value={bankName}
+          onChangeText={setBankName}
+          placeholder="e.g. Hana Bank (하나은행)"
+        />
+
+        <Text style={[S.settingLabel, { marginTop: 10 }]}>Account Number (계좌번호):</Text>
+        <TextInput
+          style={S.formInput}
+          value={accountNumber}
+          onChangeText={setAccountNumber}
+          placeholder="e.g. 123-456789-01005"
+        />
+
+        <Text style={[S.settingLabel, { marginTop: 10 }]}>Account Holder Name (예금주):</Text>
+        <TextInput
+          style={S.formInput}
+          value={accountHolder}
+          onChangeText={setAccountHolder}
+          placeholder="e.g. NAMASTE MART (나마스테마트)"
+        />
+
+        <Text style={[S.settingLabel, { marginTop: 10 }]}>Payment Instructions (입금 안내문구):</Text>
+        <TextInput
+          style={[S.formInput, { height: 70, textAlignVertical: 'top' }]}
+          value={instructions}
+          onChangeText={setInstructions}
+          multiline
+          placeholder="e.g. Please transfer exact amount within 24 hours..."
+        />
+
+        <Text style={[S.settingLabel, { marginTop: 10 }]}>Payment Deadline in Hours (입금 기한 시간):</Text>
+        <TextInput
+          style={S.formInput}
+          value={deadlineHours}
+          onChangeText={setDeadlineHours}
+          keyboardType="numeric"
+          placeholder="24"
+        />
+
+        <TouchableOpacity
+          style={{
+            backgroundColor: '#2563EB',
+            paddingVertical: 12,
+            borderRadius: 8,
+            alignItems: 'center',
+            marginTop: 14,
+            opacity: isSavingBankSettings ? 0.6 : 1,
+          }}
+          disabled={isSavingBankSettings}
+          onPress={handleSaveBank}
+        >
+          <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '900' }}>
+            {isSavingBankSettings ? 'Saving Settings...' : '💾 Save Bank Transfer Settings (계좌 설정 저장)'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* STORE SETTINGS */}
       <View style={[S.card, { marginTop: 14 }]}>
         <Text style={S.cardTitle}>⚠️ Inventory Low-Stock Alert Threshold</Text>
         <Text style={S.settingSub}>
@@ -2137,17 +2966,6 @@ function SettingsSection({ S, lowStockThreshold, setLowStockThreshold, storeCurr
         <Text style={[S.cardTitle, { marginTop: 16 }]}>💰 Currency & Country Lock</Text>
         <Text style={S.settingSub}>Operating Country: South Korea (대한민국)</Text>
         <Text style={S.settingSub}>Active Currency: {storeCurrency}</Text>
-
-        <Text style={[S.cardTitle, { marginTop: 16 }]}>🏦 Bank Transfer Receiving Accounts</Text>
-        {KOREA_BANK_ACCOUNTS.map((bank: BankAccountInfo, idx: number) => (
-          <View key={idx} style={S.bankSettingRow}>
-            <Text style={{ fontSize: 20 }}>{bank.logo || '🏦'}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={S.bankSettingName}>{bank.bankName} ({bank.bankNameKr})</Text>
-              <Text style={S.bankSettingAcc}>Account: {bank.accountNumber} · Holder: {bank.accountHolder}</Text>
-            </View>
-          </View>
-        ))}
 
         <Text style={[S.cardTitle, { marginTop: 16 }]}>👑 Active Administrator</Text>
         <Text style={S.settingSub}>Email: {adminEmail}</Text>
@@ -2273,7 +3091,7 @@ function AdminLoginScreen({
               <Text style={S.autoFillBtnText}>⚡ Auto-Fill: ID: admin · Password: 1234</Text>
             </TouchableOpacity>
 
-            <Text style={S.loginHint}>Master Admin Login: ID = "admin" · Password = "1234"</Text>
+            <Text style={S.loginHint}>Master Admin Login: ID = admin · Password = 1234</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

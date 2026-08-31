@@ -122,10 +122,11 @@ export const uploadMultipleProductImages = async (
 };
 
 /**
- * Upload a payment screenshot to Firebase Storage.
- * Path: payment-screenshots/{userId}/{orderId}/{fileName}
+ * Upload a payment proof screenshot to Firebase Storage.
+ * Path: payment-proofs/{userId}/{orderId}/{fileName}
+ * Accepts JPG, JPEG, PNG, WEBP with max size of 5 MB.
  */
-export const uploadPaymentScreenshotFile = async (
+export const uploadPaymentProofFile = async (
   fileUri: string,
   userId: string,
   orderId: string,
@@ -133,12 +134,21 @@ export const uploadPaymentScreenshotFile = async (
   customFilename?: string
 ): Promise<UploadResult> => {
   const blob = await uriToBlob(fileUri);
-  const name = customFilename || generateFilename('screenshot.jpg');
-  const storagePath = `payment-screenshots/${userId}/${orderId}/${name}`;
+
+  // Enforce 5MB limit
+  const MAX_SIZE_BYTES = 5 * 1024 * 1024;
+  if (blob.size > MAX_SIZE_BYTES) {
+    throw new Error('File size exceeds the 5 MB limit. Please select a smaller image (JPG, PNG, WEBP).');
+  }
+
+  const name = customFilename || generateFilename('payment-proof.jpg');
+  const storagePath = `payment-proofs/${userId}/${orderId}/${name}`;
   const fileRef = storageRef(storage, storagePath);
 
   return new Promise((resolve, reject) => {
-    const uploadTask = uploadBytesResumable(fileRef, blob);
+    const uploadTask = uploadBytesResumable(fileRef, blob, {
+      contentType: blob.type || 'image/jpeg',
+    });
 
     uploadTask.on(
       'state_changed',
@@ -153,18 +163,21 @@ export const uploadPaymentScreenshotFile = async (
         });
       },
       (error) => {
-        console.log('Payment screenshot upload error:', error.message);
-        reject(new Error(`Payment screenshot upload failed: ${error.message}`));
+        console.log('Payment proof upload error:', error.message);
+        reject(new Error(`Payment proof upload failed: ${error.message}`));
       },
       async () => {
         try {
           const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
           resolve({ downloadUrl, storagePath });
         } catch (error: any) {
-          reject(new Error(`Failed to get screenshot download URL: ${error.message}`));
+          reject(new Error(`Failed to get payment proof download URL: ${error.message}`));
         }
       }
     );
   });
 };
+
+// Backward-compatible alias
+export const uploadPaymentScreenshotFile = uploadPaymentProofFile;
 
