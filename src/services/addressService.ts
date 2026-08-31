@@ -1,10 +1,10 @@
 /**
  * NamasteMart Address Service
- * Manages Korean delivery addresses for users in Firestore.
+ * Manages Korean delivery addresses for users in Supabase.
  */
 
-import { db, COLLECTIONS, doc, getDoc, updateDoc, serverTimestamp } from '@/config/firebase';
-import { KoreanAddress, FirestoreUser } from '@/types';
+import { supabase, TABLES } from '@/config/supabase';
+import { KoreanAddress } from '@/types';
 
 /**
  * Validates a South Korean phone number format.
@@ -71,18 +71,21 @@ export const validateKoreanAddress = (
 };
 
 /**
- * Add a new Korean delivery address to the user's document.
+ * Add a new Korean delivery address to the user's profile.
  */
 export const addUserKoreanAddress = async (
   uid: string,
   newAddress: Omit<KoreanAddress, 'id' | 'country'> & { id?: string }
 ): Promise<KoreanAddress> => {
-  const userRef = doc(db, COLLECTIONS.USERS, uid);
-  const snap = await getDoc(userRef);
+  const { data, error: fetchError } = await supabase
+    .from(TABLES.PROFILES)
+    .select('addresses')
+    .eq('id', uid)
+    .single();
 
-  const existingAddresses: KoreanAddress[] = snap.exists()
-    ? (snap.data() as FirestoreUser).addresses || []
-    : [];
+  if (fetchError) throw fetchError;
+
+  const existingAddresses: KoreanAddress[] = data?.addresses || [];
 
   const addressId = newAddress.id || `kr-addr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   const isFirst = existingAddresses.length === 0;
@@ -102,10 +105,12 @@ export const addUserKoreanAddress = async (
 
   updatedAddresses.push(fullAddressObj);
 
-  await updateDoc(userRef, {
-    addresses: updatedAddresses,
-    updatedAt: serverTimestamp(),
-  });
+  const { error: updateError } = await supabase
+    .from(TABLES.PROFILES)
+    .update({ addresses: updatedAddresses, updated_at: Date.now() })
+    .eq('id', uid);
+
+  if (updateError) throw updateError;
 
   return fullAddressObj;
 };
@@ -118,11 +123,15 @@ export const updateUserKoreanAddress = async (
   addressId: string,
   updates: Partial<Omit<KoreanAddress, 'id' | 'country'>>
 ): Promise<void> => {
-  const userRef = doc(db, COLLECTIONS.USERS, uid);
-  const snap = await getDoc(userRef);
-  if (!snap.exists()) return;
+  const { data, error: fetchError } = await supabase
+    .from(TABLES.PROFILES)
+    .select('addresses')
+    .eq('id', uid)
+    .single();
 
-  const existingAddresses: KoreanAddress[] = (snap.data() as FirestoreUser).addresses || [];
+  if (fetchError || !data) return;
+
+  const existingAddresses: KoreanAddress[] = data.addresses || [];
   let updatedAddresses = existingAddresses.map((a) => {
     if (a.id === addressId) {
       return {
@@ -134,10 +143,12 @@ export const updateUserKoreanAddress = async (
     return updates.isDefault ? { ...a, isDefault: false } : a;
   });
 
-  await updateDoc(userRef, {
-    addresses: updatedAddresses,
-    updatedAt: serverTimestamp(),
-  });
+  const { error: updateError } = await supabase
+    .from(TABLES.PROFILES)
+    .update({ addresses: updatedAddresses, updated_at: Date.now() })
+    .eq('id', uid);
+
+  if (updateError) throw updateError;
 };
 
 /**
@@ -147,11 +158,15 @@ export const deleteUserKoreanAddress = async (
   uid: string,
   addressId: string
 ): Promise<void> => {
-  const userRef = doc(db, COLLECTIONS.USERS, uid);
-  const snap = await getDoc(userRef);
-  if (!snap.exists()) return;
+  const { data, error: fetchError } = await supabase
+    .from(TABLES.PROFILES)
+    .select('addresses')
+    .eq('id', uid)
+    .single();
 
-  const existingAddresses: KoreanAddress[] = (snap.data() as FirestoreUser).addresses || [];
+  if (fetchError || !data) return;
+
+  const existingAddresses: KoreanAddress[] = data.addresses || [];
   let updatedAddresses = existingAddresses.filter((a) => a.id !== addressId);
 
   // If we deleted the default address, make the first remaining address default
@@ -159,10 +174,12 @@ export const deleteUserKoreanAddress = async (
     updatedAddresses[0].isDefault = true;
   }
 
-  await updateDoc(userRef, {
-    addresses: updatedAddresses,
-    updatedAt: serverTimestamp(),
-  });
+  const { error: updateError } = await supabase
+    .from(TABLES.PROFILES)
+    .update({ addresses: updatedAddresses, updated_at: Date.now() })
+    .eq('id', uid);
+
+  if (updateError) throw updateError;
 };
 
 /**
@@ -172,18 +189,24 @@ export const setDefaultKoreanAddress = async (
   uid: string,
   addressId: string
 ): Promise<void> => {
-  const userRef = doc(db, COLLECTIONS.USERS, uid);
-  const snap = await getDoc(userRef);
-  if (!snap.exists()) return;
+  const { data, error: fetchError } = await supabase
+    .from(TABLES.PROFILES)
+    .select('addresses')
+    .eq('id', uid)
+    .single();
 
-  const existingAddresses: KoreanAddress[] = (snap.data() as FirestoreUser).addresses || [];
+  if (fetchError || !data) return;
+
+  const existingAddresses: KoreanAddress[] = data.addresses || [];
   const updatedAddresses = existingAddresses.map((a) => ({
     ...a,
     isDefault: a.id === addressId,
   }));
 
-  await updateDoc(userRef, {
-    addresses: updatedAddresses,
-    updatedAt: serverTimestamp(),
-  });
+  const { error: updateError } = await supabase
+    .from(TABLES.PROFILES)
+    .update({ addresses: updatedAddresses, updated_at: Date.now() })
+    .eq('id', uid);
+
+  if (updateError) throw updateError;
 };

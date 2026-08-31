@@ -17,7 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useApp } from '@/context/AppContext';
 import { sendOtp, verifyOtp, saveUserProfile } from '@/services/api';
-import { auth } from '@/config/firebase';
+import { supabase } from '@/config/supabase';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -166,7 +166,8 @@ export default function OnboardingScreen() {
     }
 
     try {
-      const idToken = await auth.currentUser?.getIdToken?.();
+      const { data: { session } } = await supabase.auth.getSession();
+      const idToken = session?.access_token;
       const result = await sendOtp(email, idToken || undefined);
 
       if (result.success) {
@@ -198,7 +199,8 @@ export default function OnboardingScreen() {
     const email = user?.email || '';
 
     try {
-      const idToken = await auth.currentUser?.getIdToken?.();
+      const { data: { session } } = await supabase.auth.getSession();
+      const idToken = session?.access_token;
       const result = await verifyOtp(email, code, idToken || undefined);
 
       const isValid = result.success || code === '123456';

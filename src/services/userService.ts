@@ -1,28 +1,15 @@
 /**
- * NamasteMart User Profile Service
- * Manages users/{uid} documents in Firestore.
+ * NamasteMart User Profile Service (Supabase)
+ * Manages profiles table in Supabase PostgreSQL.
  */
 
-import {
-  db,
-  COLLECTIONS,
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  setDoc,
-  updateDoc,
-  query,
-  limit,
-  onSnapshot,
-  serverTimestamp,
-} from '@/config/firebase';
+import { supabase, TABLES } from '@/config/supabase';
 import { FirestoreUser, KoreanAddress } from '@/types';
 
 /**
- * Ensures a user document exists in Firestore.
- * If new: creates with name, email, empty addresses, and phone.
- * If existing: updates name/email if changed, but NEVER overwrites existing phone or addresses.
+ * Ensures a user profile exists in Supabase.
+ * If new: creates with name, email, empty addresses.
+ * If existing: updates name/email/avatar if changed, but NEVER overwrites phone or addresses.
  */
 export const ensureUserDoc = async (
   uid: string,
@@ -50,34 +37,69 @@ export const ensureUserDoc = async (
   };
 
   try {
-    const userRef = doc(db, COLLECTIONS.USERS, uid);
-    const snap = await getDoc(userRef).catch(() => null);
+    // Try to fetch existing profile
+    const { data: existing, error: fetchError } = await supabase
+      .from(TABLES.PROFILES)
+      .select('*')
+      .eq('id', uid)
+      .single();
 
-    if (!snap || !snap.exists()) {
-      await setDoc(userRef, {
-        ...fallbackUser,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      }).catch((e) => console.log('Notice writing user doc:', e.message));
+    if (fetchError || !existing) {
+      // Profile doesn't exist — create it
+      const { error: insertError } = await supabase
+        .from(TABLES.PROFILES)
+        .insert({
+          id: uid,
+          name: data.name || 'User',
+          email: data.email || '',
+          phone: data.phoneNumber || '',
+          avatar: data.avatar || '',
+          role: data.role || 'customer',
+          email_verified: data.emailVerified || false,
+          profile_setup_complete: false,
+          addresses: [],
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        });
+
+      if (insertError) {
+        console.log('Notice creating profile:', insertError.message);
+      }
       return fallbackUser;
     }
 
-    // Document exists: update name/email/avatar if provided, without overwriting phone or addresses
-    const existingData = snap.data() as FirestoreUser;
-    const updates: any = {
-      updatedAt: serverTimestamp(),
-    };
-    if (data.name && data.name !== existingData.name) updates.name = data.name;
-    if (data.email && data.email !== existingData.email) updates.email = data.email;
+    // Profile exists — update only changed fields, never overwrite phone or addresses
+    const updates: Record<string, any> = { updated_at: Date.now() };
+    if (data.name && data.name !== existing.name) updates.name = data.name;
+    if (data.email && data.email !== existing.email) updates.email = data.email;
     if (data.avatar) updates.avatar = data.avatar;
-    if (data.phoneNumber && !existingData.phoneNumber) updates.phoneNumber = data.phoneNumber;
-    if (data.emailVerified !== undefined) updates.emailVerified = data.emailVerified;
+    if (data.phoneNumber && !existing.phone) updates.phone = data.phoneNumber;
+    if (data.emailVerified !== undefined) updates.email_verified = data.emailVerified;
 
     if (Object.keys(updates).length > 1) {
-      await updateDoc(userRef, updates).catch((e) => console.log('Notice updating user doc:', e.message));
+      const { error: updateError } = await supabase
+        .from(TABLES.PROFILES)
+        .update(updates)
+        .eq('id', uid);
+
+      if (updateError) {
+        console.log('Notice updating profile:', updateError.message);
+      }
     }
 
-    return { ...existingData, ...updates };
+    return {
+      uid: existing.id,
+      name: updates.name ?? existing.name,
+      email: updates.email ?? existing.email,
+      phoneNumber: (updates.phone ?? existing.phone) || '',
+      avatar: (updates.avatar ?? existing.avatar) || '',
+      addresses: existing.addresses || [],
+      role: existing.role || 'customer',
+      emailVerified: (updates.email_verified ?? existing.email_verified) || false,
+      profileSetupComplete: existing.profile_setup_complete || false,
+      createdAt: existing.created_at || Date.now(),
+      updatedAt: Date.now(),
+    };
   } catch (err: any) {
     console.log('ensureUserDoc resilient fallback:', err.message);
     return fallbackUser;
@@ -85,40 +107,84 @@ export const ensureUserDoc = async (
 };
 
 /**
- * Fetch a user profile document by UID.
+ * Fetch a user profile by UID.
  */
 export const getUserDoc = async (uid: string): Promise<FirestoreUser | null> => {
   try {
-    const snap = await getDoc(doc(db, COLLECTIONS.USERS, uid));
-    if (snap.exists()) {
-      return snap.data() as FirestoreUser;
-    }
+    const { data, error } = await supabase
+      .from(TABLES.PROFILES)
+      .select('*')
+      .eq('id', uid)
+      .single();
+
+    if (error || !data) return null;
+
+    return {
+      uid: data.id,
+      name: data.name || '',
+      email: data.email || '',
+      phoneNumber: data.phone || '',
+      avatar: data.avatar || '',
+      addresses: data.addresses || [],
+      role: data.role || 'customer',
+      emailVerified: data.email_verified || false,
+      profileSetupComplete: data.profile_setup_complete || false,
+      createdAt: data.created_at || Date.now(),
+      updatedAt: data.updated_at || Date.now(),
+    };
   } catch (err: any) {
     console.log('Error getting user doc:', err.message);
+    return null;
   }
-  return null;
 };
 
 /**
- * Subscribe to real-time user document updates.
+ * Subscribe to real-time user profile updates via Supabase Realtime.
  */
 export const subscribeToUserDoc = (
   uid: string,
   callback: (user: FirestoreUser | null) => void
 ): (() => void) => {
-  return onSnapshot(
-    doc(db, COLLECTIONS.USERS, uid),
-    (snap) => {
-      if (snap.exists()) {
-        callback(snap.data() as FirestoreUser);
-      } else {
-        callback(null);
+  // Initial fetch
+  getUserDoc(uid).then(callback);
+
+  // Realtime subscription
+  const channel = supabase
+    .channel(`profile-${uid}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: TABLES.PROFILES,
+        filter: `id=eq.${uid}`,
+      },
+      (payload) => {
+        if (payload.new) {
+          const d = payload.new as any;
+          callback({
+            uid: d.id,
+            name: d.name || '',
+            email: d.email || '',
+            phoneNumber: d.phone || '',
+            avatar: d.avatar || '',
+            addresses: d.addresses || [],
+            role: d.role || 'customer',
+            emailVerified: d.email_verified || false,
+            profileSetupComplete: d.profile_setup_complete || false,
+            createdAt: d.created_at || Date.now(),
+            updatedAt: d.updated_at || Date.now(),
+          });
+        } else {
+          callback(null);
+        }
       }
-    },
-    (err) => {
-      console.log('User doc subscription notice:', err.message);
-    }
-  );
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 };
 
 /**
@@ -128,32 +194,46 @@ export const updateUserProfileDoc = async (
   uid: string,
   updates: Partial<Pick<FirestoreUser, 'name' | 'phoneNumber' | 'avatar'>>
 ): Promise<void> => {
-  await updateDoc(doc(db, COLLECTIONS.USERS, uid), {
-    ...updates,
-    updatedAt: serverTimestamp(),
-  });
+  const payload: Record<string, any> = { updated_at: Date.now() };
+  if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.phoneNumber !== undefined) payload.phone = updates.phoneNumber;
+  if (updates.avatar !== undefined) payload.avatar = updates.avatar;
+
+  const { error } = await supabase
+    .from(TABLES.PROFILES)
+    .update(payload)
+    .eq('id', uid);
+
+  if (error) {
+    console.log('Notice updating profile:', error.message);
+  }
 };
 
 /**
- * Subscribe to all registered users for Admin Customer Management.
+ * Subscribe to all users for Admin Customer Management.
  */
 export const subscribeAllUsersAdmin = (
   callback: (users: FirestoreUser[]) => void
 ): (() => void) => {
-  const q = query(collection(db, COLLECTIONS.USERS), limit(500));
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const users = snapshot.docs.map((d) => ({
-        uid: d.id,
-        ...d.data(),
-      })) as FirestoreUser[];
-      callback(users);
-    },
-    (err) => {
-      console.log('Admin users subscription notice:', err.message);
-    }
-  );
+  // Initial fetch
+  getAllUsersAdmin().then(callback);
+
+  // Realtime subscription
+  const channel = supabase
+    .channel('admin-all-users')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: TABLES.PROFILES },
+      () => {
+        // Re-fetch all on any change
+        getAllUsersAdmin().then(callback);
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 };
 
 /**
@@ -161,12 +241,27 @@ export const subscribeAllUsersAdmin = (
  */
 export const getAllUsersAdmin = async (): Promise<FirestoreUser[]> => {
   try {
-    const q = query(collection(db, COLLECTIONS.USERS), limit(500));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map((d) => ({
+    const { data, error } = await supabase
+      .from(TABLES.PROFILES)
+      .select('*')
+      .limit(500)
+      .order('created_at', { ascending: false });
+
+    if (error || !data) return [];
+
+    return data.map((d) => ({
       uid: d.id,
-      ...d.data(),
-    })) as FirestoreUser[];
+      name: d.name || '',
+      email: d.email || '',
+      phoneNumber: d.phone || '',
+      avatar: d.avatar || '',
+      addresses: d.addresses || [],
+      role: d.role || 'customer',
+      emailVerified: d.email_verified || false,
+      profileSetupComplete: d.profile_setup_complete || false,
+      createdAt: d.created_at || Date.now(),
+      updatedAt: d.updated_at || Date.now(),
+    }));
   } catch (err: any) {
     console.log('Error getting all users:', err.message);
     return [];
@@ -174,39 +269,40 @@ export const getAllUsersAdmin = async (): Promise<FirestoreUser[]> => {
 };
 
 /**
- * Mark user email as verified in Firestore.
+ * Mark user email as verified.
  */
 export const markEmailVerifiedInFirestore = async (uid: string): Promise<void> => {
-  const userRef = doc(db, COLLECTIONS.USERS, uid);
-  await updateDoc(userRef, {
-    emailVerified: true,
-    updatedAt: serverTimestamp(),
-  }).catch(async () => {
-    await setDoc(userRef, { emailVerified: true, updatedAt: serverTimestamp() }, { merge: true });
-  });
+  const { error } = await supabase
+    .from(TABLES.PROFILES)
+    .update({ email_verified: true, updated_at: Date.now() })
+    .eq('id', uid);
+
+  if (error) {
+    console.log('Notice marking email verified:', error.message);
+  }
 };
 
 /**
- * Fetch saved addresses from subcollection users/{uid}/addresses.
+ * Get user addresses from the profile's addresses jsonb column.
  */
 export const getUserAddressesSubcollection = async (uid: string): Promise<KoreanAddress[]> => {
   try {
-    const q = collection(db, COLLECTIONS.USERS, uid, 'addresses');
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      return snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      })) as KoreanAddress[];
-    }
+    const { data, error } = await supabase
+      .from(TABLES.PROFILES)
+      .select('addresses')
+      .eq('id', uid)
+      .single();
+
+    if (error || !data) return [];
+    return (data.addresses || []) as KoreanAddress[];
   } catch (err: any) {
-    console.log('Error fetching user addresses subcollection:', err.message);
+    console.log('Error fetching user addresses:', err.message);
+    return [];
   }
-  return [];
 };
 
 /**
- * Save delivery address to user document (array + subcollection) and set profile setup complete.
+ * Save delivery address to user profile and set profile setup complete.
  */
 export const saveUserDeliveryAddress = async (
   uid: string,
@@ -215,19 +311,22 @@ export const saveUserDeliveryAddress = async (
   let addresses: KoreanAddress[] = [newAddress];
 
   try {
-    const userRef = doc(db, COLLECTIONS.USERS, uid);
-    const snap = await getDoc(userRef).catch(() => null);
+    const { data: existing } = await supabase
+      .from(TABLES.PROFILES)
+      .select('addresses')
+      .eq('id', uid)
+      .single();
 
-    if (snap && snap.exists()) {
-      const existing = snap.data() as FirestoreUser;
-      addresses = existing.addresses || [];
+    if (existing?.addresses) {
+      addresses = existing.addresses;
     }
 
-    // If set as default, mark previous addresses as non-default
+    // If set as default, unmark all others
     if (newAddress.isDefault) {
       addresses = addresses.map((a) => ({ ...a, isDefault: false }));
     }
 
+    // Update existing or add new
     const existingIdx = addresses.findIndex((a) => a.id === newAddress.id);
     if (existingIdx >= 0) {
       addresses[existingIdx] = newAddress;
@@ -235,44 +334,18 @@ export const saveUserDeliveryAddress = async (
       addresses.push(newAddress);
     }
 
-    // 1. Update parent user document (array + setup flags)
-    await setDoc(
-      userRef,
-      {
+    const { error } = await supabase
+      .from(TABLES.PROFILES)
+      .update({
         addresses,
-        emailVerified: true,
-        profileSetupComplete: true,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    ).catch((e) => console.log('Notice saving user address to userDoc:', e.message));
+        email_verified: true,
+        profile_setup_complete: true,
+        updated_at: Date.now(),
+      })
+      .eq('id', uid);
 
-    // 2. Also write to subcollection users/{uid}/addresses/{addressId}
-    try {
-      const subcollRef = doc(db, COLLECTIONS.USERS, uid, 'addresses', newAddress.id);
-      await setDoc(
-        subcollRef,
-        {
-          addressId: newAddress.id,
-          recipientName: newAddress.recipientName,
-          phoneNumber: newAddress.phoneNumber,
-          postalCode: newAddress.postalCode,
-          province: newAddress.province || 'Seoul',
-          city: newAddress.city || 'Seoul',
-          district: newAddress.district || 'Gangnam-gu',
-          streetAddress: newAddress.streetAddress || newAddress.address,
-          buildingName: newAddress.buildingName || '',
-          unitNumber: newAddress.unitNumber || '',
-          detailAddress: newAddress.detailAddress || '',
-          deliveryInstructions: newAddress.deliveryInstructions || '',
-          isDefault: newAddress.isDefault,
-          createdAt: newAddress.createdAt || Date.now(),
-          updatedAt: Date.now(),
-        },
-        { merge: true }
-      ).catch((e) => console.log('Notice saving address subcollection:', e.message));
-    } catch (subErr: any) {
-      console.log('Notice saving address subcollection:', subErr.message);
+    if (error) {
+      console.log('Notice saving address:', error.message);
     }
   } catch (err: any) {
     console.log('saveUserDeliveryAddress resilient fallback:', err.message);
@@ -285,11 +358,12 @@ export const saveUserDeliveryAddress = async (
  * Update user setup complete flag.
  */
 export const updateUserSetupComplete = async (uid: string, complete: boolean): Promise<void> => {
-  const userRef = doc(db, COLLECTIONS.USERS, uid);
-  await updateDoc(userRef, {
-    profileSetupComplete: complete,
-    updatedAt: serverTimestamp(),
-  }).catch(async () => {
-    await setDoc(userRef, { profileSetupComplete: complete, updatedAt: serverTimestamp() }, { merge: true });
-  });
+  const { error } = await supabase
+    .from(TABLES.PROFILES)
+    .update({ profile_setup_complete: complete, updated_at: Date.now() })
+    .eq('id', uid);
+
+  if (error) {
+    console.log('Notice updating setup complete:', error.message);
+  }
 };

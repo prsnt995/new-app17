@@ -19,7 +19,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useApp } from '@/context/AppContext';
-import { auth, signInWithEmailAndPassword } from '@/config/firebase';
+import { supabase } from '@/config/supabase';
 import * as ImagePicker from 'expo-image-picker';
 import {
   addProductToFirestore,
@@ -415,14 +415,20 @@ export default function AdminScreen() {
 
     try {
       const emailToUse = inputId.includes('@') ? inputId : `${inputId}@namastemart.com`;
-      const userCred = await signInWithEmailAndPassword(auth, emailToUse, inputPass);
-      const email = userCred.user.email || '';
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: emailToUse,
+        password: inputPass,
+      });
+
+      if (authError) throw authError;
+
+      const email = authData.user.email || '';
 
       const isAllowed = ADMIN_EMAILS.includes(email) || email.endsWith('@namastemart.com');
-      const isAdminInFirestore = await checkIsAdmin(userCred.user.uid).catch(() => false);
+      const isAdminInFirestore = await checkIsAdmin(authData.user.id).catch(() => false);
 
       if (!isAllowed && !isAdminInFirestore) {
-        await auth.signOut();
+        await supabase.auth.signOut();
         setAuthError('Access denied. This account does not have admin privileges.');
         setAuthLoading(false);
         return;
@@ -432,7 +438,7 @@ export default function AdminScreen() {
         isAdmin: true,
         isLoggedIn: true,
         role: 'admin',
-        name: userCred.user.displayName || 'Master Admin',
+        name: authData.user.user_metadata?.name || 'Master Admin',
       });
       setIsAuthenticated(true);
     } catch (error: any) {
@@ -448,13 +454,10 @@ export default function AdminScreen() {
       }
 
       const errorMessages: Record<string, string> = {
-        'auth/user-not-found': 'No account found with this ID/email.',
-        'auth/wrong-password': 'Incorrect password.',
-        'auth/invalid-email': 'Please enter a valid ID/email.',
-        'auth/invalid-credential': 'Invalid ID or password.',
-        'auth/too-many-requests': 'Too many attempts. Please try again later.',
+        'Invalid login credentials': 'Invalid ID or password.',
+        'Email not confirmed': 'Please verify your email first.',
       };
-      setAuthError(errorMessages[error.code] || error.message || 'Login failed.');
+      setAuthError(errorMessages[error.message] || error.message || 'Login failed.');
     }
     setAuthLoading(false);
   };
@@ -466,7 +469,7 @@ export default function AdminScreen() {
         text: 'Sign Out',
         style: 'destructive',
         onPress: async () => {
-          await auth.signOut().catch(() => {});
+          await supabase.auth.signOut().catch(() => {});
           updateUserProfile({ isAdmin: false });
           setIsAuthenticated(false);
           router.replace('/');
@@ -749,6 +752,13 @@ export default function AdminScreen() {
   const handleOpenRejectModal = (order: OrderItem) => {
     setRejectModalOrder(order);
     setRejectReasonText('입금자명 또는 입금액 불일치 (Sender name or amount mismatch)');
+  };
+
+  const handleRejectPayment = (orderId: string) => {
+    const order = allOrders.find((o) => o.id === orderId);
+    if (order) {
+      handleOpenRejectModal(order);
+    }
   };
 
   const handleConfirmRejection = async () => {

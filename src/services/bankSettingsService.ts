@@ -1,16 +1,9 @@
 /**
  * NamasteMart Bank Transfer Settings Service
- * Dynamically fetches, saves, and listens to bank account configurations in Firestore.
+ * Dynamically fetches, saves, and listens to bank account configurations via Supabase.
  */
 
-import {
-  db,
-  doc,
-  getDoc,
-  setDoc,
-  onSnapshot,
-  serverTimestamp,
-} from '@/config/firebase';
+import { supabase, TABLES } from '@/config/supabase';
 import { BankTransferSettings } from '@/types';
 
 export const DEFAULT_BANK_SETTINGS: BankTransferSettings = {
@@ -23,34 +16,41 @@ export const DEFAULT_BANK_SETTINGS: BankTransferSettings = {
   enabled: true,
 };
 
-const SETTINGS_COLLECTION = 'settings';
-const BANK_SETTINGS_DOC_ID = 'bankTransfer';
+const BANK_SETTINGS_KEY = 'bankTransfer';
 
 /**
- * Get current Bank Transfer settings from Firestore with sensible fallback.
+ * Get current Bank Transfer settings from Supabase with sensible fallback.
  */
 export const getBankTransferSettings = async (): Promise<BankTransferSettings> => {
   try {
-    const docRef = doc(db, SETTINGS_COLLECTION, BANK_SETTINGS_DOC_ID);
-    const snap = await getDoc(docRef);
+    const { data, error } = await supabase
+      .from(TABLES.SETTINGS)
+      .select('*')
+      .eq('key', BANK_SETTINGS_KEY)
+      .single();
 
-    if (snap.exists()) {
-      const data = snap.data() as Partial<BankTransferSettings>;
-      return {
-        ...DEFAULT_BANK_SETTINGS,
-        ...data,
-      };
+    if (error) {
+      console.warn('Error fetching bank transfer settings:', error.message);
+      // Auto-seed default settings if row doesn't exist
+      try {
+        await supabase.from(TABLES.SETTINGS).upsert({
+          key: BANK_SETTINGS_KEY,
+          ...DEFAULT_BANK_SETTINGS,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      } catch {
+        // Non-blocking if permissions or offline
+      }
+      return DEFAULT_BANK_SETTINGS;
     }
 
-    // Auto-seed default settings document if non-existent
-    try {
-      await setDoc(docRef, {
+    if (data) {
+      const { key: _key, created_at: _created, updated_at: _updated, ...rest } = data;
+      return {
         ...DEFAULT_BANK_SETTINGS,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    } catch {
-      // Non-blocking if permissions or offline
+        ...rest,
+      };
     }
 
     return DEFAULT_BANK_SETTINGS;
@@ -61,21 +61,27 @@ export const getBankTransferSettings = async (): Promise<BankTransferSettings> =
 };
 
 /**
- * Save or update Bank Transfer settings in Firestore (Admin only).
+ * Save or update Bank Transfer settings in Supabase (Admin only).
  */
 export const updateBankTransferSettings = async (
   settings: Partial<BankTransferSettings>,
   adminUid?: string
 ): Promise<BankTransferSettings> => {
-  const docRef = doc(db, SETTINGS_COLLECTION, BANK_SETTINGS_DOC_ID);
-  
-  const payload: Partial<BankTransferSettings> = {
+  const payload = {
+    key: BANK_SETTINGS_KEY,
     ...settings,
-    updatedAt: serverTimestamp(),
+    updated_at: new Date().toISOString(),
     updatedBy: adminUid || 'admin',
   };
 
-  await setDoc(docRef, payload, { merge: true });
+  const { error } = await supabase
+    .from(TABLES.SETTINGS)
+    .upsert(payload, { onConflict: 'key' });
+
+  if (error) {
+    console.error('Error updating bank transfer settings:', error.message);
+    throw error;
+  }
 
   return {
     ...DEFAULT_BANK_SETTINGS,
@@ -89,26 +95,38 @@ export const updateBankTransferSettings = async (
 export const subscribeBankTransferSettings = (
   onUpdate: (settings: BankTransferSettings) => void
 ): (() => void) => {
-  const docRef = doc(db, SETTINGS_COLLECTION, BANK_SETTINGS_DOC_ID);
-
-  const unsubscribe = onSnapshot(
-    docRef,
-    (snap) => {
-      if (snap.exists()) {
-        const data = snap.data() as Partial<BankTransferSettings>;
+  const channel = supabase
+    .channel('bank-transfer-settings')
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: TABLES.SETTINGS,
+        filter: `key=eq.${BANK_SETTINGS_KEY}`,
+      },
+      (payload) => {
+        if (payload.eventType === 'DELETE') {
+          onUpdate(DEFAULT_BANK_SETTINGS);
+          return;
+        }
+        const data = payload.new as Record<string, any>;
+        const { key: _key, created_at: _created, updated_at: _updated, ...rest } = data;
         onUpdate({
           ...DEFAULT_BANK_SETTINGS,
-          ...data,
+          ...rest,
         });
-      } else {
+      }
+    )
+    .subscribe((status) => {
+      if (status === 'CHANNEL_ERROR') {
+        console.warn('Bank settings subscription notice: Channel error');
         onUpdate(DEFAULT_BANK_SETTINGS);
       }
-    },
-    (err) => {
-      console.warn('Bank settings subscription notice:', err.message);
-      onUpdate(DEFAULT_BANK_SETTINGS);
-    }
-  );
+    });
 
-  return unsubscribe;
+  // Return unsubscribe function
+  return () => {
+    supabase.removeChannel(channel);
+  };
 };

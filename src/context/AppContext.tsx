@@ -679,20 +679,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let unsubCart: (() => void) | undefined;
     let unsubWishlist: (() => void) | undefined;
 
-    import('@/config/firebase').then(({ auth: firebaseAuth, onAuthStateChanged: onAuth }) => {
-      const unsubAuth = onAuth(firebaseAuth, async (firebaseUser) => {
-        if (firebaseUser) {
-          const uid = firebaseUser.uid;
+    import('@/config/supabase').then(({ supabase }) => {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        const supabaseUser = session?.user;
+        if (supabaseUser) {
+          const uid = supabaseUser.id;
           setAuthUid(uid);
 
           try {
             // 1. Ensure user document exists in Firestore (never overwrites phone or addresses)
             const { ensureUserDoc } = await import('@/services/userService');
             const userDoc = await ensureUserDoc(uid, {
-              name: firebaseUser.displayName || 'User',
-              email: firebaseUser.email || '',
-              phoneNumber: firebaseUser.phoneNumber || undefined,
-              avatar: firebaseUser.photoURL || undefined,
+              name: supabaseUser.user_metadata?.name || 'User',
+              email: supabaseUser.email || '',
+              phoneNumber: supabaseUser.phone || undefined,
+              avatar: supabaseUser.user_metadata?.avatar_url || undefined,
             });
 
             // 2. Map Korean delivery addresses
@@ -716,11 +717,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             // 3. Set dynamic user profile from Auth & Firestore
             setUser({
               id: uid,
-              name: userDoc.name || firebaseUser.displayName || 'User',
-              email: userDoc.email || firebaseUser.email || '',
+              name: userDoc.name || supabaseUser.user_metadata?.name || 'User',
+              email: userDoc.email || supabaseUser.email || '',
               phone: userDoc.phoneNumber || '',
               phoneNumber: userDoc.phoneNumber || '',
-              avatar: userDoc.avatar || firebaseUser.photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400',
+              avatar: userDoc.avatar || supabaseUser.user_metadata?.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400',
               memberTier: 'Gold Member',
               savedAddresses: mappedAddresses,
               addresses: userDoc.addresses || [],
@@ -730,7 +731,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               preferredLanguage: 'English',
               notificationsEnabled: true,
               isLoggedIn: true,
-              authProvider: firebaseUser.providerData[0]?.providerId === 'google.com' ? 'google' : 'email',
+              authProvider: supabaseUser.app_metadata?.provider === 'google' ? 'google' : 'email',
             });
 
             // 4. Real-time subscribe to current user's orders only
@@ -785,7 +786,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       unsubscribers_auth_ref.current = () => {
-        unsubAuth();
+        subscription?.unsubscribe();
         unsubOrders?.();
         unsubCart?.();
         unsubWishlist?.();

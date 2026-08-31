@@ -16,33 +16,18 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useApp } from '@/context/AppContext';
+import { supabase } from '@/config/supabase';
 import {
-  auth,
-  googleProvider,
-  createGoogleCredential,
-  signInWithCredential,
-  signInWithPopup,
-} from '@/config/firebase';
-import * as AuthSession from 'expo-auth-session';
-import * as WebBrowser from 'expo-web-browser';
-import { googleSignInBackend, verifyOtp } from '@/services/api';
-import {
-  sendEmailVerificationCode,
-  verifyEmailCodeAndLogin,
+  signInWithGoogle,
+  sendEmailOtp,
+  verifyEmailOtp,
   completeCustomerRegistration,
+  ensureUserProfile,
 } from '@/services/authService';
 import { ensureUserDoc, saveUserDeliveryAddress } from '@/services/userService';
 import { Address, KoreanAddress } from '@/types';
 
-// For web-based OAuth redirect completion
-WebBrowser.maybeCompleteAuthSession();
-
-// Google OAuth discovery document
-const GOOGLE_DISCOVERY = {
-  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
-  tokenEndpoint: 'https://oauth2.googleapis.com/token',
-  revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
-};
+// Supabase Google OAuth redirect is handled by signInWithGoogle()
 
 // ─── POPULAR SOUTH KOREA ADDRESS HUBS FOR QUICK POSTAL SEARCH ────────────────
 interface KoreanAddressPreset {
@@ -171,20 +156,6 @@ export default function LoginScreen() {
   const { user, updateUserProfile, isDarkMode } = useApp();
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
-  // GOOGLE OAUTH SETUP (FOR NATIVE PLATFORMS)
-  const googleClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || '';
-  const redirectUri = AuthSession.makeRedirectUri({ scheme: 'namastemart' });
-
-  const [googleRequest, googleResponse, promptGoogleAsync] = AuthSession.useAuthRequest(
-    {
-      clientId: googleClientId,
-      scopes: ['openid', 'profile', 'email'],
-      redirectUri,
-      responseType: AuthSession.ResponseType.IdToken,
-    },
-    GOOGLE_DISCOVERY
-  );
-
   // AUTH TABS / MODES
   // 'REGISTER_STEP1' | 'REGISTER_STEP2_OTP' | 'REGISTER_STEP3_ADDRESS' | 'RETURNING_LOGIN' | 'RETURNING_LOGIN_OTP'
   const [authTab, setAuthTab] = useState<'REGISTER' | 'LOGIN'>('REGISTER');
@@ -199,7 +170,6 @@ export default function LoginScreen() {
   const [otpInput, setOtpInput] = useState('');
   const [verifiedEmail, setVerifiedEmail] = useState('');
   const [verifiedUid, setVerifiedUid] = useState<string | null>(null);
-  const [verifiedCustomToken, setVerifiedCustomToken] = useState<string | null>(null);
   const [cooldownSeconds, setCooldownSeconds] = useState(0);
   const [expirySeconds, setExpirySeconds] = useState(600); // 10 minutes
   const [attemptsRemaining, setAttemptsRemaining] = useState(5);
@@ -261,78 +231,41 @@ export default function LoginScreen() {
     };
   }, [registerStep, expirySeconds]);
 
-  // ─── GOOGLE OAUTH RESPONSE LISTENER ──────────────────────────────────────────
+  // ─── SUPABASE AUTH STATE LISTENER ────────────────────────────────────────
   useEffect(() => {
-    if (googleResponse?.type === 'success' && googleResponse.params?.id_token) {
-      handleNativeGoogleIdToken(googleResponse.params.id_token);
-    } else if (googleResponse?.type === 'error') {
-      setIsGoogleLoading(false);
-      Alert.alert('Google Sign-In Error', 'Could not sign in with Google. Please try again.');
-    }
-  }, [googleResponse]);
-
-  const handleNativeGoogleIdToken = async (idToken: string) => {
-    try {
-      setIsGoogleLoading(true);
-      const credential = createGoogleCredential(idToken);
-      const firebaseResult = await signInWithCredential(auth, credential);
-      const firebaseUser = firebaseResult.user;
-
-      try {
-        const backendToken = await firebaseUser.getIdToken();
-        await googleSignInBackend(backendToken);
-      } catch (backendErr) {
-        console.log('Backend Google sign-in notice:', backendErr);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        await finalizeSupabaseUser(session.user);
       }
-
-      await finalizeGoogleUser(firebaseUser);
-    } catch (error: any) {
-      setIsGoogleLoading(false);
-      Alert.alert('Google Sign-In Error', error.message || 'Could not complete Google sign-in.');
-    }
-  };
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   // ═════════════════════════════════════════════════════════════════════════════
-  // GOOGLE LOGIN HANDLER
+  // GOOGLE LOGIN HANDLER (Supabase OAuth)
   // ═════════════════════════════════════════════════════════════════════════════
   const handleContinueWithGoogle = async () => {
     setIsGoogleLoading(true);
     try {
-      if (Platform.OS === 'web') {
-        const result = await signInWithPopup(auth, googleProvider);
-        await finalizeGoogleUser(result.user);
-      } else if (googleClientId) {
-        await promptGoogleAsync();
-      } else {
-        // Fallback demo for native environments without configured Google Client ID
-        const demoUid = `google-${Date.now()}`;
-        const demoUser = {
-          uid: demoUid,
-          displayName: 'Google Customer',
-          email: 'googlecustomer@gmail.com',
-          photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500',
-          emailVerified: true,
-          phoneNumber: '010-9876-5432',
-        };
-        await finalizeGoogleUser(demoUser);
-      }
+      await signInWithGoogle();
+      // onAuthStateChange will handle the rest after redirect
     } catch (err: any) {
       setIsGoogleLoading(false);
-      if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
-        Alert.alert('Google Sign-In Notice', err.message || 'Could not initiate Google sign-in.');
-      }
+      Alert.alert('Google Sign-In Notice', err.message || 'Could not initiate Google sign-in.');
     }
   };
 
-  const finalizeGoogleUser = async (firebaseUser: any) => {
+  const finalizeSupabaseUser = async (supabaseUser: any) => {
     try {
-      const uid = firebaseUser.uid;
-      const finalEmail = (firebaseUser.email || '').toLowerCase();
+      const uid = supabaseUser.id;
+      const finalEmail = (supabaseUser.email || '').toLowerCase();
       const finalName =
-        firebaseUser.displayName ||
+        supabaseUser.user_metadata?.name ||
+        supabaseUser.user_metadata?.full_name ||
         finalEmail.split('@')[0].charAt(0).toUpperCase() + finalEmail.split('@')[0].slice(1);
       const finalAvatar =
-        firebaseUser.photoURL ||
+        supabaseUser.user_metadata?.avatar ||
+        supabaseUser.user_metadata?.picture ||
         'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400';
 
       const uDoc = await ensureUserDoc(uid, {
@@ -371,8 +304,8 @@ export default function LoginScreen() {
         id: uid,
         name: uDoc.name || finalName,
         email: uDoc.email || finalEmail,
-        phone: uDoc.phoneNumber || firebaseUser.phoneNumber || '',
-        phoneNumber: uDoc.phoneNumber || firebaseUser.phoneNumber || '',
+        phone: uDoc.phoneNumber || '',
+        phoneNumber: uDoc.phoneNumber || '',
         avatar: uDoc.avatar || finalAvatar,
         isLoggedIn: true,
         emailVerified: true,
@@ -386,11 +319,10 @@ export default function LoginScreen() {
       if (hasAddress) {
         router.replace('/');
       } else {
-        // Pre-fill Step 3 for Google user needing address
         setVerifiedEmail(finalEmail);
         setVerifiedUid(uid);
         setAddrRecipientName(finalName);
-        setAddrPhone(uDoc.phoneNumber || firebaseUser.phoneNumber || '010-');
+        setAddrPhone(uDoc.phoneNumber || '010-');
         setAuthTab('REGISTER');
         setRegisterStep(3);
         Alert.alert(
@@ -437,14 +369,14 @@ export default function LoginScreen() {
 
     setIsLoading(true);
     try {
-      const res = await sendEmailVerificationCode(email);
+      const res = await sendEmailOtp(email);
 
       setIsLoading(false);
       setVerifiedEmail(email);
       setOtpInput('');
       setAttemptsRemaining(5);
       setExpirySeconds(600); // 10 minutes
-      setCooldownSeconds(res.cooldownSeconds || 45);
+      setCooldownSeconds(45);
 
       // Pre-fill Step 3 address fields
       setAddrRecipientName(name);
@@ -486,21 +418,21 @@ export default function LoginScreen() {
 
     setIsLoading(true);
     try {
-      const verifyRes = await verifyOtp(verifiedEmail, code);
+      const verifyRes = await verifyEmailOtp(verifiedEmail, code);
 
       if (!verifyRes.success) {
         setIsLoading(false);
         setAttemptsRemaining((prev) => Math.max(0, prev - 1));
         Alert.alert(
-          'Verification Failed ❌',
-          verifyRes.message || 'Incorrect verification code. Please check your Gmail inbox and try again.'
+          'Verification Failed',
+          verifyRes.error || 'Incorrect verification code. Please check your inbox and try again.'
         );
         return;
       }
 
-      // Store verified auth credentials for Step 4
-      setVerifiedUid(verifyRes.uid || null);
-      setVerifiedCustomToken(verifyRes.customToken || null);
+      // Get user from session
+      const { data: userData } = await supabase.auth.getUser();
+      setVerifiedUid(userData.user?.id || null);
       setIsLoading(false);
 
       // Transition to Step 3: Korean Delivery Address
@@ -525,16 +457,16 @@ export default function LoginScreen() {
 
     setIsLoading(true);
     try {
-      const res = await sendEmailVerificationCode(verifiedEmail);
+      await sendEmailOtp(verifiedEmail);
       setIsLoading(false);
       setOtpInput('');
       setAttemptsRemaining(5);
       setExpirySeconds(600);
-      setCooldownSeconds(res.cooldownSeconds || 45);
+      setCooldownSeconds(45);
 
       Alert.alert(
-        'New Code Sent 📩',
-        `A fresh 6-digit verification code has been sent to your Gmail inbox (${verifiedEmail}).`
+        'New Code Sent',
+        `A fresh 6-digit verification code has been sent to your inbox (${verifiedEmail}).`
       );
     } catch (err: any) {
       setIsLoading(false);
@@ -604,7 +536,6 @@ export default function LoginScreen() {
         phoneNumber: phone,
         email,
         koreanAddress: newKoreanAddress,
-        customToken: verifiedCustomToken,
         uid: verifiedUid || undefined,
       });
 
@@ -632,7 +563,7 @@ export default function LoginScreen() {
 
       // STEP 5: AUTOMATIC LOGIN (Establishes session & AppContext state)
       updateUserProfile({
-        id: authResult.user.uid,
+        id: authResult.user.id,
         name,
         email,
         phone,
@@ -697,13 +628,13 @@ export default function LoginScreen() {
 
     setIsLoading(true);
     try {
-      const res = await sendEmailVerificationCode(email);
+      await sendEmailOtp(email);
       setIsLoading(false);
       setIsLoginOtpSent(true);
-      setCooldownSeconds(res.cooldownSeconds || 45);
+      setCooldownSeconds(45);
       Alert.alert(
-        'Verification Code Sent! ✉️',
-        `We sent a 6-digit login code to your Gmail inbox (${email}).`
+        'Verification Code Sent!',
+        `We sent a 6-digit login code to your inbox (${email}).`
       );
     } catch (err: any) {
       setIsLoading(false);
@@ -716,20 +647,19 @@ export default function LoginScreen() {
     const code = loginOtp.trim();
 
     if (!code || code.length !== 6) {
-      Alert.alert('Invalid Code', 'Please enter the 6-digit code received in your Gmail inbox.');
+      Alert.alert('Invalid Code', 'Please enter the 6-digit code received in your inbox.');
       return;
     }
 
     setIsLoading(true);
     try {
-      const res = await verifyEmailCodeAndLogin(email, code);
-
-      await finalizeGoogleUser({
-        uid: res.user.uid,
-        email,
-        displayName: res.user.displayName || email.split('@')[0],
-        photoURL: (res.user as any).photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400',
-      });
+      const res = await verifyEmailOtp(email, code);
+      if (res.success && res.session?.user) {
+        await finalizeSupabaseUser(res.session.user);
+      } else {
+        setIsLoading(false);
+        Alert.alert('Login Failed', res.error || 'Invalid or expired verification code.');
+      }
     } catch (err: any) {
       setIsLoading(false);
       Alert.alert('Login Failed', err.message || 'Invalid or expired verification code.');

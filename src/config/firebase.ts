@@ -1,48 +1,13 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
-  getAuth,
-  GoogleAuthProvider,
-  signInWithCredential,
-  signInWithCustomToken,
-  signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  sendEmailVerification,
-  updateProfile,
-  signOut,
-  onAuthStateChanged,
-} from 'firebase/auth';
-import {
-  getFirestore,
-  collection,
-  doc,
-  getDoc,
-  onSnapshot,
-  setDoc,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  getDocs,
-  query,
-  orderBy,
-  limit,
-  where,
-  serverTimestamp,
-  increment,
-  runTransaction,
-  Timestamp,
-  writeBatch,
-} from 'firebase/firestore';
-import {
   getStorage,
   ref as storageRef,
   uploadBytesResumable,
   getDownloadURL,
   deleteObject,
 } from 'firebase/storage';
-import { getAnalytics, isSupported, Analytics } from 'firebase/analytics';
 
-// ─── FIREBASE CONFIGURATION ──────────────────────────────────────────────────
+// ─── FIREBASE CONFIGURATION (STORAGE ONLY) ───────────────────────────────────
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || 'AIzaSyDECT1320x3kyOyifqNKST0B8FkfJFxfMs',
   authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN || 'namaste-mart-28c93.firebaseapp.com',
@@ -56,82 +21,10 @@ const firebaseConfig = {
 // ─── INITIALIZE FIREBASE (PREVENT DUPLICATES) ────────────────────────────────
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// ─── SERVICE INSTANCES ────────────────────────────────────────────────────────
-export const auth = getAuth(app);
-export const db = getFirestore(app);
+// ─── STORAGE ONLY ────────────────────────────────────────────────────────────
 export const storage = getStorage(app);
 
-// Safe Analytics Initialization for Web / Supported Environments
-let analytics: Analytics | null = null;
-if (typeof window !== 'undefined') {
-  isSupported()
-    .then((supported) => {
-      if (supported) {
-        analytics = getAnalytics(app);
-      }
-    })
-    .catch(() => {
-      // Ignore unsupported platform errors silently
-    });
-}
-export { analytics };
-
-// ─── GOOGLE AUTH PROVIDER ────────────────────────────────────────────────────
-export const googleProvider = new GoogleAuthProvider();
-googleProvider.addScope('email');
-googleProvider.addScope('profile');
-
-// ─── GOOGLE CREDENTIAL HELPER (FOR EXPO-AUTH-SESSION) ───────────────────────
-export const createGoogleCredential = (idToken: string) => {
-  return GoogleAuthProvider.credential(idToken);
-};
-
-// ─── FIRESTORE COLLECTION REFS ────────────────────────────────────────────────
-export const COLLECTIONS = {
-  PRODUCTS: 'products',
-  ORDERS: 'orders',
-  CATEGORIES: 'categories',
-  BANNERS: 'banners',
-  REVIEWS: 'reviews',
-  USERS: 'users',
-  ADMINS: 'admins',
-  ANALYTICS: 'analytics',
-  CARTS: 'carts',
-  WISHLISTS: 'wishlists',
-} as const;
-
-// ─── EXPORTS ─────────────────────────────────────────────────────────────────
 export {
-  // Auth
-  signInWithCredential,
-  signInWithCustomToken,
-  signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  updateProfile,
-  signOut,
-  onAuthStateChanged,
-  GoogleAuthProvider,
-  // Firestore
-  collection,
-  doc,
-  getDoc,
-  onSnapshot,
-  setDoc,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  getDocs,
-  query,
-  orderBy,
-  limit,
-  where,
-  serverTimestamp,
-  increment,
-  runTransaction,
-  Timestamp,
-  writeBatch,
-  // Storage
   storageRef,
   uploadBytesResumable,
   getDownloadURL,

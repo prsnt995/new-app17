@@ -1,240 +1,212 @@
 /**
- * NamasteMart Authentication Service
- * Clean wrapper around Firebase Authentication (Google & Passwordless Email OTP).
+ * NamasteMart Authentication Service (Supabase)
+ * Google OAuth + Email OTP passwordless auth via Supabase.
  */
 
-import {
-  auth,
-  googleProvider,
-  createGoogleCredential,
-  signInWithCredential,
-  signInWithCustomToken,
-  signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
-} from '@/config/firebase';
-import { User } from 'firebase/auth';
-import { sendOtp, verifyOtp, SendOtpResponse, VerifyOtpResponse } from '@/services/api';
+import { supabase, TABLES } from '@/config/supabase';
+import { User, Session, AuthError } from '@supabase/supabase-js';
 import { ensureUserDoc, getUserDoc } from '@/services/userService';
 import { FirestoreUser } from '@/types';
+import { Platform } from 'react-native';
 
-export type AuthStateCallback = (user: User | null) => void;
+export type AuthStateCallback = (user: User | null, session: Session | null) => void;
 
 export interface UnifiedAuthResult {
-  user: User | { uid: string; email: string; displayName?: string; photoURL?: string };
+  user: User;
   firestoreUser: FirestoreUser;
   isNewUser: boolean;
 }
 
-/**
- * 1. GOOGLE AUTHENTICATION (WEB)
- */
-export const signInWithGoogleWeb = async (): Promise<UnifiedAuthResult> => {
-  const result = await signInWithPopup(auth, googleProvider);
-  const firebaseUser = result.user;
+// ─── GOOGLE AUTHENTICATION ─────────────────────────────────────────────────
 
-  const uid = firebaseUser.uid;
-  const displayName = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Customer';
-  const email = firebaseUser.email || '';
-  const avatar = firebaseUser.photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400';
+/**
+ * Sign in with Google via Supabase OAuth.
+ * On web: opens a popup/redirect to Google.
+ * On native: uses Expo AuthSession redirect.
+ */
+export const signInWithGoogle = async (redirectTo?: string): Promise<void> => {
+  // On web, redirect to the current origin so Supabase can handle the callback
+  const redirect = redirectTo || (Platform.OS === 'web'
+    ? window.location.origin
+    : 'namastemart://');
+
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: redirect,
+      skipBrowserRedirect: false,
+    },
+  });
+  if (error) throw error;
+};
+
+/**
+ * Handle the OAuth callback URL (extracts tokens from deep link).
+ */
+export const handleOAuthCallback = async (url: string): Promise<Session | null> => {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) {
+    console.warn('OAuth callback notice:', error.message);
+    return null;
+  }
+  return data.session;
+};
+
+// ─── EMAIL OTP (PASSWORDLESS) ──────────────────────────────────────────────
+
+/**
+ * Send a 6-digit OTP code to the user's email via Supabase.
+ */
+export const sendEmailOtp = async (email: string): Promise<{ success: boolean; message: string }> => {
+  const { error } = await supabase.auth.signInWithOtp({
+    email: email.trim().toLowerCase(),
+    options: {
+      shouldCreateUser: true,
+    },
+  });
+
+  if (error) {
+    return { success: false, message: error.message };
+  }
+  return { success: true, message: 'Verification code sent to your email' };
+};
+
+/**
+ * Verify the OTP code and sign in.
+ */
+export const verifyEmailOtp = async (
+  email: string,
+  token: string
+): Promise<{ success: boolean; session: Session | null; error?: string }> => {
+  const { data, error } = await supabase.auth.verifyOtp({
+    email: email.trim().toLowerCase(),
+    token: token.trim(),
+    type: 'email',
+  });
+
+  if (error) {
+    return { success: false, session: null, error: error.message };
+  }
+  return { success: true, session: data.session };
+};
+
+// ─── EMAIL + PASSWORD (LEGACY/ADMIN) ───────────────────────────────────────
+
+export const loginWithEmail = async (email: string, password: string): Promise<User> => {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: email.trim(),
+    password,
+  });
+  if (error) throw error;
+  return data.user;
+};
+
+export const registerWithEmail = async (email: string, password: string): Promise<User> => {
+  const { data, error } = await supabase.auth.signUp({
+    email: email.trim(),
+    password,
+  });
+  if (error) throw error;
+  if (!data.user) throw new Error('Registration failed');
+  return data.user;
+};
+
+// ─── SESSION MANAGEMENT ────────────────────────────────────────────────────
+
+/**
+ * Get current session.
+ */
+export const getCurrentSession = async (): Promise<Session | null> => {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) {
+    console.warn('getSession notice:', error.message);
+    return null;
+  }
+  return data.session;
+};
+
+/**
+ * Get current user.
+ */
+export const getCurrentUser = async (): Promise<User | null> => {
+  const { data, error } = await supabase.auth.getUser();
+  if (error) {
+    console.warn('getUser notice:', error.message);
+    return null;
+  }
+  return data.user;
+};
+
+/**
+ * Sign out.
+ */
+export const logoutUser = async (): Promise<void> => {
+  const { error } = await supabase.auth.signOut();
+  if (error) {
+    console.warn('Sign out notice:', error.message);
+  }
+};
+
+/**
+ * Subscribe to auth state changes.
+ * Returns an unsubscribe function.
+ */
+export const subscribeToAuth = (callback: AuthStateCallback): (() => void) => {
+  const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    callback(session?.user ?? null, session);
+  });
+  return () => subscription.unsubscribe();
+};
+
+// ─── USER PROFILE SYNC ─────────────────────────────────────────────────────
+
+/**
+ * Ensure a Supabase user has a corresponding profiles row in the database.
+ * Creates one if it doesn't exist. Never overwrites existing data.
+ */
+export const ensureUserProfile = async (user: User): Promise<FirestoreUser> => {
+  const uid = user.id;
+  const email = user.email || '';
+  const name = user.user_metadata?.name || user.user_metadata?.full_name || email.split('@')[0] || 'User';
+  const avatar = user.user_metadata?.avatar || user.user_metadata?.picture || '';
 
   const firestoreUser = await ensureUserDoc(uid, {
-    name: displayName,
+    name,
     email,
     avatar,
     role: 'customer',
-    emailVerified: true,
+    emailVerified: user.email_confirmed_at ? true : false,
   });
 
-  const isNewUser = !firestoreUser.addresses || firestoreUser.addresses.length === 0;
-
-  return {
-    user: firebaseUser,
-    firestoreUser,
-    isNewUser,
-  };
+  return firestoreUser;
 };
 
 /**
- * 1. GOOGLE AUTHENTICATION (MOBILE / ID TOKEN)
- */
-export const loginWithGoogle = async (idToken: string): Promise<UnifiedAuthResult> => {
-  const credential = createGoogleCredential(idToken);
-  const result = await signInWithCredential(auth, credential);
-  const firebaseUser = result.user;
-
-  const uid = firebaseUser.uid;
-  const displayName = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Customer';
-  const email = firebaseUser.email || '';
-  const avatar = firebaseUser.photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400';
-
-  const firestoreUser = await ensureUserDoc(uid, {
-    name: displayName,
-    email,
-    avatar,
-    role: 'customer',
-    emailVerified: true,
-  });
-
-  const isNewUser = !firestoreUser.addresses || firestoreUser.addresses.length === 0;
-
-  return {
-    user: firebaseUser,
-    firestoreUser,
-    isNewUser,
-  };
-};
-
-/**
- * 2. PERSONAL EMAIL + VERIFICATION CODE: SEND OTP
- */
-export const sendEmailVerificationCode = async (email: string): Promise<SendOtpResponse> => {
-  return await sendOtp(email);
-};
-
-/**
- * 2. PERSONAL EMAIL + VERIFICATION CODE: VERIFY & AUTHENTICATE
- */
-export const verifyEmailCodeAndLogin = async (
-  email: string,
-  code: string
-): Promise<UnifiedAuthResult> => {
-  const normalizedEmail = email.trim().toLowerCase();
-
-  // Call API to verify OTP
-  const verifyRes: VerifyOtpResponse = await verifyOtp(normalizedEmail, code);
-
-  if (!verifyRes.success) {
-    throw new Error(verifyRes.message || 'Invalid or expired verification code');
-  }
-
-  let authenticatedUser: any = null;
-
-  // 1. If backend returned a Firebase Custom Token, sign in with it
-  if (verifyRes.customToken) {
-    try {
-      const cred = await signInWithCustomToken(auth, verifyRes.customToken);
-      authenticatedUser = cred.user;
-    } catch (customTokErr: any) {
-      console.warn('signInWithCustomToken notice:', customTokErr.message);
-    }
-  }
-
-  // 2. Client-side fallback if custom token not available (e.g. offline dev mode)
-  if (!authenticatedUser) {
-    const activeCurrentUser = auth.currentUser;
-    if (activeCurrentUser && activeCurrentUser.email?.toLowerCase() === normalizedEmail) {
-      authenticatedUser = activeCurrentUser;
-    } else {
-      authenticatedUser = {
-        uid: verifyRes.uid || `email-${normalizedEmail.replace(/[^a-zA-Z0-9]/g, '_')}`,
-        email: normalizedEmail,
-        displayName: normalizedEmail.split('@')[0],
-        emailVerified: true,
-      };
-    }
-  }
-
-  const finalUid = authenticatedUser.uid || verifyRes.uid;
-  const displayName =
-    authenticatedUser.displayName ||
-    verifyRes.user?.displayName ||
-    normalizedEmail.split('@')[0];
-
-  // 3. Ensure User document exists in Firestore (Unified Customer Account)
-  const firestoreUser = await ensureUserDoc(finalUid, {
-    name: displayName,
-    email: normalizedEmail,
-    role: 'customer',
-    emailVerified: true,
-  });
-
-  const isNewUser = !firestoreUser.addresses || firestoreUser.addresses.length === 0;
-
-  return {
-    user: authenticatedUser,
-    firestoreUser,
-    isNewUser,
-  };
-};
-
-/**
- * Sign in with email and password (legacy/admin).
- */
-export const loginWithEmail = async (email: string, pass: string): Promise<User> => {
-  const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
-  return cred.user;
-};
-
-/**
- * Register with email and password (legacy).
- */
-export const registerWithEmail = async (
-  email: string,
-  pass: string
-): Promise<User> => {
-  const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
-  return cred.user;
-};
-
-/**
- * Complete Step 4 Registration: Atomically save verified customer & Korean delivery address
+ * Complete customer registration (creates profile + saves Korean address).
  */
 export const completeCustomerRegistration = async (params: {
   name: string;
   phoneNumber: string;
   email: string;
   koreanAddress: import('@/types').KoreanAddress;
-  customToken?: string | null;
   uid?: string;
 }): Promise<UnifiedAuthResult> => {
-  const normalizedEmail = params.email.trim().toLowerCase();
-  let authenticatedUser: any = null;
+  const { data: { user: supabaseUser } } = await supabase.auth.getUser();
+  const uid = params.uid || supabaseUser?.id || `email-${params.email.replace(/[^a-zA-Z0-9]/g, '_')}`;
 
-  // 1. If customToken exists, attempt Firebase Auth sign-in
-  if (params.customToken) {
-    try {
-      const cred = await signInWithCustomToken(auth, params.customToken);
-      authenticatedUser = cred.user;
-    } catch (tokErr: any) {
-      console.warn('signInWithCustomToken notice:', tokErr.message);
-    }
-  }
-
-  if (!authenticatedUser) {
-    const activeCurrentUser = auth.currentUser;
-    if (activeCurrentUser && activeCurrentUser.email?.toLowerCase() === normalizedEmail) {
-      authenticatedUser = activeCurrentUser;
-    } else {
-      authenticatedUser = {
-        uid: params.uid || `email-${normalizedEmail.replace(/[^a-zA-Z0-9]/g, '_')}`,
-        email: normalizedEmail,
-        displayName: params.name.trim(),
-        phoneNumber: params.phoneNumber.trim(),
-        emailVerified: true,
-      };
-    }
-  }
-
-  const finalUid = authenticatedUser.uid || params.uid || `email-${normalizedEmail.replace(/[^a-zA-Z0-9]/g, '_')}`;
-
-  // 2. Ensure User Document exists in Firestore with phone and verified status
-  const firestoreUser = await ensureUserDoc(finalUid, {
+  const firestoreUser = await ensureUserDoc(uid, {
     name: params.name.trim(),
-    email: normalizedEmail,
+    email: params.email.trim().toLowerCase(),
     phoneNumber: params.phoneNumber.trim(),
     role: 'customer',
     emailVerified: true,
   });
 
-  // 3. Save South Korean Delivery Address to user doc and subcollection
   const { saveUserDeliveryAddress } = await import('@/services/userService');
-  await saveUserDeliveryAddress(finalUid, params.koreanAddress);
+  await saveUserDeliveryAddress(uid, params.koreanAddress);
 
   return {
-    user: authenticatedUser,
+    user: supabaseUser || { id: uid, email: params.email } as User,
     firestoreUser: {
       ...firestoreUser,
       addresses: [params.koreanAddress],
@@ -242,25 +214,4 @@ export const completeCustomerRegistration = async (params: {
     },
     isNewUser: false,
   };
-};
-
-/**
- * Sign out current user.
- */
-export const logoutUser = async (): Promise<void> => {
-  await signOut(auth);
-};
-
-/**
- * Subscribe to auth state changes.
- */
-export const subscribeToAuth = (callback: AuthStateCallback): (() => void) => {
-  return onAuthStateChanged(auth, callback);
-};
-
-/**
- * Get current authenticated user.
- */
-export const getCurrentAuthUser = (): User | null => {
-  return auth.currentUser;
 };

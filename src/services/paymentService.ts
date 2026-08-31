@@ -4,27 +4,12 @@
  * admin verification / rejection flows, and audit trail logging.
  */
 
-import {
-  db,
-  COLLECTIONS,
-  doc,
-  getDoc,
-  updateDoc,
-  collection,
-  addDoc,
-  getDocs,
-  query,
-  orderBy,
-  limit,
-  serverTimestamp,
-} from '@/config/firebase';
+import { supabase, TABLES } from '@/config/supabase';
 import { uploadPaymentProofFile, UploadProgress } from './storage';
 import { PaymentInfo, PaymentVerificationLog } from '@/types';
 
-const AUDIT_COLLECTION = 'paymentVerificationLogs';
-
 /**
- * Uploads a payment screenshot to Firebase Storage and links it to the order in Firestore.
+ * Uploads a payment screenshot to Firebase Storage and links it to the order in Supabase.
  * Updates order to PENDING_VERIFICATION and sets orderStatus to PENDING.
  */
 export const uploadAndLinkPaymentScreenshot = async (
@@ -37,14 +22,13 @@ export const uploadAndLinkPaymentScreenshot = async (
   const result = await uploadPaymentProofFile(fileUri, userId, orderId, onProgress);
   const { downloadUrl, storagePath } = result;
 
-  // 2. Update order in Firestore
-  const orderRef = doc(db, COLLECTIONS.ORDERS, orderId);
+  // 2. Update order in Supabase
   const paymentUpdate: PaymentInfo = {
     screenshotUrl: downloadUrl,
     storagePath,
     paymentProofUrl: downloadUrl,
     paymentProofStoragePath: storagePath,
-    paymentProofUploadedAt: serverTimestamp(),
+    paymentProofUploadedAt: Date.now(),
     uploaded: true,
     verified: false,
     verifiedAt: null,
@@ -53,21 +37,26 @@ export const uploadAndLinkPaymentScreenshot = async (
     paymentType: 'BANK_TRANSFER',
   };
 
-  await updateDoc(orderRef, {
-    payment: paymentUpdate,
-    paymentScreenshot: downloadUrl, // backward compatibility
-    paymentProofUrl: downloadUrl,
-    paymentProofStoragePath: storagePath,
-    paymentProofUploadedAt: serverTimestamp(),
-    paymentMethod: 'BANK_TRANSFER',
-    paymentStatus: 'PENDING_VERIFICATION',
-    status: 'Payment Submitted',
-    orderStatus: 'PENDING',
-    paymentRejectedAt: null,
-    paymentRejectedBy: null,
-    paymentRejectionReason: null,
-    updatedAt: serverTimestamp(),
-  });
+  const { error } = await supabase
+    .from(TABLES.ORDERS)
+    .update({
+      payment: paymentUpdate,
+      paymentScreenshot: downloadUrl, // backward compatibility
+      paymentProofUrl: downloadUrl,
+      paymentProofStoragePath: storagePath,
+      paymentProofUploadedAt: Date.now(),
+      paymentMethod: 'BANK_TRANSFER',
+      paymentStatus: 'PENDING_VERIFICATION',
+      status: 'Payment Submitted',
+      orderStatus: 'PENDING',
+      paymentRejectedAt: null,
+      paymentRejectedBy: null,
+      paymentRejectionReason: null,
+      updatedAt: Date.now(),
+    })
+    .eq('id', orderId);
+
+  if (error) throw error;
 
   return { downloadUrl, storagePath };
 };
@@ -84,44 +73,55 @@ export const verifyOrderPayment = async (
   customerName = 'Customer',
   orderNumber?: string
 ): Promise<void> => {
-  const orderRef = doc(db, COLLECTIONS.ORDERS, orderId);
-  const snap = await getDoc(orderRef);
-  if (!snap.exists()) throw new Error('Order not found.');
+  const { data: orderData, error: fetchError } = await supabase
+    .from(TABLES.ORDERS)
+    .select('*')
+    .eq('id', orderId)
+    .single();
 
-  const orderData = snap.data();
+  if (fetchError || !orderData) throw new Error('Order not found.');
+
   const currentPayment = orderData.payment || {};
   const actualAmount = orderAmount || orderData.totalAmount || orderData.totalKRW || 0;
   const actualCustName = customerName || orderData.customerName || orderData.customer?.name || 'Customer';
   const actualOrderNumber = orderNumber || orderData.orderNumber || orderId;
 
   // 1. Update Order Document
-  await updateDoc(orderRef, {
-    paymentStatus: 'PAID',
-    paymentVerifiedAt: serverTimestamp(),
-    paymentVerifiedBy: adminUid,
-    'payment.verified': true,
-    'payment.verifiedAt': serverTimestamp(),
-    'payment.verifiedBy': adminUid,
-    'payment.status': 'paid',
-    orderStatus: 'CONFIRMED',
-    status: 'Payment Confirmed',
-    updatedAt: serverTimestamp(),
-  });
+  const { error: updateError } = await supabase
+    .from(TABLES.ORDERS)
+    .update({
+      paymentStatus: 'PAID',
+      paymentVerifiedAt: Date.now(),
+      paymentVerifiedBy: adminUid,
+      'payment.verified': true,
+      'payment.verifiedAt': Date.now(),
+      'payment.verifiedBy': adminUid,
+      'payment.status': 'paid',
+      orderStatus: 'CONFIRMED',
+      status: 'Payment Confirmed',
+      updatedAt: Date.now(),
+    })
+    .eq('id', orderId);
+
+  if (updateError) throw updateError;
 
   // 2. Write Immutable Audit Trail Log
   try {
-    const logsCol = collection(db, AUDIT_COLLECTION);
-    await addDoc(logsCol, {
-      orderId,
-      orderNumber: actualOrderNumber,
-      action: 'VERIFIED',
-      adminUserId: adminUid,
-      adminEmail,
-      amount: actualAmount,
-      customerName: actualCustName,
-      timestamp: serverTimestamp(),
-      createdAt: Date.now(),
-    });
+    const { error: logError } = await supabase
+      .from(TABLES.PAYMENT_LOGS)
+      .insert({
+        orderId,
+        orderNumber: actualOrderNumber,
+        action: 'VERIFIED',
+        adminUserId: adminUid,
+        adminEmail,
+        amount: actualAmount,
+        customerName: actualCustName,
+        timestamp: Date.now(),
+        createdAt: Date.now(),
+      });
+
+    if (logError) throw logError;
   } catch (logErr: any) {
     console.warn('Audit log write notice:', logErr.message);
   }
@@ -140,46 +140,57 @@ export const rejectOrderPayment = async (
   customerName = 'Customer',
   orderNumber?: string
 ): Promise<void> => {
-  const orderRef = doc(db, COLLECTIONS.ORDERS, orderId);
-  const snap = await getDoc(orderRef);
-  if (!snap.exists()) throw new Error('Order not found.');
+  const { data: orderData, error: fetchError } = await supabase
+    .from(TABLES.ORDERS)
+    .select('*')
+    .eq('id', orderId)
+    .single();
 
-  const orderData = snap.data();
+  if (fetchError || !orderData) throw new Error('Order not found.');
+
   const actualAmount = orderAmount || orderData.totalAmount || orderData.totalKRW || 0;
   const actualCustName = customerName || orderData.customerName || orderData.customer?.name || 'Customer';
   const actualOrderNumber = orderNumber || orderData.orderNumber || orderId;
 
   // 1. Update Order Document
-  await updateDoc(orderRef, {
-    paymentStatus: 'REJECTED',
-    paymentRejectedAt: serverTimestamp(),
-    paymentRejectedBy: adminUid,
-    paymentRejectionReason: reason,
-    'payment.verified': false,
-    'payment.status': 'REJECTED',
-    'payment.rejectionReason': reason,
-    'payment.rejectedAt': serverTimestamp(),
-    'payment.rejectedBy': adminUid,
-    orderStatus: 'PENDING',
-    status: 'Payment Pending',
-    updatedAt: serverTimestamp(),
-  });
+  const { error: updateError } = await supabase
+    .from(TABLES.ORDERS)
+    .update({
+      paymentStatus: 'REJECTED',
+      paymentRejectedAt: Date.now(),
+      paymentRejectedBy: adminUid,
+      paymentRejectionReason: reason,
+      'payment.verified': false,
+      'payment.status': 'REJECTED',
+      'payment.rejectionReason': reason,
+      'payment.rejectedAt': Date.now(),
+      'payment.rejectedBy': adminUid,
+      orderStatus: 'PENDING',
+      status: 'Payment Pending',
+      updatedAt: Date.now(),
+    })
+    .eq('id', orderId);
+
+  if (updateError) throw updateError;
 
   // 2. Write Immutable Audit Trail Log
   try {
-    const logsCol = collection(db, AUDIT_COLLECTION);
-    await addDoc(logsCol, {
-      orderId,
-      orderNumber: actualOrderNumber,
-      action: 'REJECTED',
-      adminUserId: adminUid,
-      adminEmail,
-      reason,
-      amount: actualAmount,
-      customerName: actualCustName,
-      timestamp: serverTimestamp(),
-      createdAt: Date.now(),
-    });
+    const { error: logError } = await supabase
+      .from(TABLES.PAYMENT_LOGS)
+      .insert({
+        orderId,
+        orderNumber: actualOrderNumber,
+        action: 'REJECTED',
+        adminUserId: adminUid,
+        adminEmail,
+        reason,
+        amount: actualAmount,
+        customerName: actualCustName,
+        timestamp: Date.now(),
+        createdAt: Date.now(),
+      });
+
+    if (logError) throw logError;
   } catch (logErr: any) {
     console.warn('Audit log write notice:', logErr.message);
   }
@@ -192,14 +203,18 @@ export const getPaymentVerificationLogs = async (
   limitCount = 50
 ): Promise<PaymentVerificationLog[]> => {
   try {
-    const logsCol = collection(db, AUDIT_COLLECTION);
-    const q = query(logsCol, orderBy('createdAt', 'desc'), limit(limitCount));
-    const snap = await getDocs(q);
+    const { data, error } = await supabase
+      .from(TABLES.PAYMENT_LOGS)
+      .select('*')
+      .order('createdAt', { ascending: false })
+      .limit(limitCount);
 
-    return snap.docs.map((d) => ({
+    if (error) throw error;
+
+    return (data || []).map((d: any) => ({
       id: d.id,
-      ...(d.data() as Omit<PaymentVerificationLog, 'id'>),
-    }));
+      ...d,
+    })) as PaymentVerificationLog[];
   } catch (error) {
     console.warn('Error fetching payment verification logs:', error);
     return [];
@@ -257,5 +272,3 @@ export const getPaymentStatusBadge = (
 
   return { label: 'Payment Pending (입금 대기)', color: '#F97316', emoji: '⏳' };
 };
-
-

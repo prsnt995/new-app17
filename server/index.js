@@ -26,14 +26,14 @@ app.use('/api/payments', paymentRoutes);
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
-    service: 'NamasteMart Firebase Admin Backend',
+    service: 'NamasteMart Supabase Backend',
     timestamp: new Date().toISOString(),
   });
 });
 
 // START SERVER
 const server = app.listen(PORT, () => {
-  console.log(`🚀 Node.js Backend with Firebase Admin SDK running on http://localhost:${PORT}`);
+  console.log(`🚀 Node.js Backend with Supabase running on http://localhost:${PORT}`);
 });
 
 server.on('error', (err) => {
@@ -41,7 +41,7 @@ server.on('error', (err) => {
     const fallbackPort = Number(PORT) === 5000 ? 5001 : Number(PORT) + 1;
     console.log(`⚠️ Port ${PORT} is in use (macOS AirPlay). Switching to fallback port ${fallbackPort}...`);
     app.listen(fallbackPort, () => {
-      console.log(`🚀 Node.js Backend with Firebase Admin SDK running on http://localhost:${fallbackPort}`);
+      console.log(`🚀 Node.js Backend with Supabase running on http://localhost:${fallbackPort}`);
     });
   } else {
     console.error('Server error:', err);

@@ -1,24 +1,31 @@
 const express = require('express');
 const router = express.Router();
-const admin = require('../config/firebaseAdmin');
+const { createClient } = require('@supabase/supabase-js');
 const { sendWhatsAppNotification, formatOrderWhatsAppMessage } = require('../services/whatsapp');
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 /**
  * POST /api/orders/notify-whatsapp
- * Dispatches an automatic WhatsApp order notification to +91 9485703011
+ * Dispatches an automatic WhatsApp order notification
  */
 router.post('/notify-whatsapp', async (req, res) => {
   try {
     const { orderId, orderData } = req.body;
 
     let targetOrder = orderData;
-    let orderDocRef = null;
 
-    if (orderId) {
-      orderDocRef = admin.firestore().collection('orders').doc(orderId);
-      const docSnap = await orderDocRef.get();
-      if (docSnap.exists) {
-        targetOrder = { id: docSnap.id, ...docSnap.data() };
+    if (orderId && !targetOrder) {
+      const { data: orderDoc } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .single();
+
+      if (orderDoc) {
+        targetOrder = orderDoc;
       }
     }
 
@@ -41,19 +48,27 @@ router.post('/notify-whatsapp', async (req, res) => {
     // Dispatch WhatsApp notification
     const whatsappResult = await sendWhatsAppNotification(targetOrder);
 
-    // Update Firestore status if orderDocRef exists
-    if (orderDocRef) {
+    // Update Supabase order status
+    if (orderId) {
       if (whatsappResult.success) {
-        await orderDocRef.update({
-          whatsappNotificationSent: true,
-          whatsappSentAt: admin.firestore.FieldValue.serverTimestamp(),
-          whatsappError: null,
-        }).catch(() => {});
+        await supabase
+          .from('orders')
+          .update({
+            whatsapp_notification_sent: true,
+            whatsapp_sent_at: Date.now(),
+            whatsapp_error: null,
+          })
+          .eq('id', orderId)
+          .catch(() => {});
       } else {
-        await orderDocRef.update({
-          whatsappNotificationSent: false,
-          whatsappError: whatsappResult.error || 'Failed to send WhatsApp message',
-        }).catch(() => {});
+        await supabase
+          .from('orders')
+          .update({
+            whatsapp_notification_sent: false,
+            whatsapp_error: whatsappResult.error || 'Failed to send WhatsApp message',
+          })
+          .eq('id', orderId)
+          .catch(() => {});
       }
     }
 
@@ -83,27 +98,35 @@ router.post('/retry-whatsapp', async (req, res) => {
       return res.status(400).json({ success: false, message: 'orderId is required' });
     }
 
-    const orderDocRef = admin.firestore().collection('orders').doc(orderId);
-    const snap = await orderDocRef.get();
+    const { data: orderDoc, error: fetchError } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
 
-    if (!snap.exists) {
+    if (fetchError || !orderDoc) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    const orderData = { id: snap.id, ...snap.data() };
-    const whatsappResult = await sendWhatsAppNotification(orderData);
+    const whatsappResult = await sendWhatsAppNotification(orderDoc);
 
     if (whatsappResult.success) {
-      await orderDocRef.update({
-        whatsappNotificationSent: true,
-        whatsappSentAt: admin.firestore.FieldValue.serverTimestamp(),
-        whatsappError: null,
-      });
+      await supabase
+        .from('orders')
+        .update({
+          whatsapp_notification_sent: true,
+          whatsapp_sent_at: Date.now(),
+          whatsapp_error: null,
+        })
+        .eq('id', orderId);
     } else {
-      await orderDocRef.update({
-        whatsappNotificationSent: false,
-        whatsappError: whatsappResult.error || 'Retry failed',
-      });
+      await supabase
+        .from('orders')
+        .update({
+          whatsapp_notification_sent: false,
+          whatsapp_error: whatsappResult.error || 'Retry failed',
+        })
+        .eq('id', orderId);
     }
 
     return res.status(200).json({

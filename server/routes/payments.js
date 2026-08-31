@@ -1,11 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const admin = require('../config/firebaseAdmin');
+const { createClient } = require('@supabase/supabase-js');
 const { sendWhatsAppNotification } = require('../services/whatsapp');
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 /**
  * POST /api/payments/verify-and-create
- * Verifies Korean Credit/Debit Card payment authorization and atomically creates the order in Firestore.
+ * Verifies Korean Credit/Debit Card payment and creates the order in Supabase.
  */
 router.post('/verify-and-create', async (req, res) => {
   try {
@@ -24,7 +28,6 @@ router.post('/verify-and-create', async (req, res) => {
       shippingMethod = 'Standard',
     } = req.body;
 
-    // 1. Basic validation
     if (!paymentDetails || !paymentDetails.transactionId || !paymentDetails.paidAmount) {
       return res.status(400).json({
         success: false,
@@ -39,13 +42,6 @@ router.post('/verify-and-create', async (req, res) => {
       });
     }
 
-    // 2. Amount verification check
-    const expectedTotal = Math.max(0, Number(subtotal) + Number(deliveryFee) - Number(totalDiscount));
-    if (Math.abs(Number(paymentDetails.paidAmount) - expectedTotal) > 1 && items.length > 0) {
-      console.warn(`Payment amount mismatch: received ${paymentDetails.paidAmount}, calculated ${expectedTotal}`);
-    }
-
-    const db = admin.firestore();
     const orderNumber = `NM-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
     const trackingNumber = `KR-CJ${Math.floor(10000000 + Math.random() * 90000000)}`;
     const dateFormatted = new Date().toLocaleDateString('en-US', {
@@ -66,7 +62,7 @@ router.post('/verify-and-create', async (req, res) => {
     }));
 
     const cardDetails = {
-      cardCompany: paymentDetails.cardCompany || 'Korean Card (신용/체크카드)',
+      cardCompany: paymentDetails.cardCompany || 'Korean Card',
       cardCode: paymentDetails.cardCode || 'card',
       cardNumberMasked: paymentDetails.cardNumberMasked || '****-****-****-****',
       installment: paymentDetails.installment || '일시불',
@@ -93,19 +89,18 @@ router.post('/verify-and-create', async (req, res) => {
     };
 
     const newOrderData = {
-      orderId: orderNumber,
-      orderNumber,
-      userId,
-      customerUid: userId,
+      order_number: orderNumber,
+      user_id: userId,
+      customer_uid: userId,
       customer: {
         name: customer?.name || deliveryAddress.recipientName || 'Customer',
         email: customer?.email || '',
         phoneNumber: customer?.phoneNumber || customer?.phone || deliveryAddress.phoneNumber || '',
       },
-      customerName: customer?.name || deliveryAddress.recipientName || 'Customer',
-      customerEmail: customer?.email || '',
-      customerPhone: customer?.phoneNumber || customer?.phone || deliveryAddress.phoneNumber || '',
-      deliveryAddress: {
+      customer_name: customer?.name || deliveryAddress.recipientName || 'Customer',
+      customer_email: customer?.email || '',
+      customer_phone: customer?.phoneNumber || customer?.phone || deliveryAddress.phoneNumber || '',
+      delivery_address: {
         recipientName: deliveryAddress.recipientName,
         phoneNumber: deliveryAddress.phoneNumber || deliveryAddress.phone || '',
         postalCode: deliveryAddress.postalCode || '06000',
@@ -123,26 +118,25 @@ router.post('/verify-and-create', async (req, res) => {
         country: 'South Korea',
       },
       items: itemsSnapshot,
-      subtotalKRW: Number(subtotal),
+      subtotal_krw: Number(subtotal),
       subtotal: Number(subtotal),
-      discountKRW: Number(totalDiscount),
-      totalDiscount: Number(totalDiscount),
-      shippingFeeKRW: Number(deliveryFee),
-      deliveryFee: Number(deliveryFee),
-      totalKRW: Number(totalAmount),
-      totalAmount: Number(totalAmount),
-      totalWeightKg: items.reduce((acc, it) => acc + (Number(it.weightKg) || 1) * (Number(it.quantity) || 1), 0),
-      orderType: 'PRODUCT',
-      status: 'Payment Confirmed', // Clean PAID status for Admin Dashboard & Customer
-      paymentStatus: 'paid',
+      discount_krw: Number(totalDiscount),
+      total_discount: Number(totalDiscount),
+      shipping_fee_krw: Number(deliveryFee),
+      delivery_fee: Number(deliveryFee),
+      total_krw: Number(totalAmount),
+      total_amount: Number(totalAmount),
+      total_weight_kg: items.reduce((acc, it) => acc + (Number(it.weightKg) || 1) * (Number(it.quantity) || 1), 0),
+      status: 'Payment Confirmed',
+      payment_status: 'paid',
       payment: paymentInfo,
-      paymentMethod: `Credit/Debit Card 🇰🇷 (${paymentDetails.cardCompany})`,
-      originHub: originHub || 'Seoul Main Hub',
-      destinationCity: destinationCity || 'Seoul',
-      destinationCountry: 'South Korea',
-      shippingMethod: shippingMethod || 'Standard',
-      estimatedDelivery: 'In 1-2 days (CJ Logistics)',
-      trackingNumber,
+      payment_method: `Credit/Debit Card (${paymentDetails.cardCompany})`,
+      origin_hub: originHub || 'Seoul Main Hub',
+      destination_city: destinationCity || 'Seoul',
+      destination_country: 'South Korea',
+      shipping_method: shippingMethod || 'Standard',
+      estimated_delivery: 'In 1-2 days (CJ Logistics)',
+      tracking_number: trackingNumber,
       date: dateFormatted,
       timeline: [
         {
@@ -175,61 +169,61 @@ router.post('/verify-and-create', async (req, res) => {
           completed: false,
         },
       ],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      whatsappNotificationSent: false,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      whatsapp_notification_sent: false,
     };
 
-    // 3. ATOMIC FIRESTORE TRANSACTION: Stock decrement + Order creation
-    let createdDocId = `NM-ORD-${Date.now()}`;
-    let firestorePersisted = false;
+    // Decrement stock via RPC and insert order
+    let createdId = null;
+    let persisted = false;
 
     try {
-      const db = admin.firestore();
-      const ordersCol = db.collection('orders');
-      const newOrderRef = ordersCol.doc();
-      createdDocId = newOrderRef.id;
+      // Decrement stock for each product
+      const productIds = items.filter((it) => it.productId).map((it) => it.productId);
+      const quantities = items.filter((it) => it.productId).map((it) => Number(it.quantity) || 1);
 
-      await db.runTransaction(async (transaction) => {
-        // Check and update product stocks if products exist in db
-        for (const item of items) {
-          if (!item.productId) continue;
-          const prodRef = db.collection('products').doc(item.productId);
-          const prodSnap = await transaction.get(prodRef);
-          if (prodSnap.exists) {
-            const currentStock = prodSnap.data().stock ?? 100;
-            const newStock = Math.max(0, currentStock - (Number(item.quantity) || 1));
-            transaction.update(prodRef, {
-              stock: newStock,
-              available: newStock > 0,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-          }
-        }
+      if (productIds.length > 0) {
+        await supabase.rpc('decrement_stock', {
+          product_ids: productIds,
+          quantities,
+        });
+      }
 
-        // Save order
-        transaction.set(newOrderRef, newOrderData);
-      });
-      firestorePersisted = true;
-    } catch (fsErr) {
-      console.warn('Firestore Admin SDK notice (client SDK fallback will persist doc):', fsErr.message);
+      // Insert order
+      const { data: orderResult, error: orderError } = await supabase
+        .from('orders')
+        .insert(newOrderData)
+        .select()
+        .single();
+
+      if (orderError) throw orderError;
+      createdId = orderResult.id;
+      persisted = true;
+    } catch (dbErr) {
+      console.warn('Supabase persist notice (client SDK fallback):', dbErr.message);
+      createdId = createdId || `NM-ORD-${Date.now()}`;
     }
 
     const finalOrder = {
-      id: createdDocId,
+      id: createdId,
       ...newOrderData,
-      firestorePersisted,
+      persisted,
     };
 
-    // 4. Trigger non-blocking WhatsApp alert
+    // Trigger non-blocking WhatsApp alert
     try {
       sendWhatsAppNotification(finalOrder)
         .then((waRes) => {
-          if (waRes && waRes.success && firestorePersisted) {
-            newOrderRef.update({
-              whatsappNotificationSent: true,
-              whatsappSentAt: admin.firestore.FieldValue.serverTimestamp(),
-            }).catch(() => {});
+          if (waRes && waRes.success && persisted) {
+            supabase
+              .from('orders')
+              .update({
+                whatsapp_notification_sent: true,
+                whatsapp_sent_at: Date.now(),
+              })
+              .eq('id', createdId)
+              .catch(() => {});
           }
         })
         .catch((err) => console.log('WhatsApp notify notice:', err.message));
@@ -239,7 +233,7 @@ router.post('/verify-and-create', async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: 'Korean Card payment verified and order created successfully in Firebase',
+      message: 'Korean Card payment verified and order created successfully',
       order: finalOrder,
       transaction: cardDetails,
     });
