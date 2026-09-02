@@ -1,88 +1,79 @@
 /**
- * NamasteMart Bank Transfer Settings Service
- * Dynamically fetches, saves, and listens to bank account configurations via Supabase.
+ * NamasteMart Bank Transfer Settings Service (Firestore + Fallback)
+ * Fetches, saves, and listens to paymentSettings/bankTransfer in Firestore.
  */
 
-import { supabase, TABLES } from '@/config/supabase';
+import {
+  db,
+  doc,
+  getDoc,
+  setDoc,
+  onSnapshot,
+  serverTimestamp,
+} from '@/config/firebase';
 import { BankTransferSettings } from '@/types';
 
 export const DEFAULT_BANK_SETTINGS: BankTransferSettings = {
   bankName: 'Woori Bank (우리은행)',
   bankNameKr: '우리은행',
-  accountNumber: '1002364650197',
-  accountHolder: 'PARSHANT',
-  instructions: 'Please transfer the exact amount to PARSHANT (우리: 1002364650197 / 국민: 80640200121099 / 신한: 110623385560 / 토스뱅크: 1002-7078-9681) and upload your payment screenshot below.',
+  accountNumber: '1002340390276',
+  accountHolder: '박기삼',
+  bankCode: '020',
+  instructions: 'Please transfer the exact amount to 박기삼 (우리은행: 1002340390276) and upload your payment screenshot below.',
   paymentDeadlineHours: 24,
   enabled: true,
+  currency: 'KRW',
 };
 
-const BANK_SETTINGS_KEY = 'bankTransfer';
+const SETTINGS_COLLECTION = 'paymentSettings';
+const BANK_SETTINGS_DOC = 'bankTransfer';
 
 /**
- * Get current Bank Transfer settings from Supabase with sensible fallback.
+ * Get current Bank Transfer settings from Firestore with default fallback.
  */
 export const getBankTransferSettings = async (): Promise<BankTransferSettings> => {
   try {
-    const { data, error } = await supabase
-      .from(TABLES.SETTINGS)
-      .select('*')
-      .eq('key', BANK_SETTINGS_KEY)
-      .single();
+    const docRef = doc(db, SETTINGS_COLLECTION, BANK_SETTINGS_DOC);
+    const snap = await getDoc(docRef);
 
-    if (error) {
-      console.warn('Error fetching bank transfer settings:', error.message);
-      try {
-        await supabase.from(TABLES.SETTINGS).upsert({
-          key: BANK_SETTINGS_KEY,
-          value: DEFAULT_BANK_SETTINGS,
-          updated_at: Date.now(),
-        }, { onConflict: 'key' });
-      } catch {}
-      return DEFAULT_BANK_SETTINGS;
+    if (snap.exists()) {
+      const data = snap.data();
+      return {
+        ...DEFAULT_BANK_SETTINGS,
+        ...data,
+      } as BankTransferSettings;
     }
 
-    if (data) {
-      const stored = (data as any).value as Partial<BankTransferSettings> | undefined;
-      if (stored && typeof stored === 'object' && (stored as any).bankName) {
-        return { ...DEFAULT_BANK_SETTINGS, ...stored };
-      }
-    }
+    // Initialize document in Firestore if missing
+    try {
+      await setDoc(docRef, {
+        ...DEFAULT_BANK_SETTINGS,
+        updatedAt: serverTimestamp(),
+      });
+    } catch {}
 
     return DEFAULT_BANK_SETTINGS;
   } catch (error) {
-    console.warn('Notice: Using local default bank transfer settings:', error);
+    console.warn('Notice: Using default bank transfer settings:', error);
     return DEFAULT_BANK_SETTINGS;
   }
 };
 
 /**
- * Save or update Bank Transfer settings in Supabase (Admin only).
+ * Save or update Bank Transfer settings in Firestore (Admin action).
  */
 export const updateBankTransferSettings = async (
   settings: Partial<BankTransferSettings>,
   _adminUid?: string
 ): Promise<BankTransferSettings> => {
-  const { data: existing } = await supabase
-    .from(TABLES.SETTINGS)
-    .select('value')
-    .eq('key', BANK_SETTINGS_KEY)
-    .single();
+  const docRef = doc(db, SETTINGS_COLLECTION, BANK_SETTINGS_DOC);
 
-  const currentValue = ((existing as any)?.value as Record<string, any>) || {};
-  const mergedValue = { ...currentValue, ...settings };
+  const payload: Record<string, any> = {
+    ...settings,
+    updatedAt: serverTimestamp(),
+  };
 
-  const { error } = await supabase
-    .from(TABLES.SETTINGS)
-    .upsert({
-      key: BANK_SETTINGS_KEY,
-      value: mergedValue,
-      updated_at: Date.now(),
-    }, { onConflict: 'key' });
-
-  if (error) {
-    console.error('Error updating bank transfer settings:', error.message);
-    throw error;
-  }
+  await setDoc(docRef, payload, { merge: true });
 
   return {
     ...DEFAULT_BANK_SETTINGS,
@@ -91,43 +82,36 @@ export const updateBankTransferSettings = async (
 };
 
 /**
- * Subscribe to real-time updates for Bank Transfer settings.
+ * Subscribe to real-time updates for Bank Transfer settings in Firestore.
  */
 export const subscribeBankTransferSettings = (
   onUpdate: (settings: BankTransferSettings) => void
 ): (() => void) => {
-  const channel = supabase
-    .channel('bank-transfer-settings')
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: TABLES.SETTINGS,
-        filter: `key=eq.${BANK_SETTINGS_KEY}`,
-      },
-      (payload) => {
-        if (payload.eventType === 'DELETE') {
+  try {
+    const docRef = doc(db, SETTINGS_COLLECTION, BANK_SETTINGS_DOC);
+    const unsubscribe = onSnapshot(
+      docRef,
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          onUpdate({
+            ...DEFAULT_BANK_SETTINGS,
+            ...data,
+          } as BankTransferSettings);
+        } else {
           onUpdate(DEFAULT_BANK_SETTINGS);
-          return;
         }
-        const data = payload.new as Record<string, any>;
-        const stored = (data?.value as Partial<BankTransferSettings>) || {};
-        onUpdate({
-          ...DEFAULT_BANK_SETTINGS,
-          ...stored,
-        });
-      }
-    )
-    .subscribe((status) => {
-      if (status === 'CHANNEL_ERROR') {
-        console.warn('Bank settings subscription notice: Channel error');
+      },
+      (error) => {
+        console.warn('Bank settings subscription notice:', error.message);
         onUpdate(DEFAULT_BANK_SETTINGS);
       }
-    });
+    );
 
-  // Return unsubscribe function
-  return () => {
-    supabase.removeChannel(channel);
-  };
+    return unsubscribe;
+  } catch (err) {
+    console.warn('Error setting up bank settings subscription:', err);
+    onUpdate(DEFAULT_BANK_SETTINGS);
+    return () => {};
+  }
 };

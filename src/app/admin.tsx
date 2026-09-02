@@ -34,11 +34,15 @@ import {
   updateParcelStatusByAdmin,
 } from '@/services/orderService';
 import { subscribeAllUsersAdmin } from '@/services/userService';
+import { verifyOrderPayment, rejectOrderPayment } from '@/services/paymentService';
 import {
-  verifyOrderPayment,
-  rejectOrderPayment,
+  subscribeToPendingPaymentsAdmin,
+  subscribeToPaymentLogsAdmin,
+  verifyBankTransferPaymentAdmin,
+  rejectBankTransferPaymentAdmin,
   getPaymentVerificationLogs,
-} from '@/services/paymentService';
+  FirestorePayment,
+} from '@/services/firestorePaymentService';
 import {
   getBankTransferSettings,
   updateBankTransferSettings,
@@ -160,13 +164,16 @@ export default function AdminScreen() {
   const [isSavingBankSettings, setIsSavingBankSettings] = useState(false);
 
   // ── PAYMENT VERIFICATION & AUDIT TRAIL STATES ───────────────────────────
+  const [firestorePendingPayments, setFirestorePendingPayments] = useState<FirestorePayment[]>([]);
   const [verificationLogs, setVerificationLogs] = useState<PaymentVerificationLog[]>([]);
   const [paymentVerificationSearch, setPaymentVerificationSearch] = useState('');
   const [paymentVerificationSubTab, setPaymentVerificationSubTab] = useState<'PENDING' | 'AUDIT_LOGS'>('PENDING');
-  const [rejectModalOrder, setRejectModalOrder] = useState<OrderItem | null>(null);
+  const [rejectModalOrder, setRejectModalOrder] = useState<OrderItem | FirestorePayment | any | null>(null);
   const [rejectReasonText, setRejectReasonText] = useState('입금자명 또는 입금액 불일치 (Sender name or amount mismatch)');
   const [screenshotModalUrl, setScreenshotModalUrl] = useState<string | null>(null);
   const [isProcessingAction, setIsProcessingAction] = useState(false);
+  const [newPaymentAlert, setNewPaymentAlert] = useState<string | null>(null);
+  const [receivedAmountMap, setReceivedAmountMap] = useState<Record<string, string>>({});
 
   // ── SEARCH & FILTER STATES ──────────────────────────────────────────────
   const [productSearch, setProductSearch] = useState('');
@@ -244,6 +251,32 @@ export default function AdminScreen() {
     if (!isAuthenticated) return;
     const unsub = subscribeAllUsersAdmin((users) => {
       setAllCustomers(users);
+    });
+    return () => unsub();
+  }, [isAuthenticated]);
+
+  // ── SUBSCRIBE TO PENDING BANK TRANSFER PAYMENTS IN REAL TIME ────────────
+  const prevPaymentCountRef = useRef<number>(0);
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const unsub = subscribeToPendingPaymentsAdmin((payments) => {
+      setFirestorePendingPayments(payments);
+      if (payments.length > prevPaymentCountRef.current && prevPaymentCountRef.current > 0) {
+        const latest = payments[0];
+        setNewPaymentAlert(
+          `🔔 New Payment Verification Request: Order #${latest.orderNumber || latest.orderId} (₩${(latest.expectedAmount || latest.uploadedAmount || 0).toLocaleString()}) from ${latest.customerName || latest.senderName || 'Customer'}`
+        );
+      }
+      prevPaymentCountRef.current = payments.length;
+    });
+    return () => unsub();
+  }, [isAuthenticated]);
+
+  // ── SUBSCRIBE TO VERIFICATION LOGS IN REAL TIME ─────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const unsub = subscribeToPaymentLogsAdmin((logs) => {
+      setVerificationLogs(logs);
     });
     return () => unsub();
   }, [isAuthenticated]);
@@ -535,12 +568,37 @@ export default function AdminScreen() {
 
     setProductLoading(true);
     try {
+      let finalImageUrl = fImage;
+      const isLocalUri = finalImageUrl && (
+        finalImageUrl.startsWith('file:') ||
+        finalImageUrl.startsWith('content:') ||
+        finalImageUrl.startsWith('ph:') ||
+        finalImageUrl.startsWith('blob:')
+      );
+
+      if (isLocalUri) {
+        try {
+          const uploadRes = await uploadProductImage(finalImageUrl, fName.trim() || 'product');
+          finalImageUrl = uploadRes.downloadUrl;
+          setFImage(finalImageUrl);
+        } catch (uploadErr: any) {
+          console.log('Failed to upload image before save:', uploadErr.message);
+          Alert.alert('Upload Error', `Failed to upload image to Firebase Storage: ${uploadErr.message}`);
+          setProductLoading(false);
+          return;
+        }
+      }
+
+      const defaultFallback = 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500';
+      const resolvedImg = finalImageUrl || defaultFallback;
+
       const payload: Partial<Product> = {
         name: fName.trim(),
         category: fCategory,
         description: fDescription.trim(),
-        image: fImage || 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500',
-        imageUrl: fImage || 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500',
+        image: resolvedImg,
+        imageUrl: resolvedImg,
+        images: [resolvedImg],
         priceKRW: price,
         oldPriceKRW: discount > 0 ? price : 0,
         discountPercent: discount,
@@ -666,22 +724,48 @@ export default function AdminScreen() {
     }
   }, [isAuthenticated, loadVerificationLogs]);
 
-  const handleVerifyPayment = async (orderId: string, amount?: number, custName?: string, oNum?: string) => {
+  const handleVerifyPayment = async (
+    orderId: string,
+    amount?: number,
+    custName?: string,
+    oNum?: string,
+    paymentId?: string,
+    txId?: string,
+    adminNote?: string
+  ) => {
     try {
       setIsProcessingAction(true);
       const targetOrder = allOrders.find((o) => o.id === orderId);
-      const finalAmount = amount || targetOrder?.totalAmount || targetOrder?.totalKRW || 0;
-      const finalCustName = custName || targetOrder?.customerName || targetOrder?.customer?.name || 'Customer';
-      const finalOrderNumber = oNum || targetOrder?.orderNumber || orderId;
-
-      await verifyOrderPayment(
-        orderId,
-        user?.id || 'admin',
-        user?.email || 'admin@namastemart.com',
-        finalAmount,
-        finalCustName,
-        finalOrderNumber
+      const targetPayment = firestorePendingPayments.find(
+        (p) => p.orderId === orderId || p.paymentId === paymentId
       );
+
+      const finalAmount =
+        amount ||
+        targetPayment?.expectedAmount ||
+        targetOrder?.totalAmount ||
+        targetOrder?.totalKRW ||
+        0;
+      const finalCustName =
+        custName ||
+        targetPayment?.customerName ||
+        targetOrder?.customerName ||
+        targetOrder?.customer?.name ||
+        'Customer';
+      const finalOrderNumber =
+        oNum || targetPayment?.orderNumber || targetOrder?.orderNumber || orderId;
+      const finalPaymentId =
+        paymentId || targetPayment?.paymentId || (targetOrder as any)?.paymentId || `pay_${orderId}`;
+
+      await verifyBankTransferPaymentAdmin({
+        paymentId: finalPaymentId,
+        orderId,
+        receivedAmount: finalAmount,
+        adminUid: user?.id || 'admin',
+        adminEmail: user?.email || 'admin@namastemart.com',
+        transactionId: txId || `TX-${Date.now()}`,
+        note: adminNote || 'Bank transaction verified by store admin',
+      });
 
       // Optimistically update local orders
       setAllOrders((prev) =>
@@ -689,9 +773,9 @@ export default function AdminScreen() {
           o.id === orderId
             ? {
                 ...o,
-                paymentStatus: 'PAID' as any,
+                paymentStatus: 'paid' as any,
                 status: 'Payment Confirmed' as any,
-                orderStatus: 'CONFIRMED' as any,
+                orderStatus: 'confirmed' as any,
                 payment: {
                   ...o.payment,
                   verified: true,
@@ -704,14 +788,19 @@ export default function AdminScreen() {
         )
       );
 
+      // Optimistically filter out from pending payments
+      setFirestorePendingPayments((prev) =>
+        prev.filter((p) => p.orderId !== orderId && p.paymentId !== finalPaymentId)
+      );
+
       if (selectedOrder && selectedOrder.id === orderId) {
         setSelectedOrder((prev) =>
           prev
             ? {
                 ...prev,
-                paymentStatus: 'PAID' as any,
+                paymentStatus: 'paid' as any,
                 status: 'Payment Confirmed' as any,
-                orderStatus: 'CONFIRMED' as any,
+                orderStatus: 'confirmed' as any,
                 payment: {
                   ...prev.payment,
                   verified: true,
@@ -726,41 +815,46 @@ export default function AdminScreen() {
 
       loadVerificationLogs();
       setIsProcessingAction(false);
-      Alert.alert('Payment Verified ✅', `Order ${finalOrderNumber} marked as PAID. Status updated to Confirmed.`);
+      Alert.alert(
+        'Payment Verified ✅',
+        `Order ${finalOrderNumber} has been verified and confirmed.`
+      );
     } catch (err: any) {
       setIsProcessingAction(false);
-      Alert.alert('Verification Error', err.message || 'Failed to verify payment.');
+      Alert.alert('Verification Notice', err.message || 'Failed to verify payment.');
     }
   };
 
-  const handleOpenRejectModal = (order: OrderItem) => {
-    setRejectModalOrder(order);
+  const handleOpenRejectModal = (orderOrPayment: any) => {
+    setRejectModalOrder(orderOrPayment);
     setRejectReasonText('입금자명 또는 입금액 불일치 (Sender name or amount mismatch)');
   };
 
   const handleRejectPayment = (orderId: string) => {
     const order = allOrders.find((o) => o.id === orderId);
-    if (order) {
-      handleOpenRejectModal(order);
-    }
+    const payment = firestorePendingPayments.find((p) => p.orderId === orderId);
+    handleOpenRejectModal(order || payment || { id: orderId, orderId });
   };
 
   const handleConfirmRejection = async () => {
     if (!rejectModalOrder) return;
-    const orderId = rejectModalOrder.id;
-    const reason = rejectReasonText.trim() || '입금 확인증 식별 불가 (Screenshot illegible / Invalid proof)';
+    const orderId = rejectModalOrder.orderId || rejectModalOrder.id;
+    const paymentId =
+      rejectModalOrder.paymentId ||
+      (rejectModalOrder as any).payment?.paymentId ||
+      `pay_${orderId}`;
+    const reason =
+      rejectReasonText.trim() || '입금 확인증 식별 불가 (Screenshot illegible / Invalid proof)';
 
     try {
       setIsProcessingAction(true);
-      await rejectOrderPayment(
+      await rejectBankTransferPaymentAdmin({
+        paymentId,
         orderId,
-        user?.id || 'admin',
+        adminUid: user?.id || 'admin',
+        adminEmail: user?.email || 'admin@namastemart.com',
         reason,
-        user?.email || 'admin@namastemart.com',
-        rejectModalOrder.totalAmount || rejectModalOrder.totalKRW || 0,
-        rejectModalOrder.customerName || rejectModalOrder.customer?.name || 'Customer',
-        rejectModalOrder.orderNumber || orderId
-      );
+      });
 
       // Optimistically update local orders
       setAllOrders((prev) =>
@@ -768,19 +862,26 @@ export default function AdminScreen() {
           o.id === orderId
             ? {
                 ...o,
-                paymentStatus: 'REJECTED' as any,
+                paymentStatus: 'rejected' as any,
                 paymentRejectionReason: reason,
-                status: 'Payment Pending' as any,
-                orderStatus: 'PENDING' as any,
+                status: 'Payment Rejected' as any,
+                orderStatus: 'awaiting_payment' as any,
                 payment: {
                   ...o.payment,
                   verified: false,
-                  status: 'REJECTED' as any,
+                  status: 'rejected' as any,
                   rejectionReason: reason,
+                  rejectedAt: Date.now(),
+                  rejectedBy: user?.id || 'admin',
                 } as any,
               }
             : o
         )
+      );
+
+      // Remove from pending queue
+      setFirestorePendingPayments((prev) =>
+        prev.filter((p) => p.orderId !== orderId && p.paymentId !== paymentId)
       );
 
       if (selectedOrder && selectedOrder.id === orderId) {
@@ -788,23 +889,22 @@ export default function AdminScreen() {
           prev
             ? {
                 ...prev,
-                paymentStatus: 'REJECTED' as any,
+                paymentStatus: 'rejected' as any,
                 paymentRejectionReason: reason,
-                payment: {
-                  ...prev.payment,
-                  verified: false,
-                  status: 'REJECTED' as any,
-                  rejectionReason: reason,
-                } as any,
+                status: 'Payment Rejected' as any,
+                orderStatus: 'awaiting_payment' as any,
               }
             : null
         );
       }
 
-      setRejectModalOrder(null);
       loadVerificationLogs();
+      setRejectModalOrder(null);
       setIsProcessingAction(false);
-      Alert.alert('Payment Rejected ❌', `Order marked as REJECTED. Customer has been notified to upload new proof.`);
+      Alert.alert(
+        'Payment Rejected ❌',
+        `Order payment marked as rejected with reason: "${reason}".`
+      );
     } catch (err: any) {
       setIsProcessingAction(false);
       Alert.alert('Rejection Error', err.message || 'Failed to reject payment.');
@@ -1164,6 +1264,7 @@ export default function AdminScreen() {
               <PaymentVerificationSection
                 S={S}
                 orders={pendingPaymentOrders}
+                firestorePayments={firestorePendingPayments}
                 logs={verificationLogs}
                 subTab={paymentVerificationSubTab}
                 setSubTab={setPaymentVerificationSubTab}
@@ -1175,6 +1276,11 @@ export default function AdminScreen() {
                 onPreviewScreenshot={setScreenshotModalUrl}
                 isProcessing={isProcessingAction}
                 isDarkMode={isDarkMode}
+                newPaymentAlert={newPaymentAlert}
+                onDismissAlert={() => setNewPaymentAlert(null)}
+                receivedAmounts={receivedAmountMap}
+                setReceivedAmounts={setReceivedAmountMap}
+                stats={stats}
               />
             )}
 
@@ -2494,6 +2600,7 @@ function DiscountsManagementSection({ S, products, filter, setFilter, onApplyDis
 function PaymentVerificationSection({
   S,
   orders,
+  firestorePayments,
   logs,
   subTab,
   setSubTab,
@@ -2505,19 +2612,253 @@ function PaymentVerificationSection({
   onPreviewScreenshot,
   isProcessing,
   isDarkMode,
+  newPaymentAlert,
+  onDismissAlert,
+  receivedAmounts,
+  setReceivedAmounts,
+  stats,
 }: any) {
+  // Merge orders and firestorePayments without duplicates
+  const unifiedPendingItems = useMemo(() => {
+    const list: any[] = [];
+    const seenOrderIds = new Set<string>();
+
+    // Add orders that are pending verification
+    (orders || []).forEach((order: OrderItem) => {
+      seenOrderIds.add(order.id);
+      if (order.orderNumber) seenOrderIds.add(order.orderNumber);
+      list.push({
+        id: order.id,
+        orderId: order.id,
+        orderNumber: order.orderNumber || order.id.slice(-8),
+        customerName:
+          order.customerName ||
+          order.customer?.name ||
+          order.recipient?.name ||
+          'Customer',
+        customerPhone:
+          order.customerPhone ||
+          order.customer?.phoneNumber ||
+          order.recipient?.phone ||
+          order.deliveryAddress?.phoneNumber ||
+          'N/A',
+        customerEmail: order.customer?.email || 'N/A',
+        deliveryAddress:
+          order.deliveryAddress?.address ||
+          order.recipient?.address ||
+          'South Korea',
+        detailAddress: order.deliveryAddress?.detailAddress || '',
+        senderName:
+          order.senderName ||
+          order.customerName ||
+          order.customer?.name ||
+          'Customer',
+        expectedAmount: order.totalAmount || order.totalKRW || 0,
+        uploadedAmount:
+          (order.payment as any)?.uploadedAmount ||
+          order.totalAmount ||
+          order.totalKRW ||
+          0,
+        screenshotUrl:
+          order.paymentProofUrl ||
+          order.payment?.screenshotUrl ||
+          order.paymentScreenshot,
+        createdAt: order.createdAt || Date.now(),
+        items: order.items || [],
+        paymentId: (order.payment as any)?.paymentId || (order as any).paymentId || `pay_${order.id}`,
+        status: order.status || 'Payment Submitted',
+        source: 'order',
+      });
+    });
+
+    // Add firestore payments if not already included
+    (firestorePayments || []).forEach((payment: FirestorePayment) => {
+      if (!seenOrderIds.has(payment.orderId) && !seenOrderIds.has(payment.paymentId)) {
+        list.push({
+          id: payment.paymentId,
+          orderId: payment.orderId,
+          orderNumber: payment.orderNumber || payment.orderId,
+          customerName: payment.customerName || 'Customer',
+          customerPhone: payment.customerPhone || 'N/A',
+          customerEmail: payment.customerEmail || 'N/A',
+          deliveryAddress: (payment as any).deliveryAddress || 'South Korea',
+          detailAddress: '',
+          senderName: payment.senderName || payment.customerName || 'Customer',
+          expectedAmount: payment.expectedAmount || 0,
+          uploadedAmount: payment.uploadedAmount || payment.expectedAmount || 0,
+          screenshotUrl: payment.screenshotUrl,
+          createdAt: payment.createdAt || Date.now(),
+          items: [],
+          paymentId: payment.paymentId,
+          status: 'under_review',
+          source: 'payment',
+        });
+      }
+    });
+
+    if (!search) return list;
+    const q = search.toLowerCase();
+    return list.filter(
+      (item) =>
+        (item.orderNumber || '').toLowerCase().includes(q) ||
+        (item.customerName || '').toLowerCase().includes(q) ||
+        (item.senderName || '').toLowerCase().includes(q) ||
+        (item.customerPhone || '').toLowerCase().includes(q)
+    );
+  }, [orders, firestorePayments, search]);
+
+  const todayVerifiedCount = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return (logs || []).filter(
+      (l: PaymentVerificationLog) =>
+        l.action === 'VERIFIED' &&
+        l.timestamp &&
+        new Date(l.timestamp).toISOString().slice(0, 10) === today
+    ).length;
+  }, [logs]);
+
   return (
     <View style={S.panelContainer}>
+      {/* ── REAL-TIME NEW PAYMENT ALERT BANNER ──────────────────────────── */}
+      {newPaymentAlert && (
+        <View
+          style={{
+            backgroundColor: '#1E40AF',
+            borderRadius: 12,
+            padding: 14,
+            marginBottom: 16,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            borderWidth: 1,
+            borderColor: '#3B82F6',
+            shadowColor: '#1E40AF',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.3,
+            shadowRadius: 8,
+            elevation: 4,
+          }}
+        >
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Text style={{ fontSize: 22 }}>🔔</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#FFFFFF', fontWeight: '900', fontSize: 13 }}>
+                Live Firestore Notification
+              </Text>
+              <Text style={{ color: '#E0E7FF', fontSize: 12, marginTop: 2 }}>
+                {newPaymentAlert}
+              </Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            onPress={onDismissAlert}
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 4,
+              backgroundColor: 'rgba(255,255,255,0.2)',
+              borderRadius: 6,
+            }}
+          >
+            <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '800' }}>Dismiss ✕</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* ── SECTION HEADER & METRIC SUMMARY CARDS ───────────────────────── */}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
         <View style={{ flex: 1 }}>
-          <Text style={S.panelHeading}>Payment Verification ({orders.length})</Text>
+          <Text style={S.panelHeading}>Payment Verification Dashboard</Text>
           <Text style={S.panelSub}>
-            Inspect customer bank transfer screenshot proofs & verify receipt into bank account
+            Inspect customer bank transfer screenshots & verify deposits before order confirmation
           </Text>
         </View>
-        <View style={[S.statusBadgePill, { backgroundColor: '#F59E0B' }]}>
+        <View
+          style={[
+            S.statusBadgePill,
+            { backgroundColor: unifiedPendingItems.length > 0 ? '#F59E0B' : '#10B981' },
+          ]}
+        >
           <Text style={[S.statusBadgePillText, { color: '#FFFFFF', fontWeight: '900' }]}>
-            {orders.length} PENDING
+            {unifiedPendingItems.length} PENDING
+          </Text>
+        </View>
+      </View>
+
+      {/* 4 SUMMARY STAT CARDS */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 14, marginBottom: 8 }}>
+        <View
+          style={{
+            flex: 1,
+            minWidth: 140,
+            backgroundColor: isDarkMode ? '#222' : '#FEF3C7',
+            padding: 12,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: '#F59E0B',
+          }}
+        >
+          <Text style={{ fontSize: 11, color: isDarkMode ? '#F59E0B' : '#92400E', fontWeight: '800' }}>
+            ⏳ Pending Verification
+          </Text>
+          <Text style={{ fontSize: 20, fontWeight: '900', color: isDarkMode ? '#FFF' : '#B45309', marginTop: 4 }}>
+            {unifiedPendingItems.length} orders
+          </Text>
+        </View>
+
+        <View
+          style={{
+            flex: 1,
+            minWidth: 140,
+            backgroundColor: isDarkMode ? '#222' : '#ECFDF5',
+            padding: 12,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: '#10B981',
+          }}
+        >
+          <Text style={{ fontSize: 11, color: '#047857', fontWeight: '800' }}>
+            💳 Today's Verified
+          </Text>
+          <Text style={{ fontSize: 20, fontWeight: '900', color: isDarkMode ? '#FFF' : '#047857', marginTop: 4 }}>
+            {todayVerifiedCount} verified
+          </Text>
+        </View>
+
+        <View
+          style={{
+            flex: 1,
+            minWidth: 140,
+            backgroundColor: isDarkMode ? '#222' : '#EFF6FF',
+            padding: 12,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: '#3B82F6',
+          }}
+        >
+          <Text style={{ fontSize: 11, color: '#1D4976', fontWeight: '800' }}>
+            💰 Today's Sales (KRW)
+          </Text>
+          <Text style={{ fontSize: 20, fontWeight: '900', color: isDarkMode ? '#FFF' : '#1D4ED8', marginTop: 4 }}>
+            ₩{(stats?.todaySalesAmount || 0).toLocaleString()}
+          </Text>
+        </View>
+
+        <View
+          style={{
+            flex: 1,
+            minWidth: 140,
+            backgroundColor: isDarkMode ? '#222' : '#F8FAFC',
+            padding: 12,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: '#CBD5E1',
+          }}
+        >
+          <Text style={{ fontSize: 11, color: isDarkMode ? '#CCC' : '#475569', fontWeight: '800' }}>
+            📦 Total Orders
+          </Text>
+          <Text style={{ fontSize: 20, fontWeight: '900', color: isDarkMode ? '#FFF' : '#0F172A', marginTop: 4 }}>
+            {(orders || []).length} total
           </Text>
         </View>
       </View>
@@ -2529,7 +2870,7 @@ function PaymentVerificationSection({
           onPress={() => setSubTab('PENDING')}
         >
           <Text style={[S.filterChipText, subTab === 'PENDING' && S.filterChipTextActive]}>
-            ⏳ Pending Verification ({orders.length})
+            ⏳ Pending Verification Queue ({unifiedPendingItems.length})
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -2549,7 +2890,7 @@ function PaymentVerificationSection({
             <Text style={S.searchIcon}>🔍</Text>
             <TextInput
               style={S.searchInput}
-              placeholder="Search by order ID, sender name, customer, or phone..."
+              placeholder="Search by order number, sender name, customer name, or phone..."
               placeholderTextColor={isDarkMode ? '#666' : '#999'}
               value={search}
               onChangeText={setSearch}
@@ -2557,7 +2898,7 @@ function PaymentVerificationSection({
           </View>
 
           {/* Pending Queue Orders */}
-          {orders.length === 0 ? (
+          {unifiedPendingItems.length === 0 ? (
             <View style={S.emptyStateBox}>
               <Text style={{ fontSize: 44 }}>🎉</Text>
               <Text style={S.emptyTitle}>All Bank Payments Verified</Text>
@@ -2566,108 +2907,267 @@ function PaymentVerificationSection({
               </Text>
             </View>
           ) : (
-            orders.map((order: OrderItem) => {
-              const screenshotUri =
-                order.paymentProofUrl ||
-                order.payment?.screenshotUrl ||
-                order.paymentScreenshot;
-              const sender = order.senderName || order.customerName || order.customer?.name || order.recipient?.name || 'Customer';
-              const totalKRW = order.totalAmount || order.totalKRW || 0;
+            unifiedPendingItems.map((item: any) => {
+              const itemKey = item.id || item.orderId;
+              const expectedAmount = item.expectedAmount || 0;
+              const uploadedAmount = item.uploadedAmount || expectedAmount;
+
+              // Current admin received input value (defaults to string of expectedAmount)
+              const adminReceivedStr =
+                receivedAmounts[itemKey] !== undefined
+                  ? receivedAmounts[itemKey]
+                  : String(expectedAmount);
+              const adminReceivedNum = parseInt(adminReceivedStr, 10) || 0;
+
+              const isMatch = adminReceivedNum === expectedAmount;
+              const isCustomerAmountDifferent = uploadedAmount !== expectedAmount;
 
               return (
-                <View key={order.id} style={[S.orderCard, { borderLeftWidth: 4, borderLeftColor: '#F59E0B' }]}>
-                  {/* Header */}
+                <View
+                  key={itemKey}
+                  style={[
+                    S.orderCard,
+                    {
+                      borderLeftWidth: 5,
+                      borderLeftColor: isMatch ? '#10B981' : '#EF4444',
+                      marginBottom: 16,
+                    },
+                  ]}
+                >
+                  {/* Card Header */}
                   <View style={S.orderTopHeader}>
                     <View>
-                      <Text style={S.orderIdText}>Order #{order.orderNumber || order.id.slice(-8)}</Text>
+                      <Text style={S.orderIdText}>Order #{item.orderNumber}</Text>
                       <Text style={S.orderDateText}>
-                        Placed: {order.createdAt ? new Date(order.createdAt).toLocaleString() : 'Recent'}
+                        Placed:{' '}
+                        {item.createdAt ? new Date(item.createdAt).toLocaleString() : 'Recent'}
                       </Text>
                     </View>
-                    <View style={[S.statusBadgePill, { backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#F59E0B' }]}>
+                    <View
+                      style={[
+                        S.statusBadgePill,
+                        {
+                          backgroundColor: '#FEF3C7',
+                          borderWidth: 1,
+                          borderColor: '#F59E0B',
+                        },
+                      ]}
+                    >
                       <Text style={{ fontSize: 11, fontWeight: '900', color: '#92400E' }}>
-                        🟡 Pending Verification (입금 확인 중)
+                        🟡 Under Review (입금 확인 대기)
                       </Text>
                     </View>
                   </View>
 
                   {/* Customer and Depositor Info */}
                   <View style={S.orderCustomerBox}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
                       <Text style={S.orderCustomerName}>
-                        👤 Customer: {order.customer?.name || order.recipient?.name || sender}
+                        👤 Customer: {item.customerName}
                       </Text>
                       <Text style={{ fontSize: 13, fontWeight: '900', color: '#2563EB' }}>
-                        입금자명 (Sender): {order.senderName || sender}
+                        입금자명 (Sender): {item.senderName}
                       </Text>
                     </View>
                     <Text style={S.orderCustomerSub}>
-                      📞 {order.customer?.phoneNumber || order.customer?.phone || order.recipient?.phone || 'N/A'} · 📧 {order.customer?.email || 'N/A'}
+                      📞 {item.customerPhone} · 📧 {item.customerEmail}
                     </Text>
                     <Text style={S.orderAddressText}>
-                      📍 {order.deliveryAddress?.address || order.recipient?.address || 'South Korea'} {order.deliveryAddress?.detailAddress ? `(${order.deliveryAddress.detailAddress})` : ''}
+                      📍 {item.deliveryAddress}{' '}
+                      {item.detailAddress ? `(${item.detailAddress})` : ''}
                     </Text>
                   </View>
 
-                  {/* Bank Details & Expected Amount */}
-                  <View style={{ backgroundColor: isDarkMode ? '#222' : '#F3F4F6', padding: 10, borderRadius: 8, marginTop: 6 }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#CCC' : '#4B5563' }}>
-                        Expected Transfer Amount:
+                  {/* ── THREE-WAY AMOUNT COMPARISON & VALIDATION SECTION ── */}
+                  <View
+                    style={{
+                      backgroundColor: isDarkMode ? '#222' : '#F8FAFC',
+                      padding: 12,
+                      borderRadius: 10,
+                      marginTop: 8,
+                      borderWidth: 1,
+                      borderColor: isDarkMode ? '#333' : '#E2E8F0',
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontWeight: '900',
+                        color: isDarkMode ? '#FFF' : '#1E293B',
+                        marginBottom: 8,
+                      }}
+                    >
+                      💰 Amount Validation & Comparison:
+                    </Text>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <Text style={{ fontSize: 12, color: isDarkMode ? '#AAA' : '#64748B' }}>
+                        1. Expected Order Total:
                       </Text>
-                      <Text style={{ fontSize: 16, fontWeight: '900', color: '#10B981' }}>
-                        ₩{totalKRW.toLocaleString()}
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#10B981' }}>
+                        ₩{expectedAmount.toLocaleString()}
                       </Text>
                     </View>
-                    {order.bankAccount && (
-                      <Text style={{ fontSize: 11, color: isDarkMode ? '#AAA' : '#6B7280', marginTop: 3 }}>
-                        Target Account: {order.bankAccount.bankName} · {order.bankAccount.accountNumber} ({order.bankAccount.accountHolder})
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <Text style={{ fontSize: 12, color: isDarkMode ? '#AAA' : '#64748B' }}>
+                        2. Customer Reported Amount:
                       </Text>
-                    )}
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          fontWeight: '800',
+                          color: isCustomerAmountDifferent ? '#EF4444' : '#2563EB',
+                        }}
+                      >
+                        ₩{uploadedAmount.toLocaleString()}{' '}
+                        {isCustomerAmountDifferent ? '⚠️' : '✓'}
+                      </Text>
+                    </View>
+
+                    {/* Admin editable input for actual bank received amount */}
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginTop: 4,
+                        paddingTop: 8,
+                        borderTopWidth: 1,
+                        borderTopColor: isDarkMode ? '#333' : '#E2E8F0',
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: isDarkMode ? '#EEE' : '#1E293B' }}>
+                        3. Actual Bank Received (₩):
+                      </Text>
+                      <TextInput
+                        style={{
+                          backgroundColor: isDarkMode ? '#111' : '#FFFFFF',
+                          borderWidth: 1.5,
+                          borderColor: isMatch ? '#10B981' : '#EF4444',
+                          borderRadius: 8,
+                          paddingHorizontal: 10,
+                          paddingVertical: 4,
+                          fontSize: 14,
+                          fontWeight: '900',
+                          color: isMatch ? '#10B981' : '#EF4444',
+                          minWidth: 120,
+                          textAlign: 'right',
+                        }}
+                        keyboardType="numeric"
+                        value={adminReceivedStr}
+                        onChangeText={(text) =>
+                          setReceivedAmounts({
+                            ...receivedAmounts,
+                            [itemKey]: text.replace(/[^0-9]/g, ''),
+                          })
+                        }
+                      />
+                    </View>
+
+                    {/* Live Comparison Status Pill */}
+                    <View
+                      style={{
+                        marginTop: 8,
+                        padding: 8,
+                        borderRadius: 6,
+                        backgroundColor: isMatch ? (isDarkMode ? '#064E3B' : '#ECFDF5') : (isDarkMode ? '#7F1D1D' : '#FEF2F2'),
+                        borderWidth: 1,
+                        borderColor: isMatch ? '#10B981' : '#EF4444',
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontWeight: '800',
+                          color: isMatch ? '#047857' : '#B91C1C',
+                        }}
+                      >
+                        {isMatch
+                          ? `✓ Amount Matches: Expected (₩${expectedAmount.toLocaleString()}) == Received (₩${adminReceivedNum.toLocaleString()})`
+                          : `⚠️ Amount Mismatch: Expected ₩${expectedAmount.toLocaleString()} vs Actual Bank ₩${adminReceivedNum.toLocaleString()}`}
+                      </Text>
+                    </View>
                   </View>
 
-                  {/* Items summary */}
-                  <Text style={[S.orderItemCount, { marginTop: 8 }]}>
-                    🛍️ {(order.items || []).length} items: {(order.items || []).map((it: any) => `${it.name || it.product?.name || 'Item'} (x${it.quantity || 1})`).join(', ')}
-                  </Text>
-
                   {/* Payment Proof Screenshot Box */}
-                  <View style={{ marginTop: 10, backgroundColor: isDarkMode ? '#1E1E1E' : '#F9FAFB', padding: 10, borderRadius: 10, borderWidth: 1, borderColor: isDarkMode ? '#333' : '#E5E7EB' }}>
-                    <Text style={{ fontSize: 11, fontWeight: '800', color: isDarkMode ? '#E5E7EB' : '#374151', marginBottom: 6 }}>
+                  <View
+                    style={{
+                      marginTop: 10,
+                      backgroundColor: isDarkMode ? '#1E1E1E' : '#F9FAFB',
+                      padding: 10,
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: isDarkMode ? '#333' : '#E5E7EB',
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        fontWeight: '800',
+                        color: isDarkMode ? '#E5E7EB' : '#374151',
+                        marginBottom: 6,
+                      }}
+                    >
                       📸 Customer Payment Screenshot / Transfer Proof:
                     </Text>
-                    {screenshotUri ? (
+                    {item.screenshotUrl ? (
                       <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
-                        <TouchableOpacity onPress={() => onPreviewScreenshot(screenshotUri)}>
-                          <Image source={{ uri: screenshotUri }} style={{ width: 100, height: 100, borderRadius: 8, backgroundColor: '#000' }} />
+                        <TouchableOpacity onPress={() => onPreviewScreenshot(item.screenshotUrl)}>
+                          <Image
+                            source={{ uri: item.screenshotUrl }}
+                            style={{
+                              width: 90,
+                              height: 90,
+                              borderRadius: 8,
+                              backgroundColor: '#000',
+                            }}
+                          />
                         </TouchableOpacity>
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontSize: 11, fontWeight: '700', color: '#10B981' }}>
-                            ✓ Proof attached
+                            ✓ Proof attached from customer
                           </Text>
-                          {order.paymentProofUploadedAt && (
-                            <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
-                              Uploaded: {new Date(order.paymentProofUploadedAt).toLocaleString()}
-                            </Text>
-                          )}
                           <TouchableOpacity
-                            style={{ backgroundColor: '#2563EB', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, alignSelf: 'flex-start', marginTop: 8 }}
-                            onPress={() => onPreviewScreenshot(screenshotUri)}
+                            style={{
+                              backgroundColor: '#2563EB',
+                              paddingHorizontal: 12,
+                              paddingVertical: 7,
+                              borderRadius: 6,
+                              alignSelf: 'flex-start',
+                              marginTop: 8,
+                            }}
+                            onPress={() => onPreviewScreenshot(item.screenshotUrl)}
                           >
-                            <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '800' }}>🔍 Zoom / Expand (확대보기)</Text>
+                            <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '800' }}>
+                              🔍 View Full Screenshot (확대)
+                            </Text>
                           </TouchableOpacity>
                         </View>
                       </View>
                     ) : (
-                      <View style={{ padding: 12, alignItems: 'center', backgroundColor: isDarkMode ? '#2D1F1F' : '#FEF2F2', borderRadius: 8 }}>
-                        <Text style={{ color: '#DC2626', fontSize: 12, fontWeight: '700' }}>
-                          ⚠️ No screenshot attached with this order
+                      <View
+                        style={{
+                          padding: 10,
+                          alignItems: 'center',
+                          backgroundColor: isDarkMode ? '#2D1F1F' : '#FEF2F2',
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Text style={{ color: '#DC2626', fontSize: 11, fontWeight: '700' }}>
+                          ⚠️ No screenshot attached with this payment
                         </Text>
                       </View>
                     )}
                   </View>
 
-                  {/* ACTION BUTTONS: VERIFY OR REJECT */}
+                  {/* ── ACTION BUTTONS: VERIFY OR REJECT ── */}
                   <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
                     <TouchableOpacity
                       style={{
@@ -2681,14 +3181,44 @@ function PaymentVerificationSection({
                       }}
                       disabled={isProcessing}
                       onPress={() => {
+                        if (!isMatch) {
+                          Alert.alert(
+                            'Amount Mismatch Warning',
+                            `The entered bank received amount (₩${adminReceivedNum.toLocaleString()}) does not match the expected order total (₩${expectedAmount.toLocaleString()}).\n\nDo you still want to proceed?`,
+                            [
+                              { text: 'Cancel', style: 'cancel' },
+                              {
+                                text: 'Force Verify',
+                                style: 'destructive',
+                                onPress: () =>
+                                  onVerifyPayment(
+                                    item.orderId,
+                                    adminReceivedNum,
+                                    item.senderName,
+                                    item.orderNumber,
+                                    item.paymentId
+                                  ),
+                              },
+                            ]
+                          );
+                          return;
+                        }
+
                         Alert.alert(
                           'Confirm Bank Transfer Verification',
-                          `Verify that ₩${totalKRW.toLocaleString()} was received from "${sender}" into your bank account?\n\nThis will mark the order as PAID and confirm the order.`,
+                          `Confirm that ₩${adminReceivedNum.toLocaleString()} was received into your bank account from "${item.senderName}"?\n\nThis will mark the payment as VERIFIED and confirm Order #${item.orderNumber}.`,
                           [
                             { text: 'Cancel', style: 'cancel' },
                             {
-                              text: '✅ Confirm & Mark PAID',
-                              onPress: () => onVerifyPayment(order.id, totalKRW, sender, order.orderNumber),
+                              text: '✅ Confirm & Verify',
+                              onPress: () =>
+                                onVerifyPayment(
+                                  item.orderId,
+                                  adminReceivedNum,
+                                  item.senderName,
+                                  item.orderNumber,
+                                  item.paymentId
+                                ),
                             },
                           ]
                         );
@@ -2712,7 +3242,7 @@ function PaymentVerificationSection({
                         opacity: isProcessing ? 0.6 : 1,
                       }}
                       disabled={isProcessing}
-                      onPress={() => onOpenRejectModal(order)}
+                      onPress={() => onOpenRejectModal(item)}
                     >
                       <Text style={{ color: '#DC2626', fontSize: 13, fontWeight: '900' }}>
                         ❌ Reject (입금 반려)
@@ -2727,14 +3257,23 @@ function PaymentVerificationSection({
       ) : (
         /* AUDIT TRAIL LOGS VIEW */
         <View style={{ marginTop: 8 }}>
-          <Text style={{ fontSize: 13, fontWeight: '800', color: isDarkMode ? '#FFF' : '#111', marginBottom: 8 }}>
+          <Text
+            style={{
+              fontSize: 13,
+              fontWeight: '800',
+              color: isDarkMode ? '#FFF' : '#111',
+              marginBottom: 8,
+            }}
+          >
             Payment Verification History & Audit Trail ({logs.length} entries)
           </Text>
           {logs.length === 0 ? (
             <View style={S.emptyStateBox}>
               <Text style={{ fontSize: 36 }}>📜</Text>
               <Text style={S.emptyTitle}>No Verification Logs Yet</Text>
-              <Text style={S.emptySub}>All approve and reject actions by administrators are logged here.</Text>
+              <Text style={S.emptySub}>
+                All verify and reject actions by administrators are logged here in real time.
+              </Text>
             </View>
           ) : (
             logs.map((log: PaymentVerificationLog) => (
@@ -2751,22 +3290,51 @@ function PaymentVerificationSection({
                   borderLeftColor: log.action === 'VERIFIED' ? '#10B981' : '#EF4444',
                 }}
               >
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ fontSize: 13, fontWeight: '900', color: log.action === 'VERIFIED' ? '#10B981' : '#EF4444' }}>
-                    {log.action === 'VERIFIED' ? '✅ PAYMENT VERIFIED (승인)' : '❌ PAYMENT REJECTED (반려)'}
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontWeight: '900',
+                      color: log.action === 'VERIFIED' ? '#10B981' : '#EF4444',
+                    }}
+                  >
+                    {log.action === 'VERIFIED'
+                      ? '✅ PAYMENT VERIFIED (승인)'
+                      : '❌ PAYMENT REJECTED (반려)'}
                   </Text>
                   <Text style={{ fontSize: 10, color: '#9CA3AF' }}>
                     {log.timestamp ? new Date(log.timestamp).toLocaleString() : 'Recent'}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 11, fontWeight: '700', color: isDarkMode ? '#EEE' : '#1F2937', marginTop: 4 }}>
-                  Order: #{log.orderNumber || log.orderId} · Customer: {log.customerName || 'N/A'} · Amount: ₩{(log.amount || 0).toLocaleString()}
+                <Text
+                  style={{
+                    fontSize: 11,
+                    fontWeight: '700',
+                    color: isDarkMode ? '#EEE' : '#1F2937',
+                    marginTop: 4,
+                  }}
+                >
+                  Order: #{log.orderNumber || log.orderId} · Customer:{' '}
+                  {log.customerName || 'N/A'} · Amount: ₩{(log.amount || 0).toLocaleString()}
                 </Text>
                 <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>
                   Admin: {log.adminEmail || log.adminUserId}
                 </Text>
                 {log.reason && (
-                  <Text style={{ fontSize: 11, color: '#EF4444', fontWeight: '700', marginTop: 4 }}>
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      color: '#EF4444',
+                      fontWeight: '700',
+                      marginTop: 4,
+                    }}
+                  >
                     Reason: {log.reason}
                   </Text>
                 )}
@@ -2794,10 +3362,10 @@ function SettingsSection({
   isSavingBankSettings,
 }: any) {
   const [bankName, setBankName] = useState(bankSettings?.bankName || 'Woori Bank (우리은행)');
-  const [accountNumber, setAccountNumber] = useState(bankSettings?.accountNumber || '1002364650197');
-  const [accountHolder, setAccountHolder] = useState(bankSettings?.accountHolder || 'PARSHANT');
+  const [accountNumber, setAccountNumber] = useState(bankSettings?.accountNumber || '1002340390276');
+  const [accountHolder, setAccountHolder] = useState(bankSettings?.accountHolder || '박기삼');
   const [instructions, setInstructions] = useState(
-    bankSettings?.instructions || 'Please transfer the exact amount to PARSHANT (우리: 1002364650197 / 국민: 80640200121099 / 신한: 110623385560 / 토스뱅크: 1002-7078-9681) and upload your payment screenshot below.'
+    bankSettings?.instructions || 'Please transfer the exact amount to 박기삼 (우리은행: 1002340390276) and upload your payment screenshot below.'
   );
   const [deadlineHours, setDeadlineHours] = useState((bankSettings?.paymentDeadlineHours || 24).toString());
   const [enabled, setEnabled] = useState(bankSettings?.enabled !== false);
@@ -2805,8 +3373,8 @@ function SettingsSection({
   useEffect(() => {
     if (bankSettings) {
       setBankName(bankSettings.bankName || 'Woori Bank (우리은행)');
-      setAccountNumber(bankSettings.accountNumber || '1002364650197');
-      setAccountHolder(bankSettings.accountHolder || 'PARSHANT');
+      setAccountNumber(bankSettings.accountNumber || '1002340390276');
+      setAccountHolder(bankSettings.accountHolder || '박기삼');
       setInstructions(bankSettings.instructions || '');
       setDeadlineHours((bankSettings.paymentDeadlineHours || 24).toString());
       setEnabled(bankSettings.enabled !== false);

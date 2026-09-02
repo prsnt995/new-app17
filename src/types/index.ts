@@ -74,11 +74,13 @@ export type PaymentStatus =
 export interface BankTransferSettings {
   bankName: string;
   bankNameKr?: string;
+  bankCode?: string;
   accountNumber: string;
   accountHolder: string;
   instructions: string;
   paymentDeadlineHours: number;
   enabled: boolean;
+  currency?: string;
   updatedAt?: any;
   updatedBy?: string;
 }

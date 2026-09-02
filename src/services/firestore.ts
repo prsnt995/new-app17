@@ -58,6 +58,8 @@ const toProductRow = (product: Partial<Product>): Record<string, any> => {
       const imageVal = (product.imageUrl || product.image) as string;
       if (imageVal) {
         row.images = [imageVal];
+        row.image = imageVal;
+        row.image_url = imageVal;
       }
       continue;
     }

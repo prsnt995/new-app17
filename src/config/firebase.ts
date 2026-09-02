@@ -6,8 +6,29 @@ import {
   getDownloadURL,
   deleteObject,
 } from 'firebase/storage';
+import {
+  getFirestore,
+  doc,
+  collection,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  addDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  where,
+  orderBy,
+  limit,
+  serverTimestamp,
+  Timestamp,
+  runTransaction,
+  writeBatch,
+} from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 
-// ─── FIREBASE CONFIGURATION (STORAGE ONLY) ───────────────────────────────────
+// ─── FIREBASE CONFIGURATION ──────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || 'AIzaSyDECT1320x3kyOyifqNKST0B8FkfJFxfMs',
   authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN || 'namaste-mart-28c93.firebaseapp.com',
@@ -21,14 +42,47 @@ const firebaseConfig = {
 // ─── INITIALIZE FIREBASE (PREVENT DUPLICATES) ────────────────────────────────
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// ─── STORAGE ONLY ────────────────────────────────────────────────────────────
+// ─── FIREBASE SERVICES ───────────────────────────────────────────────────────
 export const storage = getStorage(app);
+export const db = getFirestore(app);
+export const auth = getAuth(app);
+
+// ─── FIRESTORE COLLECTIONS CONSTANTS ─────────────────────────────────────────
+export const FIRESTORE_COLLECTIONS = {
+  USERS: 'users',
+  PRODUCTS: 'products',
+  CATEGORIES: 'categories',
+  ORDERS: 'orders',
+  PAYMENTS: 'payments',
+  ADMIN_USERS: 'adminUsers',
+  ADMINS: 'admins',
+  PAYMENT_SETTINGS: 'paymentSettings',
+  PAYMENT_LOGS: 'paymentLogs',
+} as const;
 
 export {
   storageRef,
   uploadBytesResumable,
   getDownloadURL,
   deleteObject,
+  doc,
+  collection,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  addDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  where,
+  orderBy,
+  limit,
+  serverTimestamp,
+  Timestamp,
+  runTransaction,
+  writeBatch,
 };
 
 export default app;
+

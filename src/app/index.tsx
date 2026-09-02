@@ -253,6 +253,50 @@ export default function HomeScreen() {
             )}
           </View>
 
+          {/* CATEGORIES SECTION */}
+          <View style={styles.sectionHeader}>
+            <View>
+              <Text style={styles.sectionTitle}>{t('categories')}</Text>
+              <Text style={styles.sectionSubtitle}>
+                Everything you love from home
+              </Text>
+            </View>
+
+            {selectedCategory !== 'All' && (
+              <TouchableOpacity onPress={() => setSelectedCategory('All')}>
+                <Text style={styles.seeAll}>Reset (Show All)</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoryContainer}
+          >
+            {categories.map((category) => {
+              const isSelected = selectedCategory === category.name;
+              return (
+                <TouchableOpacity
+                  key={category.name}
+                  style={[styles.categoryCard, isSelected && styles.categoryCardActive]}
+                  activeOpacity={0.8}
+                  onPress={() => setSelectedCategory(category.name)}
+                >
+                  <View style={[styles.categoryImage, isSelected && styles.categoryImageActive]}>
+                    <Text style={styles.categoryEmoji}>{category.icon}</Text>
+                  </View>
+
+                  <Text style={[styles.categoryName, isSelected && styles.categoryNameActive]}>
+                    {category.name}
+                  </Text>
+
+                  <Text style={styles.categoryCount}>{category.count}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
           {/* THREE FEATURED SIDE BOXES CAROUSEL */}
           <View style={styles.threeSideBoxesHeaderRow}>
             <Text style={styles.threeSideBoxesHeaderTitle}>✨ Featured Highlights</Text>
@@ -368,50 +412,6 @@ export default function HomeScreen() {
               </View>
             </View>
           </View>
-
-          {/* CATEGORIES SECTION */}
-          <View style={styles.sectionHeader}>
-            <View>
-              <Text style={styles.sectionTitle}>{t('categories')}</Text>
-              <Text style={styles.sectionSubtitle}>
-                Everything you love from home
-              </Text>
-            </View>
-
-            {selectedCategory !== 'All' && (
-              <TouchableOpacity onPress={() => setSelectedCategory('All')}>
-                <Text style={styles.seeAll}>Reset (Show All)</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.categoryContainer}
-          >
-            {categories.map((category) => {
-              const isSelected = selectedCategory === category.name;
-              return (
-                <TouchableOpacity
-                  key={category.name}
-                  style={[styles.categoryCard, isSelected && styles.categoryCardActive]}
-                  activeOpacity={0.8}
-                  onPress={() => setSelectedCategory(category.name)}
-                >
-                  <View style={[styles.categoryImage, isSelected && styles.categoryImageActive]}>
-                    <Text style={styles.categoryEmoji}>{category.icon}</Text>
-                  </View>
-
-                  <Text style={[styles.categoryName, isSelected && styles.categoryNameActive]}>
-                    {category.name}
-                  </Text>
-
-                  <Text style={styles.categoryCount}>{category.count}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
 
           {/* BEST SELLERS SECTION */}
           <View style={styles.sectionHeader}>

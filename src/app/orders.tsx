@@ -21,7 +21,7 @@ import { OrderItem } from '@/types';
 
 export default function OrdersScreen() {
   const router = useRouter();
-  const { orders, reorder, formatPrice, isDarkMode, uploadPaymentScreenshot, isOrdersLoading, isLoading } = useApp();
+  const { orders, reorder, formatPrice, isDarkMode, uploadPaymentScreenshot, isOrdersLoading, isLoading, user } = useApp();
 
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
@@ -49,31 +49,45 @@ export default function OrdersScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         allowsEditing: true,
-        quality: 0.8,
+        quality: 0.85,
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         setIsUploadingScreenshot(true);
-        const uploadedUrl = await uploadPaymentScreenshot(order.id, result.assets[0].uri);
+        const { resubmitPaymentScreenshot } = await import('@/services/firestorePaymentService');
+        const paymentRes = await resubmitPaymentScreenshot({
+          orderId: order.id,
+          userId: order.userId || (user as any)?.uid || (user as any)?.id || 'guest',
+          screenshotUri: result.assets[0].uri,
+          transferredAmount: order.totalKRW || order.totalAmount || 0,
+          senderName: order.senderName || order.customerName,
+        });
+
         setIsUploadingScreenshot(false);
 
         if (selectedProductOrder && selectedProductOrder.id === order.id) {
           setSelectedProductOrder({
             ...selectedProductOrder,
-            paymentScreenshot: uploadedUrl,
+            paymentScreenshot: paymentRes.screenshotUrl,
+            paymentProofUrl: paymentRes.screenshotUrl,
             payment: {
-              screenshotUrl: uploadedUrl,
+              screenshotUrl: paymentRes.screenshotUrl,
               uploaded: true,
               verified: false,
               verifiedAt: null,
               verifiedBy: null,
-              status: 'uploaded',
+              status: 'under_review' as any,
             },
-            status: 'payment_uploaded',
+            status: 'Payment Submitted',
+            paymentStatus: 'under_review' as any,
+            orderStatus: 'payment_verification',
           });
         }
 
-        Alert.alert('Receipt Uploaded', 'Your payment proof has been uploaded successfully. Namaste Mart admin will verify it shortly.');
+        Alert.alert(
+          'Payment Proof Submitted',
+          'Your payment screenshot has been uploaded. Namaste Mart admin will verify the transfer in real time.'
+        );
       }
     } catch (e: any) {
       setIsUploadingScreenshot(false);
@@ -167,6 +181,40 @@ export default function OrdersScreen() {
     { key: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', desc: 'Dispatched with local courier' },
     { key: 'DELIVERED', label: 'Delivered', desc: 'Handed over to recipient' },
   ];
+
+  const productOrderSteps = [
+    { key: 'placed', label: 'Order Placed', desc: 'Order placed in store' },
+    { key: 'submitted', label: 'Payment Submitted', desc: 'Customer submitted transfer proof' },
+    { key: 'verification', label: 'Payment Verification', desc: 'Admin verifying bank deposit' },
+    { key: 'verified', label: 'Payment Verified', desc: 'Deposit confirmed into bank account' },
+    { key: 'confirmed', label: 'Order Confirmed', desc: 'Order approved for warehouse fulfillment' },
+    { key: 'processing', label: 'Processing', desc: 'Items being packed at warehouse' },
+    { key: 'shipped', label: 'Shipped', desc: 'Dispatched with CJ Logistics' },
+    { key: 'delivered', label: 'Delivered', desc: 'Delivered to your Korean address' },
+  ];
+
+  const getProductOrderStepStatus = (order: OrderItem, stepIdx: number) => {
+    const pStatus = (order.paymentStatus || order.payment?.status || '').toLowerCase();
+    const oStatus = (order.orderStatus || order.status || '').toLowerCase();
+
+    if (pStatus === 'rejected') {
+      if (stepIdx <= 1) return 'COMPLETED';
+      if (stepIdx === 2) return 'REJECTED';
+      return 'PENDING';
+    }
+
+    let currentIdx = 0;
+    if (oStatus === 'delivered' || oStatus.includes('delivered')) currentIdx = 7;
+    else if (oStatus === 'shipped' || oStatus.includes('shipped') || oStatus === 'in_transit') currentIdx = 6;
+    else if (oStatus === 'processing' || oStatus.includes('preparing')) currentIdx = 5;
+    else if (oStatus === 'confirmed' || oStatus.includes('confirmed') || pStatus === 'paid' || pStatus === 'verified' || order.payment?.verified) currentIdx = 4;
+    else if (pStatus === 'under_review' || pStatus === 'submitted' || oStatus === 'payment_verification' || order.paymentScreenshot || order.paymentProofUrl) currentIdx = 2;
+    else currentIdx = 0;
+
+    if (stepIdx < currentIdx) return 'COMPLETED';
+    if (stepIdx === currentIdx) return 'CURRENT';
+    return 'PENDING';
+  };
 
   const getStepStatus = (parcel: OrderItem, index: number) => {
     const s = parcel.status?.toUpperCase() || '';
@@ -933,6 +981,62 @@ export default function OrdersScreen() {
                       </View>
                     );
                   })()}
+
+                  {/* ORDER & PAYMENT LIFECYCLE TIMELINE */}
+                  <Text style={[styles.timelineTitle, { marginTop: 16 }]}>Order & Payment Progress</Text>
+                  <View style={styles.timelineContainer}>
+                    {productOrderSteps.map((step, idx) => {
+                      const status = getProductOrderStepStatus(selectedProductOrder, idx);
+                      const isCompleted = status === 'COMPLETED';
+                      const isCurrent = status === 'CURRENT';
+                      const isRejected = status === 'REJECTED';
+
+                      return (
+                        <View key={step.key} style={styles.timelineRow}>
+                          <View style={styles.nodeColumn}>
+                            <View
+                              style={[
+                                styles.nodeCircle,
+                                isCompleted && styles.nodeCompleted,
+                                isCurrent && styles.nodeCurrent,
+                                isRejected && { backgroundColor: '#EF4444', borderColor: '#DC2626' },
+                              ]}
+                            >
+                              <Text style={styles.nodeIcon}>
+                                {isRejected ? '✕' : isCompleted ? '✓' : isCurrent ? '●' : '○'}
+                              </Text>
+                            </View>
+                            {idx < productOrderSteps.length - 1 && (
+                              <View
+                                style={[
+                                  styles.timelineLine,
+                                  isCompleted && styles.timelineLineCompleted,
+                                  isRejected && { backgroundColor: '#EF4444' },
+                                ]}
+                              />
+                            )}
+                          </View>
+
+                          <View style={styles.stepInfo}>
+                            <Text
+                              style={[
+                                styles.stepTitle,
+                                (isCompleted || isCurrent) && styles.stepTitleActive,
+                                isRejected && { color: '#EF4444', fontWeight: '900' },
+                              ]}
+                            >
+                              {step.label}
+                            </Text>
+                            <Text style={styles.stepDesc}>
+                              {isRejected && (selectedProductOrder.paymentRejectionReason || (selectedProductOrder as any).payment?.rejectionReason)
+                                ? `Rejected: ${selectedProductOrder.paymentRejectionReason || (selectedProductOrder as any).payment?.rejectionReason}`
+                                : step.desc}
+                            </Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
                 </ScrollView>
               </View>
             </View>

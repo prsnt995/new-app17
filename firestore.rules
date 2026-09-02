@@ -2,23 +2,131 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ─── AUTH & ADMIN HELPERS ──────────────────────────────────────────────────
     function isAuthenticated() {
       return request.auth != null;
     }
 
     function isAdmin() {
-      return isAuthenticated() &&
-        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-         exists(/databases/$(database)/documents/admins/$(request.auth.token.email)) ||
-         request.auth.token.email.matches('.*@namastemart\\.com') ||
-         request.auth.token.email == 'namaste.mart.admin@gmail.com' ||
-         request.auth.token.email == 'parshanttanwar995@gmail.com');
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.active == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.token.email)) ||
+        request.auth.token.email.matches('.*@namastemart\\.com') ||
+        request.auth.token.email == 'namaste.mart.admin@gmail.com' ||
+        request.auth.token.email == 'parshanttanwar995@gmail.com' ||
+        request.auth.token.email == 'dineshgodara571@gmail.com'
+      );
+    }
+
+    function hasAdminPermission(perm) {
+      return isAdmin() && (
+        !exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)) ||
+        get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.permissions[perm] == true ||
+        get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+
+    // ─── USERS COLLECTION ──────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow create, update: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // ─── PRODUCTS COLLECTION ───────────────────────────────────────────────────
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if hasAdminPermission('manageProducts');
+    }
+
+    // ─── CATEGORIES COLLECTION ─────────────────────────────────────────────────
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if hasAdminPermission('manageProducts');
+    }
+
+    // ─── ORDERS COLLECTION ─────────────────────────────────────────────────────
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      
+      // Customer can create initial order with pending/submitted/under_review status
+      allow create: if isAuthenticated() && (
+        isAdmin() || (
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.paymentStatus in ['pending', 'submitted', 'under_review'] &&
+          request.resource.data.orderStatus in ['awaiting_payment', 'payment_verification', 'pending', 'Payment Pending', 'Payment Submitted']
+        )
+      );
+
+      // Customer CANNOT set paymentStatus to 'paid' or orderStatus to 'confirmed'/'processing'/'shipped'/'delivered'
+      allow update: if hasAdminPermission('manageOrders') || hasAdminPermission('verifyPayments') || (
+        isAuthenticated() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.paymentStatus != 'paid' &&
+        request.resource.data.orderStatus != 'confirmed' &&
+        request.resource.data.orderStatus != 'processing' &&
+        request.resource.data.orderStatus != 'shipped' &&
+        request.resource.data.orderStatus != 'delivered' &&
+        request.resource.data.totalAmount == resource.data.totalAmount
+      );
+
+      allow delete: if hasAdminPermission('manageOrders');
+    }
+
+    // ─── PAYMENTS COLLECTION ───────────────────────────────────────────────────
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+
+      // Customer can create initial payment record (cannot set verified = true or receivedAmount)
+      allow create: if isAuthenticated() && (
+        isAdmin() || (
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.status in ['pending', 'submitted', 'under_review'] &&
+          request.resource.data.verification.verified == false &&
+          request.resource.data.receivedAmount == null
+        )
+      );
+
+      // Customer can update screenshot & uploadedAmount, but CANNOT set verified = true or modify receivedAmount
+      allow update: if hasAdminPermission('verifyPayments') || (
+        isAuthenticated() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.status != 'verified' &&
+        request.resource.data.verification.verified == false &&
+        request.resource.data.receivedAmount == resource.data.receivedAmount &&
+        request.resource.data.verification.verifiedBy == resource.data.verification.verifiedBy &&
+        request.resource.data.expectedAmount == resource.data.expectedAmount
+      );
+
+      allow delete: if hasAdminPermission('verifyPayments');
+    }
+
+    // ─── ADMIN USERS & LEGACY ADMINS ───────────────────────────────────────────
+    match /adminUsers/{adminId} {
+      allow read: if isAuthenticated();
+      allow write: if hasAdminPermission('manageUsers');
     }
 
     match /admins/{docId} {
       allow read, write: if isAdmin();
     }
 
+    // ─── PAYMENT SETTINGS ──────────────────────────────────────────────────────
+    match /paymentSettings/{settingId} {
+      allow read: if true;
+      allow write: if hasAdminPermission('manageSettings');
+    }
+
+    // ─── PAYMENT AUDIT LOGS ────────────────────────────────────────────────────
+    match /paymentLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Immutable audit trail
+    }
+
+    // Default deny
     match /{document=**} {
       allow read, write: if false;
     }

@@ -7,30 +7,39 @@ service firebase.storage {
     }
 
     function isAdmin() {
-      return isAuthenticated() &&
-        (firestore.exists(/databases/(default)/documents/admins/$(request.auth.uid)) ||
-         firestore.exists(/databases/(default)/documents/admins/$(request.auth.token.email)) ||
-         request.auth.token.email.matches('.*@namastemart\\.com') ||
-         request.auth.token.email == 'namaste.mart.admin@gmail.com' ||
-         request.auth.token.email == 'parshanttanwar995@gmail.com');
+      return isAuthenticated() && (
+        firestore.exists(/databases/(default)/documents/adminUsers/$(request.auth.uid)) ||
+        firestore.exists(/databases/(default)/documents/admins/$(request.auth.uid)) ||
+        firestore.exists(/databases/(default)/documents/admins/$(request.auth.token.email)) ||
+        request.auth.token.email.matches('.*@namastemart\\.com') ||
+        request.auth.token.email == 'namaste.mart.admin@gmail.com' ||
+        request.auth.token.email == 'parshanttanwar995@gmail.com' ||
+        request.auth.token.email == 'dineshgodara571@gmail.com'
+      );
     }
 
-    // Product images: public read, any authenticated user may write (Supabase admin check is via RLS, not Firebase Auth)
+    // Product images: public read, authenticated or admin write
     match /products/{productId}/{allPaths=**} {
       allow read: if true;
       allow write: if isAuthenticated();
     }
 
-    // Payment proofs: secure path payment-proofs/{userId}/{orderId}/{fileName}
-    match /payment-proofs/{userId}/{orderId}/{fileName} {
+    // Category images: public read, admin write
+    match /categories/{categoryId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Payment screenshots: secure path payment-screenshots/{userId}/{orderId}/{fileName}
+    match /payment-screenshots/{userId}/{orderId}/{fileName} {
       allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
       allow write: if isAuthenticated() && (request.auth.uid == userId || isAdmin()) &&
                       request.resource.size < 5 * 1024 * 1024 &&
                       request.resource.contentType.matches('image/.*');
     }
 
-    // Payment screenshots: legacy alias path payment-screenshots/{userId}/{orderId}/{fileName}
-    match /payment-screenshots/{userId}/{orderId}/{fileName} {
+    // Payment proofs: backward-compatible alias path payment-proofs/{userId}/{orderId}/{fileName}
+    match /payment-proofs/{userId}/{orderId}/{fileName} {
       allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
       allow write: if isAuthenticated() && (request.auth.uid == userId || isAdmin()) &&
                       request.resource.size < 5 * 1024 * 1024 &&

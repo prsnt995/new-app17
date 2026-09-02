@@ -21,6 +21,8 @@ interface BankTransferCardProps {
   orderIdPreview?: string;
   senderName: string;
   onChangeSenderName: (name: string) => void;
+  transferredAmount?: string;
+  onChangeTransferredAmount?: (amount: string) => void;
   paymentScreenshot: string | null;
   onSelectScreenshot: (uri: string | null) => void;
   isDarkMode?: boolean;
@@ -36,6 +38,8 @@ export function BankTransferCard({
   orderIdPreview,
   senderName,
   onChangeSenderName,
+  transferredAmount = '',
+  onChangeTransferredAmount,
   paymentScreenshot,
   onSelectScreenshot,
   isDarkMode = false,
@@ -53,9 +57,11 @@ export function BankTransferCard({
         bankNameKr: selectedBank.bankNameKr,
         accountNumber: selectedBank.accountNumber,
         accountHolder: selectedBank.accountHolder,
+        bankCode: '020',
         instructions: DEFAULT_BANK_SETTINGS.instructions,
         paymentDeadlineHours: 24,
         enabled: true,
+        currency: 'KRW',
       };
     }
     return DEFAULT_BANK_SETTINGS;
@@ -78,9 +84,11 @@ export function BankTransferCard({
         bankNameKr: selectedBank.bankNameKr,
         accountNumber: selectedBank.accountNumber,
         accountHolder: selectedBank.accountHolder,
+        bankCode: '020',
         instructions: DEFAULT_BANK_SETTINGS.instructions,
         paymentDeadlineHours: 24,
         enabled: true,
+        currency: 'KRW',
       });
       setActiveBankId(selectedBank.id);
     } else {
@@ -111,7 +119,7 @@ export function BankTransferCard({
       }
       setCopiedNotification(true);
       setTimeout(() => setCopiedNotification(false), 3000);
-      
+
       Alert.alert(
         '계좌번호 복사 완료 (Copied!)',
         `[${bankSettings.bankName}]\n계좌번호: ${bankSettings.accountNumber}\n예금주: ${bankSettings.accountHolder}`
@@ -140,8 +148,8 @@ export function BankTransferCard({
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        
-        // 5MB Size Validation (if fileSize available)
+
+        // 5MB Size Validation
         if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
           Alert.alert(
             'File Too Large / 파일 크기 초과',
@@ -156,7 +164,7 @@ export function BankTransferCard({
       console.warn('Image picker notice:', e.message);
       Alert.alert(
         'Attach Receipt Proof',
-        'Attach demo payment receipt proof?',
+        'Attach sample payment receipt proof?',
         [
           {
             text: 'Attach Sample Proof',
@@ -171,6 +179,10 @@ export function BankTransferCard({
     }
   };
 
+  // Compare transferred amount with expected order amount
+  const parsedTransferred = Number(transferredAmount.replace(/[^0-9]/g, '')) || 0;
+  const isAmountMismatch = parsedTransferred > 0 && orderAmountKRW > 0 && parsedTransferred !== orderAmountKRW;
+
   const styles = getStyles(isDarkMode);
 
   return (
@@ -178,10 +190,10 @@ export function BankTransferCard({
       {/* 1. BANK TRANSFER INSTRUCTION BANNER */}
       <View style={styles.headerRow}>
         <View style={styles.titleWithIcon}>
-          <Text style={{ fontSize: 20 }}>🏦</Text>
+          <Text style={{ fontSize: 22 }}>🏦</Text>
           <View>
-            <Text style={styles.cardHeaderTitle}>Bank Transfer / 계좌이체</Text>
-            <Text style={styles.cardHeaderSub}>Direct Transfer to PARSHANT</Text>
+            <Text style={styles.cardHeaderTitle}>Bank Transfer (계좌이체)</Text>
+            <Text style={styles.cardHeaderSub}>Direct Transfer to Store Account</Text>
           </View>
         </View>
         <View style={styles.deadlineBadge}>
@@ -191,7 +203,7 @@ export function BankTransferCard({
         </View>
       </View>
 
-      {/* 2. BANK SELECTION CHIPS (우리, 국민, 신한, 토스) */}
+      {/* 2. BANK SELECTION CHIPS */}
       <Text style={styles.selectorSectionTitle}>Select Bank (입금 은행 선택):</Text>
       <View style={styles.bankChipsContainer}>
         {KOREA_BANK_ACCOUNTS.map((b) => {
@@ -233,6 +245,12 @@ export function BankTransferCard({
 
       {/* 3. OFFICIAL BANK DETAILS BOX */}
       <View style={styles.bankBox}>
+        {/* Transfer Amount Target */}
+        <View style={styles.amountHighlightBox}>
+          <Text style={styles.amountHighlightLabel}>Amount to Transfer (입금할 금액):</Text>
+          <Text style={styles.amountHighlightValue}>₩{orderAmountKRW.toLocaleString()}</Text>
+        </View>
+
         {/* Bank & Holder */}
         <View style={styles.bankInfoRow}>
           <Text style={styles.bankFieldLabel}>Bank (입금은행):</Text>
@@ -261,27 +279,10 @@ export function BankTransferCard({
             activeOpacity={0.8}
           >
             <Text style={styles.copyBtnText}>
-              {copiedNotification ? '✓ Copied!' : '📋 Copy Account Number (계좌번호 복사)'}
+              {copiedNotification ? '✓ Copied (복사완료)' : '📋 Copy Account Number (계좌번호 복사)'}
             </Text>
           </TouchableOpacity>
         </View>
-
-        {/* Exact Amount & Order ID */}
-        {orderAmountKRW > 0 ? (
-          <View style={styles.amountNoticeGrid}>
-            <View style={styles.noticeCell}>
-              <Text style={styles.noticeCellLabel}>Exact Order Amount (입금 금액):</Text>
-              <Text style={styles.noticeAmountValue}>₩{orderAmountKRW.toLocaleString()}</Text>
-            </View>
-
-            {orderIdPreview ? (
-              <View style={styles.noticeCell}>
-                <Text style={styles.noticeCellLabel}>Order ID (주문번호):</Text>
-                <Text style={styles.noticeOrderIdValue}>{orderIdPreview}</Text>
-              </View>
-            ) : null}
-          </View>
-        ) : null}
 
         {/* Instructions */}
         <View style={styles.instructionBanner}>
@@ -293,10 +294,10 @@ export function BankTransferCard({
         </View>
       </View>
 
-      {/* 3. SENDER NAME INPUT */}
+      {/* 4. SENDER NAME INPUT */}
       <View style={styles.inputSection}>
         <Text style={styles.fieldLabel}>
-          Sender Name for Verification (입금자명) <Text style={{ color: '#EF4444' }}>*</Text>
+          Sender Name (입금자명) <Text style={{ color: '#EF4444' }}>*</Text>
         </Text>
         <TextInput
           style={styles.textInput}
@@ -306,15 +307,57 @@ export function BankTransferCard({
           placeholderTextColor="#A0A0A0"
         />
         <Text style={styles.fieldHint}>
-          Please enter the exact depositor name used in your bank mobile app or ATM.
+          Please enter the exact depositor name shown on your bank statement.
         </Text>
       </View>
 
-      {/* 4. PAYMENT SCREENSHOT PROOF UPLOADER */}
+      {/* 5. TRANSFERRED AMOUNT INPUT */}
+      {onChangeTransferredAmount && (
+        <View style={styles.inputSection}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={styles.fieldLabel}>
+              Transferred Amount (실제 입금한 금액) <Text style={{ color: '#EF4444' }}>*</Text>
+            </Text>
+            {orderAmountKRW > 0 && (
+              <TouchableOpacity
+                onPress={() => onChangeTransferredAmount(String(orderAmountKRW))}
+                style={styles.quickSetBtn}
+              >
+                <Text style={styles.quickSetBtnText}>Set Exact (₩{orderAmountKRW.toLocaleString()})</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={styles.amountInputRow}>
+            <Text style={styles.currencyPrefix}>₩</Text>
+            <TextInput
+              style={[styles.amountInput, isAmountMismatch && styles.amountInputWarning]}
+              value={transferredAmount}
+              onChangeText={onChangeTransferredAmount}
+              placeholder={String(orderAmountKRW || '50000')}
+              placeholderTextColor="#A0A0A0"
+              keyboardType="numeric"
+            />
+          </View>
+
+          {isAmountMismatch ? (
+            <View style={styles.mismatchWarningBox}>
+              <Text style={styles.mismatchWarningText}>
+                ⚠️ Transferred amount (₩{parsedTransferred.toLocaleString()}) does not match the order total (₩{orderAmountKRW.toLocaleString()}).
+              </Text>
+            </View>
+          ) : (
+            <Text style={styles.fieldHint}>
+              Enter the exact amount transferred from your bank app.
+            </Text>
+          )}
+        </View>
+      )}
+
+      {/* 6. PAYMENT SCREENSHOT PROOF UPLOADER */}
       <View style={styles.uploadSection}>
         <View style={styles.uploadHeaderRow}>
           <Text style={styles.fieldLabel}>
-            Upload Payment Screenshot / 입금 확인증 업로드 <Text style={{ color: '#EF4444' }}>*</Text>
+            Upload Payment Screenshot (입금 확인증) <Text style={{ color: '#EF4444' }}>*</Text>
           </Text>
           <Text style={styles.formatTag}>Max 5MB • JPG, PNG, WEBP</Text>
         </View>
@@ -330,15 +373,15 @@ export function BankTransferCard({
 
             <View style={styles.screenshotInfo}>
               <View style={styles.attachedBadge}>
-                <Text style={styles.attachedBadgeText}>✓ Proof Attached (확인증 첨부됨)</Text>
+                <Text style={styles.attachedBadgeText}>✓ Screenshot Uploaded</Text>
               </View>
-              <Text style={styles.tapToViewText}>Tap thumbnail to inspect fullscreen</Text>
+              <Text style={styles.tapToViewText}>Tap thumbnail to preview full image</Text>
 
               {isUploading ? (
                 <View style={styles.uploadProgressRow}>
                   <ActivityIndicator size="small" color="#D4AF37" />
                   <Text style={styles.uploadProgressText}>
-                    Uploading to secure storage ({uploadProgress}%)...
+                    Uploading to secure Firebase Storage ({uploadProgress}%)...
                   </Text>
                 </View>
               ) : (
@@ -367,21 +410,21 @@ export function BankTransferCard({
             onPress={handlePickImage}
             activeOpacity={0.8}
           >
-            <Text style={{ fontSize: 34 }}>📸</Text>
+            <Text style={{ fontSize: 36 }}>📸</Text>
             <Text style={styles.uploadBoxTitle}>
               Upload Payment Screenshot / 입금 확인증 업로드
             </Text>
             <Text style={styles.uploadBoxSub}>
-              Take a screenshot from your banking app showing the transfer details
+              Attach a clear screenshot of your bank transfer confirmation screen
             </Text>
             <View style={styles.uploadBadgePill}>
-              <Text style={styles.uploadBadgePillText}>+ Choose File / Image (파일 선택)</Text>
+              <Text style={styles.uploadBadgePillText}>+ Choose Image File (사진 선택)</Text>
             </View>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* 5. FULLSCREEN IMAGE PREVIEW MODAL */}
+      {/* 7. FULLSCREEN IMAGE PREVIEW MODAL */}
       <Modal
         visible={isPreviewOpen}
         transparent
@@ -514,6 +557,27 @@ const getStyles = (isDark: boolean) => {
       borderColor: isDark ? '#3E3E3E' : '#E5E7EB',
       marginBottom: 14,
     },
+    amountHighlightBox: {
+      backgroundColor: isDark ? '#172554' : '#EFF6FF',
+      borderRadius: 10,
+      padding: 10,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: isDark ? '#1E40AF' : '#BFDBFE',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    amountHighlightLabel: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: isDark ? '#93C5FD' : '#1E40AF',
+    },
+    amountHighlightValue: {
+      fontSize: 18,
+      fontWeight: '900',
+      color: isDark ? '#60A5FA' : '#1D4ED8',
+    },
     bankInfoRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -572,36 +636,6 @@ const getStyles = (isDark: boolean) => {
       fontWeight: '900',
       letterSpacing: 0.3,
     },
-    amountNoticeGrid: {
-      flexDirection: 'row',
-      backgroundColor: isDark ? '#1E293B' : '#EFF6FF',
-      borderRadius: 10,
-      padding: 10,
-      marginBottom: 10,
-      borderWidth: 1,
-      borderColor: isDark ? '#334155' : '#DBEAFE',
-      gap: 12,
-    },
-    noticeCell: {
-      flex: 1,
-    },
-    noticeCellLabel: {
-      fontSize: 10,
-      fontWeight: '700',
-      color: isDark ? '#94A3B8' : '#3B82F6',
-    },
-    noticeAmountValue: {
-      fontSize: 16,
-      fontWeight: '900',
-      color: isDark ? '#38BDF8' : '#1D4ED8',
-      marginTop: 2,
-    },
-    noticeOrderIdValue: {
-      fontSize: 14,
-      fontWeight: '900',
-      color: textMain,
-      marginTop: 2,
-    },
     instructionBanner: {
       flexDirection: 'row',
       backgroundColor: isDark ? '#2B261D' : '#FEF3C7',
@@ -631,6 +665,55 @@ const getStyles = (isDark: boolean) => {
       fontWeight: '800',
       color: textMain,
       marginBottom: 6,
+    },
+    quickSetBtn: {
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 6,
+      backgroundColor: isDark ? '#2D271E' : '#FEF3C7',
+    },
+    quickSetBtnText: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: accent,
+    },
+    amountInputRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: border,
+      paddingHorizontal: 12,
+    },
+    currencyPrefix: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: accent,
+      marginRight: 6,
+    },
+    amountInput: {
+      flex: 1,
+      paddingVertical: 10,
+      fontSize: 15,
+      fontWeight: '800',
+      color: textMain,
+    },
+    amountInputWarning: {
+      color: '#EF4444',
+    },
+    mismatchWarningBox: {
+      backgroundColor: isDark ? '#3E1F1F' : '#FEE2E2',
+      padding: 8,
+      borderRadius: 8,
+      marginTop: 4,
+      borderWidth: 1,
+      borderColor: isDark ? '#7F1D1D' : '#FCA5A5',
+    },
+    mismatchWarningText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: isDark ? '#FCA5A5' : '#DC2626',
     },
     textInput: {
       backgroundColor: isDark ? '#262626' : '#F9FAFB',
@@ -798,19 +881,20 @@ const getStyles = (isDark: boolean) => {
       top: 50,
       right: 20,
       backgroundColor: 'rgba(255,255,255,0.2)',
-      paddingHorizontal: 16,
+      paddingHorizontal: 14,
       paddingVertical: 8,
-      borderRadius: 20,
+      borderRadius: 8,
       zIndex: 10,
     },
     closeModalText: {
       color: '#FFFFFF',
       fontSize: 13,
-      fontWeight: '900',
+      fontWeight: '800',
     },
     fullModalImage: {
       width: '100%',
       height: '80%',
+      borderRadius: 12,
     },
   });
 };
