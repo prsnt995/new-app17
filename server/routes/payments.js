@@ -1,17 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const { createClient } = require('@supabase/supabase-js');
+const supabase = require('../lib/supabase');
 const { sendWhatsAppNotification } = require('../services/whatsapp');
-
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const authMiddleware = require('../middleware/auth');
 
 /**
  * POST /api/payments/verify-and-create
  * Verifies Korean Credit/Debit Card payment and creates the order in Supabase.
  */
-router.post('/verify-and-create', async (req, res) => {
+router.post('/verify-and-create', authMiddleware, async (req, res) => {
   try {
     const {
       paymentDetails,
@@ -42,8 +39,74 @@ router.post('/verify-and-create', async (req, res) => {
       });
     }
 
-    const orderNumber = `NM-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
-    const trackingNumber = `KR-CJ${Math.floor(10000000 + Math.random() * 90000000)}`;
+    if (items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'At least one item is required to create an order.',
+      });
+    }
+
+    const numericTotal = Number(totalAmount);
+    if (!Number.isFinite(numericTotal) || numericTotal < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid totalAmount value.',
+      });
+    }
+
+    for (const item of items) {
+      if (!item.quantity || Number(item.quantity) <= 0 || !Number.isInteger(Number(item.quantity))) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid quantity for item: ${item.name || item.productId || 'unknown'}`,
+        });
+      }
+    }
+
+    if (userId !== 'guest' && req.user && req.user.uid !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'User ID does not match authenticated user.',
+      });
+    }
+
+    // ── Server-side price verification (recompute from DB) ──
+    if (items.length > 0) {
+      const productIds = items.map((it) => it.productId).filter(Boolean);
+      const { data: dbProducts, error: priceErr } = await supabase
+        .from('products')
+        .select('id, price_krw, discount_percent, final_price')
+        .in('id', productIds);
+
+      if (!priceErr && dbProducts && dbProducts.length > 0) {
+        const priceMap = Object.fromEntries(dbProducts.map((p) => [p.id, p]));
+        let expectedSubtotal = 0;
+        for (const item of items) {
+          const dbProd = priceMap[item.productId];
+          if (!dbProd) {
+            return res.status(400).json({ success: false, message: `Product not found: ${item.productId}` });
+          }
+          const unitPrice = Number(dbProd.final_price) || Number(dbProd.price_krw) || 0;
+          expectedSubtotal += unitPrice * Number(item.quantity);
+        }
+        const expectedTotal = Math.max(0, expectedSubtotal + Number(deliveryFee) - Number(totalDiscount));
+        if (Math.abs(expectedTotal - Number(totalAmount)) > 500) {
+          return res.status(400).json({
+            success: false,
+            message: `Price mismatch: expected ${expectedTotal}, got ${totalAmount}. Possible tampering.`,
+          });
+        }
+        if (Math.abs(Number(paymentDetails.paidAmount) - expectedTotal) > 500) {
+          return res.status(400).json({
+            success: false,
+            message: `Paid amount mismatch: expected ${expectedTotal}, got ${paymentDetails.paidAmount}.`,
+          });
+        }
+      }
+    }
+
+    const orderNumber = `NM-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    const trackingNumber = `KR-CJ${Date.now().toString().slice(-8)}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     const dateFormatted = new Date().toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -67,7 +130,7 @@ router.post('/verify-and-create', async (req, res) => {
       cardNumberMasked: paymentDetails.cardNumberMasked || '****-****-****-****',
       installment: paymentDetails.installment || '일시불',
       transactionId: paymentDetails.transactionId,
-      approvalNumber: paymentDetails.approvalNumber || `${Math.floor(10000000 + Math.random() * 90000000)}`,
+      approvalNumber: paymentDetails.approvalNumber || `${Date.now().toString().slice(-8)}${Math.random().toString(36).substring(2, 4).toUpperCase()}`,
       paidAmount: Number(paymentDetails.paidAmount) || totalAmount,
       currency: 'KRW',
       paidAt: paymentDetails.paidAt || Date.now(),
@@ -91,15 +154,11 @@ router.post('/verify-and-create', async (req, res) => {
     const newOrderData = {
       order_number: orderNumber,
       user_id: userId,
-      customer_uid: userId,
       customer: {
         name: customer?.name || deliveryAddress.recipientName || 'Customer',
         email: customer?.email || '',
         phoneNumber: customer?.phoneNumber || customer?.phone || deliveryAddress.phoneNumber || '',
       },
-      customer_name: customer?.name || deliveryAddress.recipientName || 'Customer',
-      customer_email: customer?.email || '',
-      customer_phone: customer?.phoneNumber || customer?.phone || deliveryAddress.phoneNumber || '',
       delivery_address: {
         recipientName: deliveryAddress.recipientName,
         phoneNumber: deliveryAddress.phoneNumber || deliveryAddress.phone || '',
@@ -118,26 +177,24 @@ router.post('/verify-and-create', async (req, res) => {
         country: 'South Korea',
       },
       items: itemsSnapshot,
-      subtotal_krw: Number(subtotal),
       subtotal: Number(subtotal),
-      discount_krw: Number(totalDiscount),
-      total_discount: Number(totalDiscount),
-      shipping_fee_krw: Number(deliveryFee),
-      delivery_fee: Number(deliveryFee),
-      total_krw: Number(totalAmount),
+      discount: Number(totalDiscount),
+      shipping_fee: Number(deliveryFee),
       total_amount: Number(totalAmount),
       total_weight_kg: items.reduce((acc, it) => acc + (Number(it.weightKg) || 1) * (Number(it.quantity) || 1), 0),
       status: 'Payment Confirmed',
+      order_status: 'CONFIRMED',
       payment_status: 'paid',
       payment: paymentInfo,
       payment_method: `Credit/Debit Card (${paymentDetails.cardCompany})`,
+      bank_account: {},
+      sender_name: '',
       origin_hub: originHub || 'Seoul Main Hub',
       destination_city: destinationCity || 'Seoul',
       destination_country: 'South Korea',
       shipping_method: shippingMethod || 'Standard',
       estimated_delivery: 'In 1-2 days (CJ Logistics)',
       tracking_number: trackingNumber,
-      date: dateFormatted,
       timeline: [
         {
           title: 'Payment Confirmed (PAID)',
@@ -184,9 +241,9 @@ router.post('/verify-and-create', async (req, res) => {
       const quantities = items.filter((it) => it.productId).map((it) => Number(it.quantity) || 1);
 
       if (productIds.length > 0) {
-        await supabase.rpc('decrement_stock', {
-          product_ids: productIds,
-          quantities,
+        await supabase.rpc('decrement_stock_batch', {
+          p_ids: productIds,
+          p_quantities: quantities,
         });
       }
 
@@ -248,15 +305,55 @@ router.post('/verify-and-create', async (req, res) => {
 
 /**
  * POST /api/payments/verify
- * Standalone verification for PG payment authorization
+ * Validates payment details against the stored order amount.
+ * For real PG integration, replace the verification logic with actual gateway API call.
  */
-router.post('/verify', async (req, res) => {
+router.post('/verify', authMiddleware, async (req, res) => {
   try {
-    const { transactionId, paidAmount, cardCompany } = req.body;
+    const { transactionId, paidAmount, cardCompany, orderId } = req.body;
     if (!transactionId || !paidAmount) {
       return res.status(400).json({
         success: false,
+        verified: false,
         message: 'transactionId and paidAmount are required for verification',
+      });
+    }
+
+    let verified = false;
+    let reason = '';
+
+    if (orderId) {
+      const { data: order, error: orderError } = await supabase
+        .from('orders')
+        .select('total_amount, payment')
+        .eq('id', orderId)
+        .single();
+
+      if (!orderError && order) {
+        const expectedAmount = order.total_amount || 0;
+        if (Math.abs(Number(paidAmount) - Number(expectedAmount)) <= 1) {
+          verified = true;
+        } else {
+          reason = `Amount mismatch: expected ${expectedAmount}, got ${paidAmount}`;
+        }
+      } else {
+        reason = 'Order not found for verification';
+      }
+    } else {
+      return res.status(400).json({
+        success: false,
+        verified: false,
+        message: 'orderId is required for payment verification',
+      });
+    }
+
+    if (!verified) {
+      return res.status(400).json({
+        success: false,
+        verified: false,
+        message: reason || 'Payment verification failed',
+        transactionId,
+        paidAmount,
       });
     }
 
@@ -265,13 +362,14 @@ router.post('/verify', async (req, res) => {
       verified: true,
       transactionId,
       paidAmount,
-      cardCompany: cardCompany || 'Korean Card',
+      cardCompany: cardCompany || 'Bank Transfer',
       verifiedAt: new Date().toISOString(),
       status: 'DONE',
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
+      verified: false,
       message: error.message || 'Verification endpoint failed',
     });
   }

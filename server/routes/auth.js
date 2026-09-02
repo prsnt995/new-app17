@@ -1,12 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { createClient } = require('@supabase/supabase-js');
+const supabase = require('../lib/supabase');
 const authMiddleware = require('../middleware/auth');
-
-// ─── SUPABASE SERVICE ROLE CLIENT ────────────────────────────────────────────
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 /**
  * POST /api/auth/save-profile

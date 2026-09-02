@@ -7,6 +7,7 @@ import {
   Alert,
   Image,
   Modal,
+  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -63,6 +64,7 @@ export default function ProfileScreen() {
     orders,
     t,
     isDarkMode,
+    logout,
   } = useApp();
 
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
@@ -317,13 +319,21 @@ export default function ProfileScreen() {
   };
 
   const handleLogout = () => {
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm('Are you sure you want to log out?') : true;
+      if (!confirmed) return;
+      logout().catch(() => {}).finally(() => router.replace('/'));
+      return;
+    }
     Alert.alert('Logout?', 'Are you sure you want to log out of your account?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Logout',
         style: 'destructive',
-        onPress: () => {
-          Alert.alert('Logged Out', 'You have been logged out.');
+        onPress: async () => {
+          try {
+            await logout();
+          } catch {}
           router.replace('/');
         },
       },

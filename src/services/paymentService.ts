@@ -41,18 +41,11 @@ export const uploadAndLinkPaymentScreenshot = async (
     .from(TABLES.ORDERS)
     .update({
       payment: paymentUpdate,
-      paymentScreenshot: downloadUrl, // backward compatibility
-      paymentProofUrl: downloadUrl,
-      paymentProofStoragePath: storagePath,
-      paymentProofUploadedAt: Date.now(),
-      paymentMethod: 'BANK_TRANSFER',
-      paymentStatus: 'PENDING_VERIFICATION',
+      payment_status: 'PENDING_VERIFICATION',
       status: 'Payment Submitted',
-      orderStatus: 'PENDING',
-      paymentRejectedAt: null,
-      paymentRejectedBy: null,
-      paymentRejectionReason: null,
-      updatedAt: Date.now(),
+      order_status: 'PENDING',
+      payment_method: 'BANK_TRANSFER',
+      updated_at: Date.now(),
     })
     .eq('id', orderId);
 
@@ -81,25 +74,29 @@ export const verifyOrderPayment = async (
 
   if (fetchError || !orderData) throw new Error('Order not found.');
 
-  const currentPayment = orderData.payment || {};
-  const actualAmount = orderAmount || orderData.totalAmount || orderData.totalKRW || 0;
-  const actualCustName = customerName || orderData.customerName || orderData.customer?.name || 'Customer';
-  const actualOrderNumber = orderNumber || orderData.orderNumber || orderId;
+  const actualAmount = orderAmount || (orderData as any).total_amount || (orderData as any).totalAmount || 0;
+  const actualCustName = customerName || (orderData as any).customer_name || (orderData as any).customerName || (orderData as any).customer?.name || 'Customer';
+  const actualOrderNumber = orderNumber || (orderData as any).order_number || (orderData as any).orderNumber || orderId;
+
+  // Merge payment JSONB with verified fields
+  const basePayment = (orderData as any).payment || {};
+  const updatedPayment = {
+    ...basePayment,
+    verified: true,
+    verifiedAt: Date.now(),
+    verifiedBy: adminUid,
+    status: 'paid',
+  };
 
   // 1. Update Order Document
   const { error: updateError } = await supabase
     .from(TABLES.ORDERS)
     .update({
-      paymentStatus: 'PAID',
-      paymentVerifiedAt: Date.now(),
-      paymentVerifiedBy: adminUid,
-      'payment.verified': true,
-      'payment.verifiedAt': Date.now(),
-      'payment.verifiedBy': adminUid,
-      'payment.status': 'paid',
-      orderStatus: 'CONFIRMED',
+      payment_status: 'PAID',
+      order_status: 'CONFIRMED',
       status: 'Payment Confirmed',
-      updatedAt: Date.now(),
+      payment: updatedPayment,
+      updated_at: Date.now(),
     })
     .eq('id', orderId);
 
@@ -110,15 +107,14 @@ export const verifyOrderPayment = async (
     const { error: logError } = await supabase
       .from(TABLES.PAYMENT_LOGS)
       .insert({
-        orderId,
-        orderNumber: actualOrderNumber,
+        order_id: orderId,
+        order_number: actualOrderNumber,
         action: 'VERIFIED',
-        adminUserId: adminUid,
-        adminEmail,
+        admin_user_id: adminUid,
+        admin_email: adminEmail,
         amount: actualAmount,
-        customerName: actualCustName,
-        timestamp: Date.now(),
-        createdAt: Date.now(),
+        customer_name: actualCustName,
+        created_at: Date.now(),
       });
 
     if (logError) throw logError;
@@ -148,26 +144,29 @@ export const rejectOrderPayment = async (
 
   if (fetchError || !orderData) throw new Error('Order not found.');
 
-  const actualAmount = orderAmount || orderData.totalAmount || orderData.totalKRW || 0;
-  const actualCustName = customerName || orderData.customerName || orderData.customer?.name || 'Customer';
-  const actualOrderNumber = orderNumber || orderData.orderNumber || orderId;
+  const actualAmount = orderAmount || (orderData as any).total_amount || (orderData as any).totalAmount || 0;
+  const actualCustName = customerName || (orderData as any).customer_name || (orderData as any).customerName || (orderData as any).customer?.name || 'Customer';
+  const actualOrderNumber = orderNumber || (orderData as any).order_number || (orderData as any).orderNumber || orderId;
+
+  const basePaymentReject = (orderData as any).payment || {};
+  const updatedPaymentReject = {
+    ...basePaymentReject,
+    verified: false,
+    status: 'REJECTED',
+    rejectionReason: reason,
+    rejectedAt: Date.now(),
+    rejectedBy: adminUid,
+  };
 
   // 1. Update Order Document
   const { error: updateError } = await supabase
     .from(TABLES.ORDERS)
     .update({
-      paymentStatus: 'REJECTED',
-      paymentRejectedAt: Date.now(),
-      paymentRejectedBy: adminUid,
-      paymentRejectionReason: reason,
-      'payment.verified': false,
-      'payment.status': 'REJECTED',
-      'payment.rejectionReason': reason,
-      'payment.rejectedAt': Date.now(),
-      'payment.rejectedBy': adminUid,
-      orderStatus: 'PENDING',
+      payment_status: 'REJECTED',
+      order_status: 'PENDING',
       status: 'Payment Pending',
-      updatedAt: Date.now(),
+      payment: updatedPaymentReject,
+      updated_at: Date.now(),
     })
     .eq('id', orderId);
 
@@ -178,16 +177,15 @@ export const rejectOrderPayment = async (
     const { error: logError } = await supabase
       .from(TABLES.PAYMENT_LOGS)
       .insert({
-        orderId,
-        orderNumber: actualOrderNumber,
+        order_id: orderId,
+        order_number: actualOrderNumber,
         action: 'REJECTED',
-        adminUserId: adminUid,
-        adminEmail,
+        admin_user_id: adminUid,
+        admin_email: adminEmail,
         reason,
         amount: actualAmount,
-        customerName: actualCustName,
-        timestamp: Date.now(),
-        createdAt: Date.now(),
+        customer_name: actualCustName,
+        created_at: Date.now(),
       });
 
     if (logError) throw logError;
@@ -206,7 +204,7 @@ export const getPaymentVerificationLogs = async (
     const { data, error } = await supabase
       .from(TABLES.PAYMENT_LOGS)
       .select('*')
-      .order('createdAt', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(limitCount);
 
     if (error) throw error;

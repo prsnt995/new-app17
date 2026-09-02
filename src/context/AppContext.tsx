@@ -92,6 +92,12 @@ interface AppContextType {
   defaultKoreanAddress: Address | undefined;
   addKoreanAddress: (addr: KoreanAddress) => Promise<void>;
   uploadPaymentScreenshot: (orderId: string, fileUri: string) => Promise<string>;
+  isLoading: boolean;
+  isProductsLoading: boolean;
+  isOrdersLoading: boolean;
+  pendingRoute: string | null;
+  setPendingRoute: (route: string | null) => void;
+  promptLogin: (route?: string) => void;
 }
 
 const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
@@ -619,7 +625,10 @@ const GUEST_USER: UserProfile = {
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isProductsLoading, setIsProductsLoading] = useState(true);
+  const [isOrdersLoading, setIsOrdersLoading] = useState(false);
+  const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [wishlist, setWishlist] = useState<string[]>([]);
   const [orders, setOrders] = useState<OrderItem[]>([]);
@@ -633,21 +642,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Track auth UID for Firestore user-scoped operations
   const [authUid, setAuthUid] = useState<string | null>(null);
+  const [pendingRoute, setPendingRoute] = useState<string | null>(null);
   // Prevent duplicate Firestore syncs while a sync is in progress
   const cartSyncRef = React.useRef(false);
   const wishlistSyncRef = React.useRef(false);
 
-  // ── FIRESTORE REAL-TIME SUBSCRIPTIONS ─────────────────────────────────
+  // ── SUPABASE REAL-TIME SUBSCRIPTIONS ────────────────────────────────────
   useEffect(() => {
+    let mounted = true;
     const unsubscribers: (() => void)[] = [];
 
     import('@/services/firestore').then((firestoreService) => {
-      // Products — real-time
+      if (!mounted) return;
+      let productsReceived = false;
+      // Products — real-time (Supabase first, mock fallback only if Supabase is empty or errors)
       const unsubProducts = firestoreService.subscribeToProducts(
         (firestoreProducts) => {
-          if (firestoreProducts.length > 0) setProducts(firestoreProducts);
+          if (!mounted) return;
+          productsReceived = true;
+          if (firestoreProducts.length > 0) {
+            setProducts(firestoreProducts);
+          } else {
+            setProducts((prev) => (prev.length > 0 ? prev : INITIAL_PRODUCTS));
+          }
+          setIsProductsLoading(false);
+          setIsLoading(false);
         },
-        () => {} // Silently keep using mock data on error
+        () => {
+          if (!mounted) return;
+          setProducts((prev) => (prev.length > 0 ? prev : INITIAL_PRODUCTS));
+          setIsProductsLoading(false);
+          setIsLoading(false);
+        }
       );
       unsubscribers.push(unsubProducts);
 
@@ -666,20 +692,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Seed default data once (no-op if already seeded)
       firestoreService.seedDefaultCategories().catch(() => {});
       firestoreService.seedDefaultBanners().catch(() => {});
+
+      // Fallback: if Supabase doesn't respond within 4s, stop loading (show mocks)
+      setTimeout(() => {
+        if (!productsReceived && mounted) {
+          setIsProductsLoading(false);
+          setIsLoading(false);
+          setProducts((prev) => (prev.length > 0 ? prev : INITIAL_PRODUCTS));
+        }
+      }, 4000);
     }).catch(() => {
-      // Firestore not configured, continue with mock data
+      setIsProductsLoading(false);
+      setIsLoading(false);
     });
 
-    return () => unsubscribers.forEach((unsub) => unsub());
+    return () => {
+      mounted = false;
+      unsubscribers.forEach((unsub) => unsub());
+    };
   }, []);
+
+  const unsubscribers_auth_ref = React.useRef<(() => void) | null>(null);
 
   // ── AUTH STATE LISTENER + USER-SCOPED DATA ────────────────────────────
   useEffect(() => {
+    let isActive = true;
     let unsubOrders: (() => void) | undefined;
     let unsubCart: (() => void) | undefined;
     let unsubWishlist: (() => void) | undefined;
 
     import('@/config/supabase').then(({ supabase }) => {
+      if (!isActive) return;
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         const supabaseUser = session?.user;
         if (supabaseUser) {
@@ -735,10 +778,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
 
             // 4. Real-time subscribe to current user's orders only
+            setIsOrdersLoading(true);
             const { subscribeUserOrders } = await import('@/services/orderService');
+            let firstOrders = true;
             unsubOrders = subscribeUserOrders(uid, (userOrders) => {
               setOrders(userOrders);
+              if (firstOrders) { setIsOrdersLoading(false); firstOrders = false; }
             });
+            // Fallback if orders never arrive
+            setTimeout(() => { if (firstOrders) { setIsOrdersLoading(false); firstOrders = false; } }, 4000);
 
             // 5. Load persisted cart from Firestore
             const { loadCartFromFirestore, loadWishlistFromFirestore } = await import('@/services/firestore');
@@ -769,8 +817,74 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (savedWishlist && savedWishlist.length > 0) {
               setWishlist((prev) => Array.from(new Set([...prev, ...savedWishlist])));
             }
+
+            // 7. Merge guest (device) cart/wishlist into Supabase on login (keep device data)
+            try {
+              const s = getStorage();
+              if (s) {
+                const rawGuestCart = await s.getItem(GUEST_CART_KEY);
+                const rawGuestWish = await s.getItem(GUEST_WISHLIST_KEY);
+                let mergedCartItems: { productId: string; quantity: number }[] | null = null;
+                let mergedWishIds: string[] | null = null;
+
+                if (rawGuestCart) {
+                  const guestItems: { productId: string; quantity: number }[] = JSON.parse(rawGuestCart);
+                  if (guestItems.length > 0) {
+                    const serverMap = new Map((savedCart || []).map((c: any) => [c.productId, c.quantity]));
+                    for (const g of guestItems) {
+                      serverMap.set(g.productId, (serverMap.get(g.productId) || 0) + g.quantity);
+                    }
+                    mergedCartItems = Array.from(serverMap.entries()).map(([productId, quantity]) => ({ productId, quantity }));
+                    // Apply merged cart locally
+                    setCart((prevCart) => {
+                      const localIds = new Set(prevCart.map((c) => c.product.id));
+                      const toAdd: typeof prevCart = [];
+                      for (const item of mergedCartItems!) {
+                        if (!localIds.has(item.productId)) {
+                          const product = products.find((pr) => pr.id === item.productId);
+                          if (product) toAdd.push({ product, quantity: item.quantity });
+                          else {
+                            // Quantity update for existing
+                            const existing = prevCart.find((c) => c.product.id === item.productId);
+                            if (existing) {
+                              const idx = prevCart.indexOf(existing);
+                              prevCart = [...prevCart];
+                              prevCart[idx] = { ...existing, quantity: item.quantity };
+                            }
+                          }
+                        }
+                      }
+                      return toAdd.length > 0 ? [...prevCart, ...toAdd] : prevCart;
+                    });
+                  }
+                }
+                if (rawGuestWish) {
+                  const guestWish: string[] = JSON.parse(rawGuestWish);
+                  if (guestWish.length > 0) {
+                    const merged = Array.from(new Set([...(savedWishlist || []), ...guestWish]));
+                    if (merged.length > (savedWishlist || []).length) {
+                      mergedWishIds = merged;
+                      setWishlist(merged);
+                    }
+                  }
+                }
+                // Persist merged to Supabase
+                if (mergedCartItems) {
+                  const { syncCartToFirestore } = await import('@/services/firestore');
+                  syncCartToFirestore(uid, mergedCartItems).catch(() => {});
+                }
+                if (mergedWishIds) {
+                  const { syncWishlistToFirestore } = await import('@/services/firestore');
+                  syncWishlistToFirestore(uid, mergedWishIds).catch(() => {});
+                }
+                // Clear guest storage after merge
+                if (mergedCartItems) try { const r = s.removeItem(GUEST_CART_KEY); if ((r as any)?.catch) (r as any).catch(() => {}); } catch {}
+                if (mergedWishIds) try { const r = s.removeItem(GUEST_WISHLIST_KEY); if ((r as any)?.catch) (r as any).catch(() => {}); } catch {}
+              }
+            } catch {}
           } catch (e: any) {
             console.log('Error initializing user profile:', e.message);
+            setIsOrdersLoading(false);
           }
         } else {
           // USER SIGNED OUT: Clear user session and user data completely
@@ -782,6 +896,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setCart([]);
           setOrders([]);
           setWishlist([]);
+          setIsOrdersLoading(false);
         }
       });
 
@@ -794,13 +909,69 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }).catch(() => {});
 
     return () => {
+      isActive = false;
       unsubscribers_auth_ref.current?.();
     };
   }, []);
 
-  const unsubscribers_auth_ref = React.useRef<(() => void) | null>(null);
+  // ── DEVICE-LEVEL GUEST CART/WISHLIST (AsyncStorage) ─────────────────
+  const GUEST_CART_KEY = 'guest_cart';
+  const GUEST_WISHLIST_KEY = 'guest_wishlist';
+  const getStorage = () => {
+    if (typeof window !== 'undefined' && (window as any).localStorage) return (window as any).localStorage;
+    try {
+      const AS = require('@react-native-async-storage/async-storage').default;
+      return { getItem: (k: string) => AS.getItem(k), setItem: (k: string, v: string) => AS.setItem(k, v), removeItem: (k: string) => AS.removeItem(k) } as any;
+    } catch { return null; }
+  };
+  const persistGuestCart = useCallback((items: CartItem[]) => {
+    const s = getStorage(); if (!s) return;
+    const payload = JSON.stringify(items.map((c) => ({ productId: c.product.id, quantity: c.quantity })));
+    try { const r = s.setItem(GUEST_CART_KEY, payload); if ((r as any)?.catch) (r as any).catch(() => {}); } catch {}
+  }, []);
+  const persistGuestWishlist = useCallback((ids: string[]) => {
+    const s = getStorage(); if (!s) return;
+    try { const r = s.setItem(GUEST_WISHLIST_KEY, JSON.stringify(ids)); if ((r as any)?.catch) (r as any).catch(() => {}); } catch {}
+  }, []);
+  useEffect(() => {
+    if (authUid) return;
+    let cancelled = false;
+    (async () => {
+      const s = getStorage(); if (!s) return;
+      try {
+        const rawCart = await s.getItem(GUEST_CART_KEY);
+        const rawWish = await s.getItem(GUEST_WISHLIST_KEY);
+        if (cancelled) return;
+        if (rawCart && products.length > 0) {
+          const parsed: { productId: string; quantity: number }[] = JSON.parse(rawCart);
+          if (parsed.length > 0) {
+            const restored = parsed.map((pr) => {
+              const product = products.find((pp) => pp.id === pr.productId);
+              return product ? { product, quantity: pr.quantity } : null;
+            }).filter(Boolean) as CartItem[];
+            if (restored.length > 0) setCart(restored);
+          }
+        }
+        if (rawWish) {
+          const ids: string[] = JSON.parse(rawWish);
+          if (ids.length > 0) setWishlist((prev) => (prev.length > 0 ? prev : ids));
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [products.length]);
+  useEffect(() => {
+    if (authUid) return;
+    if (cart.length === 0) { const s = getStorage(); if (s) try { const r = s.removeItem(GUEST_CART_KEY); if ((r as any)?.catch) (r as any).catch(() => {}); } catch {} return; }
+    persistGuestCart(cart);
+  }, [cart, authUid]);
+  useEffect(() => {
+    if (authUid) return;
+    if (wishlist.length === 0) { const s = getStorage(); if (s) try { const r = s.removeItem(GUEST_WISHLIST_KEY); if ((r as any)?.catch) (r as any).catch(() => {}); } catch {} return; }
+    persistGuestWishlist(wishlist);
+  }, [wishlist, authUid]);
 
-  // ── SYNC CART TO FIRESTORE (debounced) ────────────────────────────────
+  // ── SYNC CART TO SUPABASE (debounced) ────────────────────────────────
   const syncCartTimeout = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncCartToCloud = useCallback((cartItems: CartItem[]) => {
     if (!authUid || cartSyncRef.current) return;
@@ -871,7 +1042,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [cart]);
 
   const cartSubtotalKRW = useMemo(() => {
-    return cart.reduce((sum, item) => sum + item.product.priceKRW * item.quantity, 0);
+    return cart.reduce((sum, item) => sum + (item.product.finalPrice ?? item.product.priceKRW) * item.quantity, 0);
   }, [cart]);
 
   const cartDiscountKRW = useMemo(() => {
@@ -1295,11 +1466,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await logoutUser();
     } catch (e) {}
     setAuthUid(null);
+    setPendingRoute(null);
     setUser(GUEST_USER);
     setCart([]);
     setOrders([]);
     setWishlist([]);
   };
+
+  const promptLogin = useCallback((route?: string) => {
+    if (route) setPendingRoute(route);
+  }, []);
 
   const hasKoreanAddress = (user.savedAddresses || []).some(
     (a) => a.country === 'South Korea'
@@ -1549,6 +1725,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         logout,
         hasKoreanAddress,
         defaultKoreanAddress,
+        isLoading,
+        isProductsLoading,
+        isOrdersLoading,
+        pendingRoute,
+        setPendingRoute,
+        promptLogin,
         addKoreanAddress,
         uploadPaymentScreenshot,
       }}

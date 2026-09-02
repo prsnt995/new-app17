@@ -211,6 +211,17 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+CREATE OR REPLACE FUNCTION public.decrement_stock_batch(p_ids UUID[], p_quantities INTEGER[])
+RETURNS VOID AS $$
+DECLARE
+  i INTEGER;
+BEGIN
+  FOR i IN 1..array_length(p_ids, 1) LOOP
+    PERFORM public.decrement_stock(p_ids[i], p_quantities[i]);
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- ── DATABASE FUNCTION: Update product rating ───────────────────────────────
 CREATE OR REPLACE FUNCTION public.update_product_rating(p_product_id UUID)
 RETURNS VOID AS $$
@@ -294,10 +305,8 @@ CREATE POLICY "products_delete_admin" ON products
     EXISTS (SELECT 1 FROM admins WHERE id = auth.uid())
   );
 
--- Allow authenticated users to decrement stock (via RPC only, but also direct update for client-side)
-CREATE POLICY "products_update_stock" ON products
-  FOR UPDATE USING (auth.uid() IS NOT NULL)
-  WITH CHECK (stock >= 0);
+-- Stock decrement is handled exclusively via the decrement_stock RPC function (SECURITY DEFINER).
+-- No direct client-side stock update policy needed.
 
 -- ── ORDERS RLS ─────────────────────────────────────────────────────────────
 CREATE POLICY "orders_select_own" ON orders

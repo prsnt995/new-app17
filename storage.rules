@@ -9,14 +9,16 @@ service firebase.storage {
     function isAdmin() {
       return isAuthenticated() &&
         (firestore.exists(/databases/(default)/documents/admins/$(request.auth.uid)) ||
+         firestore.exists(/databases/(default)/documents/admins/$(request.auth.token.email)) ||
          request.auth.token.email.matches('.*@namastemart\\.com') ||
-         request.auth.token.email == 'namaste.mart.admin@gmail.com');
+         request.auth.token.email == 'namaste.mart.admin@gmail.com' ||
+         request.auth.token.email == 'parshanttanwar995@gmail.com');
     }
 
-    // Product images: public read, admin write only
+    // Product images: public read, any authenticated user may write (Supabase admin check is via RLS, not Firebase Auth)
     match /products/{productId}/{allPaths=**} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isAuthenticated();
     }
 
     // Payment proofs: secure path payment-proofs/{userId}/{orderId}/{fileName}

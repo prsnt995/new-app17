@@ -79,7 +79,8 @@ export const createOrderWithStockSafety = async (
     day: 'numeric',
     year: 'numeric',
   });
-  const orderNumber = `NM-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const orderNumber = `NM-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const trackingNumber = `KR-CJ${Date.now().toString().slice(-8)}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
   const itemsSnapshot: OrderItemSnapshot[] = payload.items.map((it) => ({
     productId: it.productId,
@@ -136,11 +137,7 @@ export const createOrderWithStockSafety = async (
   const orderDocData: any = {
     order_number: orderNumber,
     user_id: payload.userId,
-    customer_uid: payload.userId,
     customer: payload.customer,
-    customer_name: payload.customer.name,
-    customer_email: payload.customer.email,
-    customer_phone: payload.customer.phoneNumber,
     delivery_address: payload.deliveryAddress,
     recipient: {
       name: payload.deliveryAddress.recipientName,
@@ -152,28 +149,15 @@ export const createOrderWithStockSafety = async (
     },
     items: itemsSnapshot,
     subtotal: payload.subtotal,
-    subtotal_krw: payload.subtotal,
-    total_discount: payload.totalDiscount,
-    discount_krw: payload.totalDiscount,
-    delivery_fee: payload.deliveryFee,
-    shipping_fee_krw: payload.deliveryFee,
+    discount: payload.totalDiscount,
+    shipping_fee: payload.deliveryFee,
     total_amount: payload.totalAmount,
-    total_krw: payload.totalAmount,
     total_weight_kg: payload.items.reduce((sum, it) => sum + (it.weightKg || 1) * it.quantity, 0),
     status: initialStatus,
     order_status: initialOrderStatus,
     payment_status: initialPaymentStatus,
     payment: initialPayment,
     payment_method: payload.paymentMethod || 'BANK_TRANSFER',
-    payment_screenshot: payload.paymentScreenshotUri || null,
-    payment_proof_url: payload.paymentScreenshotUri || null,
-    payment_proof_storage_path: null,
-    payment_proof_uploaded_at: payload.paymentScreenshotUri ? new Date().toISOString() : null,
-    payment_verified_at: null,
-    payment_verified_by: null,
-    payment_rejected_at: null,
-    payment_rejected_by: null,
-    payment_rejection_reason: null,
     bank_account: payload.bankAccount,
     sender_name: payload.senderName || payload.customer.name,
     origin_hub: payload.originHub || 'Seoul Hub',
@@ -181,8 +165,10 @@ export const createOrderWithStockSafety = async (
     destination_country: 'South Korea',
     shipping_method: payload.shippingMethod || 'Standard',
     estimated_delivery: 'In 1-2 days (CJ Logistics)',
-    tracking_number: `KR-CJ${Math.floor(10000000 + Math.random() * 90000000)}`,
+    tracking_number: trackingNumber,
     date: dateFormatted,
+    created_at: Date.now(),
+    updated_at: Date.now(),
     timeline: [
       {
         title: 'Order Placed',
@@ -214,8 +200,6 @@ export const createOrderWithStockSafety = async (
         completed: false,
       },
     ],
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
     whatsapp_notification_sent: false,
   };
 
@@ -252,7 +236,6 @@ export const createOrderWithStockSafety = async (
             verifiedBy: null,
             status: 'uploaded',
           },
-          payment_screenshot: dlUrl,
         })
         .eq('id', createdId);
 

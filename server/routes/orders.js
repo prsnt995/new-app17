@@ -1,17 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const { createClient } = require('@supabase/supabase-js');
+const supabase = require('../lib/supabase');
 const { sendWhatsAppNotification, formatOrderWhatsAppMessage } = require('../services/whatsapp');
-
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const authMiddleware = require('../middleware/auth');
 
 /**
  * POST /api/orders/notify-whatsapp
  * Dispatches an automatic WhatsApp order notification
  */
-router.post('/notify-whatsapp', async (req, res) => {
+router.post('/notify-whatsapp', authMiddleware, async (req, res) => {
   try {
     const { orderId, orderData } = req.body;
 
@@ -91,7 +88,7 @@ router.post('/notify-whatsapp', async (req, res) => {
  * POST /api/orders/retry-whatsapp
  * Admin retry trigger for failed WhatsApp notifications
  */
-router.post('/retry-whatsapp', async (req, res) => {
+router.post('/retry-whatsapp', authMiddleware, async (req, res) => {
   try {
     const { orderId } = req.body;
     if (!orderId) {

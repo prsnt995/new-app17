@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Alert,
   Animated,
-  Dimensions,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -19,7 +18,7 @@ import { useApp } from '@/context/AppContext';
 import { sendOtp, verifyOtp, saveUserProfile } from '@/services/api';
 import { supabase } from '@/config/supabase';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
 
 // Country codes for the picker
 const COUNTRY_CODES = [
@@ -203,9 +202,7 @@ export default function OnboardingScreen() {
       const idToken = session?.access_token;
       const result = await verifyOtp(email, code, idToken || undefined);
 
-      const isValid = result.success || code === '123456';
-
-      if (isValid) {
+      if (result.success) {
         setEmailVerified(true);
         completeOnboarding();
         updateUserProfile({ emailVerified: true, onboardingComplete: true });
@@ -225,9 +222,7 @@ export default function OnboardingScreen() {
   };
 
   const handleSkip = () => {
-    completeOnboarding();
-    updateUserProfile({ onboardingComplete: true });
-    router.replace('/');
+    Alert.alert('Onboarding Required', 'Please complete phone, address, and email verification to continue.');
   };
 
   // ─── PROGRESS INDICATOR ────────────────────────────────────────────────────

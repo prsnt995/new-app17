@@ -1,14 +1,6 @@
-const { createClient } = require('@supabase/supabase-js');
+const supabase = require('../lib/supabase');
 
-/**
- * Supabase Authentication Middleware
- * Extracts Bearer JWT from Authorization header,
- * verifies via Supabase Auth API, and attaches user to req.user
- */
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 const authMiddleware = async (req, res, next) => {
   try {

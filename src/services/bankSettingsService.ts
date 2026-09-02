@@ -31,26 +31,21 @@ export const getBankTransferSettings = async (): Promise<BankTransferSettings> =
 
     if (error) {
       console.warn('Error fetching bank transfer settings:', error.message);
-      // Auto-seed default settings if row doesn't exist
       try {
         await supabase.from(TABLES.SETTINGS).upsert({
           key: BANK_SETTINGS_KEY,
-          ...DEFAULT_BANK_SETTINGS,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
-      } catch {
-        // Non-blocking if permissions or offline
-      }
+          value: DEFAULT_BANK_SETTINGS,
+          updated_at: Date.now(),
+        }, { onConflict: 'key' });
+      } catch {}
       return DEFAULT_BANK_SETTINGS;
     }
 
     if (data) {
-      const { key: _key, created_at: _created, updated_at: _updated, ...rest } = data;
-      return {
-        ...DEFAULT_BANK_SETTINGS,
-        ...rest,
-      };
+      const stored = (data as any).value as Partial<BankTransferSettings> | undefined;
+      if (stored && typeof stored === 'object' && (stored as any).bankName) {
+        return { ...DEFAULT_BANK_SETTINGS, ...stored };
+      }
     }
 
     return DEFAULT_BANK_SETTINGS;
@@ -65,18 +60,24 @@ export const getBankTransferSettings = async (): Promise<BankTransferSettings> =
  */
 export const updateBankTransferSettings = async (
   settings: Partial<BankTransferSettings>,
-  adminUid?: string
+  _adminUid?: string
 ): Promise<BankTransferSettings> => {
-  const payload = {
-    key: BANK_SETTINGS_KEY,
-    ...settings,
-    updated_at: new Date().toISOString(),
-    updatedBy: adminUid || 'admin',
-  };
+  const { data: existing } = await supabase
+    .from(TABLES.SETTINGS)
+    .select('value')
+    .eq('key', BANK_SETTINGS_KEY)
+    .single();
+
+  const currentValue = ((existing as any)?.value as Record<string, any>) || {};
+  const mergedValue = { ...currentValue, ...settings };
 
   const { error } = await supabase
     .from(TABLES.SETTINGS)
-    .upsert(payload, { onConflict: 'key' });
+    .upsert({
+      key: BANK_SETTINGS_KEY,
+      value: mergedValue,
+      updated_at: Date.now(),
+    }, { onConflict: 'key' });
 
   if (error) {
     console.error('Error updating bank transfer settings:', error.message);
@@ -111,10 +112,10 @@ export const subscribeBankTransferSettings = (
           return;
         }
         const data = payload.new as Record<string, any>;
-        const { key: _key, created_at: _created, updated_at: _updated, ...rest } = data;
+        const stored = (data?.value as Partial<BankTransferSettings>) || {};
         onUpdate({
           ...DEFAULT_BANK_SETTINGS,
-          ...rest,
+          ...stored,
         });
       }
     )

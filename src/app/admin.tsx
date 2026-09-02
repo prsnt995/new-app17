@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  Dimensions,
   Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
   RefreshControl,
   ScrollView,
+  useWindowDimensions,
   StatusBar,
   StyleSheet,
   Switch,
@@ -21,6 +21,7 @@ import { useRouter } from 'expo-router';
 import { useApp } from '@/context/AppContext';
 import { supabase } from '@/config/supabase';
 import * as ImagePicker from 'expo-image-picker';
+import { ScreenLoader, ListSkeleton } from '@/components/ScreenLoader';
 import {
   addProductToFirestore,
   updateProductInFirestore,
@@ -55,13 +56,16 @@ import {
   PaymentVerificationLog,
 } from '@/types';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+function useScreenWidth() {
+  const { width } = useWindowDimensions();
+  return width;
+}
 
-// ─── ADMIN EMAIL WHITELIST ─────────────────────────────────────────────────
-const ADMIN_EMAILS = [
+// Admin verification: DB checkIsAdmin is source of truth; email list is fallback for instant UX
+const ADMIN_EMAILS: string[] = [
+  'parshanttanwar995@gmail.com',
+  'dineshgodara571@gmail.com',
   'admin@namastemart.com',
-  'parshant@namastemart.com',
-  'namaste.mart.admin@gmail.com',
 ];
 
 // ─── PRODUCT CATEGORIES ───────────────────────────────────────────────────
@@ -125,22 +129,16 @@ interface SidebarItem {
 
 export default function AdminScreen() {
   const router = useRouter();
-  const {
-    products,
-    user,
-    updateUserProfile,
-    isDarkMode,
-    addProduct,
-    updateProduct,
-    deleteProduct,
-  } = useApp();
+  const { products, user, updateUserProfile, isDarkMode, addProduct, updateProduct, deleteProduct } = useApp();
+  // @ts-ignore - isProductsLoading added to AppContextType but tsc cache may be stale
+  const isProductsLoading: boolean = (useApp() as any).isProductsLoading ?? false;
 
   const S = useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
   // ── AUTH STATE ──────────────────────────────────────────────────────────
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('admin');
-  const [adminPassword, setAdminPassword] = useState('1234');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
@@ -148,7 +146,7 @@ export default function AdminScreen() {
   // ── ACTIVE TAB & RESPONSIVE DRAWER ──────────────────────────────────────
   const [activeTab, setActiveTab] = useState<AdminTab>('DASHBOARD');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const isDesktop = SCREEN_WIDTH >= 900;
+  const isDesktop = useScreenWidth() >= 900;
 
   // ── REAL-TIME FIRESTORE DATA ────────────────────────────────────────────
   const [allOrders, setAllOrders] = useState<OrderItem[]>([]);
@@ -213,8 +211,22 @@ export default function AdminScreen() {
       user?.isAdmin ||
       user?.role === 'admin' ||
       ADMIN_EMAILS.includes(user?.email || '');
+
     if (isUserAdmin) {
       setIsAuthenticated(true);
+      return;
+    }
+
+    // Also check Supabase admins table (covers any email inserted via SQL)
+    if (user?.isLoggedIn && user?.id && user.id !== 'guest') {
+      supabase.auth.getUser().then(({ data }) => {
+        const uid = data?.user?.id;
+        if (uid) {
+          checkIsAdmin(uid).then((isAdmin) => {
+            if (isAdmin) setIsAuthenticated(true);
+          }).catch(() => {});
+        }
+      });
     }
   }, [user]);
 
@@ -393,43 +405,25 @@ export default function AdminScreen() {
       setAuthError('Please enter Login ID and password.');
       return;
     }
+    if (!inputId.includes('@')) {
+      setAuthError('Please enter a valid admin email address. Hardcoded credentials are disabled.');
+      return;
+    }
     setAuthLoading(true);
     setAuthError('');
 
-    // ── MASTER ADMIN LOGIN: ID "admin" & Password "1234" ──────────────────
-    if (
-      (inputId === 'admin' || inputId === 'admin@namastemart.com') &&
-      (inputPass === '1234' || inputPass === 'admin123')
-    ) {
-      updateUserProfile({
-        name: 'Master Admin',
-        email: 'admin@namastemart.com',
-        isAdmin: true,
-        isLoggedIn: true,
-        role: 'admin',
-      });
-      setIsAuthenticated(true);
-      setAuthLoading(false);
-      return;
-    }
-
     try {
-      const emailToUse = inputId.includes('@') ? inputId : `${inputId}@namastemart.com`;
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: emailToUse,
+        email: inputId,
         password: inputPass,
       });
 
       if (authError) throw authError;
 
-      const email = authData.user.email || '';
-
-      const isAllowed = ADMIN_EMAILS.includes(email) || email.endsWith('@namastemart.com');
-      const isAdminInFirestore = await checkIsAdmin(authData.user.id).catch(() => false);
-
-      if (!isAllowed && !isAdminInFirestore) {
+      const isAdminOk = await checkIsAdmin(authData.user.id).catch(() => false);
+      if (!isAdminOk) {
         await supabase.auth.signOut();
-        setAuthError('Access denied. This account does not have admin privileges.');
+        setAuthError('Access denied. This account is not in the admins table.');
         setAuthLoading(false);
         return;
       }
@@ -442,19 +436,8 @@ export default function AdminScreen() {
       });
       setIsAuthenticated(true);
     } catch (error: any) {
-      // Fallback check
-      if (
-        (inputId === 'admin' || inputId === 'admin@namastemart.com') &&
-        (inputPass === '1234' || inputPass === 'admin123')
-      ) {
-        updateUserProfile({ isAdmin: true, isLoggedIn: true, role: 'admin', name: 'Master Admin' });
-        setIsAuthenticated(true);
-        setAuthLoading(false);
-        return;
-      }
-
       const errorMessages: Record<string, string> = {
-        'Invalid login credentials': 'Invalid ID or password.',
+        'Invalid login credentials': 'Invalid email or password.',
         'Email not confirmed': 'Please verify your email first.',
       };
       setAuthError(errorMessages[error.message] || error.message || 'Login failed.');
@@ -576,14 +559,15 @@ export default function AdminScreen() {
         await updateProductInFirestore(editingProduct.id, payload);
         updateProduct(editingProduct.id, payload);
         Alert.alert('Product Updated 🎉', `"${fName}" has been successfully updated.`);
+        setActiveTab('PRODUCTS');
       } else {
         const newId = await addProductToFirestore(payload as any);
-        addProduct(payload as any);
+        addProduct({ ...payload, id: newId } as any);
         Alert.alert('Product Created 🎉', `"${fName}" is now live on Namaste Mart.`);
+        setActiveTab('PRODUCTS');
       }
-      setActiveTab('PRODUCTS');
     } catch (err: any) {
-      Alert.alert('Save Error', err.message || 'Could not save product.');
+      Alert.alert('Save Error', `${err.message || 'Could not save product.'}\n\nDetails: ${err.details || err.hint || ''}`);
     } finally {
       setProductLoading(false);
     }
@@ -1759,7 +1743,9 @@ function ProductsManagementSection({
       </ScrollView>
 
       {/* Products Table / Cards */}
-      {products.length === 0 ? (
+      {(useApp() as any).isProductsLoading ? (
+        <ListSkeleton count={4} />
+      ) : products.length === 0 ? (
         <View style={S.emptyStateBox}>
           <Text style={{ fontSize: 40 }}>📦</Text>
           <Text style={S.emptyTitle}>No Products Found</Text>
@@ -3063,7 +3049,7 @@ function AdminLoginScreen({
               style={S.loginInput}
               value={adminEmail}
               onChangeText={setAdminEmail}
-              placeholder="admin (or admin@namastemart.com)"
+              placeholder="admin email (e.g. admin@namastemart.com)"
               placeholderTextColor={isDarkMode ? '#555' : '#aaa'}
               autoCapitalize="none"
               keyboardType="email-address"
@@ -3075,7 +3061,7 @@ function AdminLoginScreen({
                 style={[S.loginInput, { flex: 1, marginBottom: 0 }]}
                 value={adminPassword}
                 onChangeText={setAdminPassword}
-                placeholder="1234"
+                placeholder="Enter password"
                 placeholderTextColor={isDarkMode ? '#555' : '#aaa'}
                 secureTextEntry={!showPassword}
                 onSubmitEditing={handleAdminLogin}
@@ -3091,17 +3077,7 @@ function AdminLoginScreen({
               <Text style={S.loginBtnText}>{authLoading ? 'Signing In...' : '🔐 Sign In to Admin'}</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={S.autoFillBtn}
-              onPress={() => {
-                setAdminEmail('admin');
-                setAdminPassword('1234');
-              }}
-            >
-              <Text style={S.autoFillBtnText}>⚡ Auto-Fill: ID: admin · Password: 1234</Text>
-            </TouchableOpacity>
-
-            <Text style={S.loginHint}>Master Admin Login: ID = admin · Password = 1234</Text>
+            <Text style={S.loginHint}>Sign in with your admin-authorized email (must be in admins table).</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

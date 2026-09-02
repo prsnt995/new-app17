@@ -179,7 +179,7 @@ export default function SendParcelScreen() {
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
   const [bookedOrder, setBookedOrder] = useState<OrderItem | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedBank, setSelectedBank] = useState<BankAccountInfo>(() => KOREA_BANK_ACCOUNTS[0]);
+  const [selectedBank, setSelectedBank] = useState<BankAccountInfo>(() => getRandomBankAccount());
   const [senderName, setSenderName] = useState(user?.name || 'PARSHANT');
   const [paymentScreenshot, setPaymentScreenshot] = useState<string | null>(null);
 

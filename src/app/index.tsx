@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useApp } from '@/context/AppContext';
 import { BottomNav } from '@/components/BottomNav';
+import { ProductGridSkeleton } from '@/components/ScreenLoader';
 import { CurrencyCode, LanguageCode } from '@/types';
 
 const categories = [
@@ -50,6 +51,7 @@ export default function HomeScreen() {
     isDarkMode,
     toggleDarkMode,
     banners,
+    isProductsLoading,
   } = useApp();
 
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
@@ -162,16 +164,25 @@ export default function HomeScreen() {
             </View>
 
             <View style={styles.headerRight}>
-              {/* GOOGLE LOGIN BUTTON */}
-              <TouchableOpacity
-                style={styles.langButton}
-                activeOpacity={0.85}
-                onPress={() => router.push('/login')}
-              >
-                <Text style={styles.langButtonText}>
-                  {user?.isLoggedIn ? (user.name ? user.name.split(' ')[0] : 'My Account') : 'Login'}
-                </Text>
-              </TouchableOpacity>
+              {user?.isLoggedIn ? (
+                <TouchableOpacity
+                  style={styles.langButton}
+                  activeOpacity={0.85}
+                  onPress={() => router.push('/profile')}
+                >
+                  <Text style={styles.langButtonText}>
+                    {user.name ? user.name.split(' ')[0] : 'My Account'}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.langButton}
+                  activeOpacity={0.85}
+                  onPress={() => router.push('/login')}
+                >
+                  <Text style={styles.langButtonText}>Login</Text>
+                </TouchableOpacity>
+              )}
 
               {/* TRANSLATE / LANGUAGE SWITCHER BUTTON */}
               <TouchableOpacity
@@ -276,13 +287,9 @@ export default function HomeScreen() {
                 <Text style={styles.sideBoxMainTitle}>Send Parcel to Home</Text>
                 <Text style={styles.sideBoxSubtitle}>Direct Express Air Korea ➔ India & Nepal</Text>
                 <View style={styles.sideBoxActionRow}>
-                  <TouchableOpacity
-                    style={[styles.sideBoxButton, { backgroundColor: '#C88D2B' }]}
-                    activeOpacity={0.85}
-                    onPress={() => router.push('/send-parcel')}
-                  >
+                  <View style={[styles.sideBoxButton, { backgroundColor: '#C88D2B' }]}>
                     <Text style={styles.sideBoxBtnText}>Send Now ✈️</Text>
-                  </TouchableOpacity>
+                  </View>
                   <Text style={styles.sideBoxBadgeMini}>3-5 Days</Text>
                 </View>
               </View>
@@ -307,13 +314,9 @@ export default function HomeScreen() {
                 <Text style={styles.sideBoxMainTitle}>Fresh Sweets & Mithai</Text>
                 <Text style={styles.sideBoxSubtitle}>Gulab Jamun, Kaju Katli & Lakhamari</Text>
                 <View style={styles.sideBoxActionRow}>
-                  <TouchableOpacity
-                    style={[styles.sideBoxButton, { backgroundColor: '#D97706' }]}
-                    activeOpacity={0.85}
-                    onPress={() => setSelectedCategory('Sweets')}
-                  >
+                  <View style={[styles.sideBoxButton, { backgroundColor: '#D97706' }]}>
                     <Text style={styles.sideBoxBtnText}>Shop Sweets 🍬</Text>
-                  </TouchableOpacity>
+                  </View>
                   <Text style={styles.sideBoxBadgeMini}>Fresh Daily</Text>
                 </View>
               </View>
@@ -338,13 +341,9 @@ export default function HomeScreen() {
                 <Text style={styles.sideBoxMainTitle}>Royal Festival Jewelry</Text>
                 <Text style={styles.sideBoxSubtitle}>24K Kundan Chokers & Tilhari Sets</Text>
                 <View style={styles.sideBoxActionRow}>
-                  <TouchableOpacity
-                    style={[styles.sideBoxButton, { backgroundColor: '#B45309' }]}
-                    activeOpacity={0.85}
-                    onPress={() => setSelectedCategory('Jewelry')}
-                  >
+                  <View style={[styles.sideBoxButton, { backgroundColor: '#B45309' }]}>
                     <Text style={styles.sideBoxBtnText}>Explore Jewelry 💎</Text>
-                  </TouchableOpacity>
+                  </View>
                   <Text style={styles.sideBoxBadgeMini}>New In</Text>
                 </View>
               </View>
@@ -434,8 +433,11 @@ export default function HomeScreen() {
           </View>
 
           {/* PRODUCTS GRID */}
-          <View style={styles.productGrid}>
-            {filteredProducts.map((product) => {
+          {isProductsLoading ? (
+            <ProductGridSkeleton count={6} />
+          ) : (
+            <View style={styles.productGrid}>
+              {filteredProducts.map((product) => {
               const isFav = wishlist.includes(product.id);
               const isOutOfStock = (product.stock !== undefined && product.stock <= 0) || product.available === false;
               return (
@@ -511,8 +513,10 @@ export default function HomeScreen() {
 
                     <View style={styles.priceRow}>
                       <View>
-                        <Text style={styles.price}>{formatPrice(product.priceKRW)}</Text>
-                        <Text style={styles.oldPrice}>{formatPrice(product.oldPriceKRW)}</Text>
+                        <Text style={styles.price}>{formatPrice(product.finalPrice ?? product.priceKRW)}</Text>
+                        {(product.discountPercent ?? 0) > 0 && (product.oldPriceKRW || 0) > 0 && (
+                          <Text style={styles.oldPrice}>{formatPrice(product.oldPriceKRW || product.priceKRW)}</Text>
+                        )}
                       </View>
 
                       <TouchableOpacity
@@ -533,9 +537,10 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               );
             })}
-          </View>
+            </View>
+          )}
 
-          {filteredProducts.length === 0 && (
+          {!isProductsLoading && filteredProducts.length === 0 && (
             <View style={styles.emptySearch}>
               <Text style={styles.emptySearchIcon}>🔎</Text>
               <Text style={styles.emptySearchTitle}>No items found</Text>

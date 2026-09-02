@@ -5,6 +5,7 @@
  */
 
 import { supabase, TABLES } from '@/config/supabase';
+import { logger } from '@/lib/logger';
 import {
   Banner,
   Category,
@@ -20,6 +21,93 @@ import {
 } from '@/types';
 
 type Unsubscribe = () => void;
+
+// ─── PRODUCT MAPPERS (camelCase app ↔ snake_case DB) ─────────────────────────
+
+const KNOWN_PRODUCT_COLUMNS = new Set([
+  'id', 'name', 'category', 'description', 'price_krw', 'old_price_krw',
+  'discount_percent', 'final_price', 'stock', 'available', 'is_hidden',
+  'images', 'image', 'image_url', 'video_url', 'is_best_seller', 'brand', 'tags',
+  'keywords', 'weight_kg', 'size', 'origin', 'rating', 'reviews_count',
+  'created_at', 'updated_at',
+]);
+
+const toProductRow = (product: Partial<Product>): Record<string, any> => {
+  const mapping: Record<string, string> = {
+    priceKRW: 'price_krw',
+    oldPriceKRW: 'old_price_krw',
+    discountPercent: 'discount_percent',
+    finalPrice: 'final_price',
+    weightKg: 'weight_kg',
+    isHidden: 'is_hidden',
+    isBestSeller: 'is_best_seller',
+    videoUrl: 'video_url',
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+    brand: 'brand',
+    tags: 'tags',
+    keywords: 'keywords',
+  };
+
+  const row: Record<string, any> = {};
+  for (const [key, value] of Object.entries(product)) {
+    if (value === undefined) continue;
+    if (key === 'id') { row.id = value; continue; }
+    if (key === 'discount') continue;
+    if (key === 'imageUrl' || key === 'image') {
+      const imageVal = (product.imageUrl || product.image) as string;
+      if (imageVal) {
+        row.images = [imageVal];
+      }
+      continue;
+    }
+    const dbKey = mapping[key] || key;
+    if (KNOWN_PRODUCT_COLUMNS.has(dbKey)) {
+      row[dbKey] = value;
+    }
+  }
+  if (row.reviews !== undefined) {
+    row.reviews_count = row.reviews;
+    delete row.reviews;
+  }
+  // Strip unknown columns that would cause PostgREST error before fix migration is run
+  for (const k of Object.keys(row)) {
+    if (!KNOWN_PRODUCT_COLUMNS.has(k)) delete row[k];
+  }
+  return row;
+};
+
+const fromProductRow = (row: Record<string, any>): Product => {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    size: row.size || '1 Pack',
+    priceKRW: Number(row.price_krw ?? 0),
+    oldPriceKRW: Number(row.old_price_krw ?? 0),
+    rating: Number(row.rating ?? 0),
+    reviews: Number(row.reviews_count ?? row.reviews ?? 0),
+    discount: row.discount || (row.discount_percent > 0 ? `${row.discount_percent}% OFF` : ''),
+    discountPercent: Number(row.discount_percent ?? 0),
+    finalPrice: Number(row.final_price ?? row.price_krw ?? 0),
+    image: row.image || (Array.isArray(row.images) ? row.images[0] : '') || '',
+    imageUrl: row.image_url || row.image || (Array.isArray(row.images) ? row.images[0] : '') || '',
+    images: Array.isArray(row.images) ? row.images : (row.image ? [row.image] : []),
+    videoUrl: row.video_url || '',
+    weightKg: Number(row.weight_kg ?? 0.5),
+    origin: row.origin || '',
+    description: row.description || '',
+    isBestSeller: row.is_best_seller ?? false,
+    isHidden: row.is_hidden ?? false,
+    available: row.available ?? true,
+    brand: row.brand || '',
+    tags: row.tags || [],
+    stock: Number(row.stock ?? 0),
+    keywords: row.keywords || {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  } as Product;
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VALIDATION HELPERS
@@ -57,7 +145,7 @@ export const subscribeToProducts = (
           const { data, error } = await supabase
             .from(TABLES.PRODUCTS)
             .select('*')
-            .order('createdAt', { ascending: false });
+            .order('created_at', { ascending: false });
 
           if (error) {
             console.log('Supabase products query error:', error.message);
@@ -65,7 +153,7 @@ export const subscribeToProducts = (
             return;
           }
 
-          callback((data || []) as Product[]);
+          callback((data || []).map(fromProductRow));
         }
       )
       .subscribe((status) => {
@@ -73,14 +161,14 @@ export const subscribeToProducts = (
           supabase
             .from(TABLES.PRODUCTS)
             .select('*')
-            .order('createdAt', { ascending: false })
+            .order('created_at', { ascending: false })
             .then(({ data, error }) => {
               if (error) {
                 console.log('Supabase products initial load error:', error.message);
                 onError?.(new Error(error.message));
                 return;
               }
-              callback((data || []) as Product[]);
+              callback((data || []).map(fromProductRow));
             });
         }
       });
@@ -102,21 +190,23 @@ export const addProductToFirestore = async (product: Omit<Product, 'id'>): Promi
   const discountPercent = product.discountPercent ?? 0;
   const finalPrice = calculateFinalPrice(product.priceKRW, discountPercent);
 
+  const row = toProductRow({
+    ...product,
+    discountPercent,
+    finalPrice,
+    stock: product.stock ?? 0,
+    available: product.available ?? true,
+    isHidden: product.isHidden ?? false,
+    images: product.images ?? [],
+    rating: product.rating ?? 0,
+    reviews: product.reviews ?? 0,
+  });
+  row.created_at = Date.now();
+  row.updated_at = Date.now();
+
   const { data, error: insertError } = await supabase
     .from(TABLES.PRODUCTS)
-    .insert({
-      ...product,
-      discountPercent,
-      finalPrice,
-      stock: product.stock ?? 0,
-      available: product.available ?? true,
-      isHidden: product.isHidden ?? false,
-      images: product.images ?? [],
-      rating: product.rating ?? 0,
-      reviews: product.reviews ?? 0,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    })
+    .insert(row)
     .select('id')
     .single();
 
@@ -128,29 +218,49 @@ export const updateProductInFirestore = async (
   id: string,
   updates: Partial<Product>
 ): Promise<void> => {
-  const error = validateProduct(updates);
-  if (error) throw new Error(error);
+  const fieldsToValidate = Object.keys(updates).filter(k =>
+    ['name', 'priceKRW', 'discountPercent', 'stock'].includes(k)
+  );
+  if (fieldsToValidate.length > 0) {
+    const partialValidation: Partial<Product> = {};
+    for (const k of fieldsToValidate) (partialValidation as any)[k] = (updates as any)[k];
+    const error = validateProduct(partialValidation);
+    if (error && fieldsToValidate.includes('name')) throw new Error(error);
+    if (error && !partialValidation.name) {
+      if (partialValidation.priceKRW !== undefined && partialValidation.priceKRW < 0) throw new Error(error);
+      if (partialValidation.discountPercent !== undefined && (partialValidation.discountPercent < 0 || partialValidation.discountPercent > 100)) throw new Error(error);
+      if (partialValidation.stock !== undefined && partialValidation.stock < 0) throw new Error(error);
+    }
+  }
 
-  const finalUpdates: any = { ...updates, updatedAt: Date.now() };
+  let finalUpdates: Record<string, any> = toProductRow(updates);
+  finalUpdates.updated_at = Date.now();
 
   if (updates.priceKRW !== undefined || updates.discountPercent !== undefined) {
+    try {
     const { data: current } = await supabase
       .from(TABLES.PRODUCTS)
-      .select('priceKRW, discountPercent')
+      .select('price_krw, discount_percent')
       .eq('id', id)
       .single();
 
     if (current) {
-      const price = updates.priceKRW ?? current.priceKRW;
-      const discountPct = updates.discountPercent ?? current.discountPercent ?? 0;
-      finalUpdates.finalPrice = calculateFinalPrice(price, discountPct);
+      const price = updates.priceKRW ?? Number((current as any).price_krw);
+      const discountPct = updates.discountPercent ?? Number((current as any).discount_percent ?? 0);
+      finalUpdates.final_price = calculateFinalPrice(price, discountPct);
     }
+  } catch (_) {}
   }
 
   const { error: updateError } = await supabase
     .from(TABLES.PRODUCTS)
     .update(finalUpdates)
     .eq('id', id);
+
+  if (updateError && (updateError.code === '22P02' || updateError.code === '42P17')) {
+    console.warn('Product update skipped: mock/local product id or RLS recursion (run pending SQL):', id, updateError.code);
+    return;
+  }
 
   if (updateError) throw updateError;
 };
@@ -163,16 +273,13 @@ export const deleteProductFromFirestore = async (id: string): Promise<void> => {
 export const duplicateProductInFirestore = async (product: Product): Promise<string> => {
   const { id, ...rest } = product;
 
+  const row = toProductRow({ ...rest, name: `${rest.name} (Copy)`, stock: 0, available: false });
+  row.created_at = Date.now();
+  row.updated_at = Date.now();
+
   const { data, error } = await supabase
     .from(TABLES.PRODUCTS)
-    .insert({
-      ...rest,
-      name: `${rest.name} (Copy)`,
-      stock: 0,
-      available: false,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    })
+    .insert(row)
     .select('id')
     .single();
 
@@ -189,11 +296,10 @@ export const decrementStockForOrder = async (
   items: { productId: string; quantity: number }[]
 ): Promise<boolean> => {
   try {
-    const { error } = await supabase.rpc('decrement_stock', {
-      items: items.map((item) => ({
-        p_product_id: item.productId,
-        p_quantity: item.quantity,
-      })),
+    if (items.length === 0) return true;
+    const { error } = await supabase.rpc('decrement_stock_batch', {
+      p_ids: items.map((i) => i.productId),
+      p_quantities: items.map((i) => i.quantity),
     });
 
     if (error) {
@@ -235,14 +341,13 @@ export const createOrUpdateUser = async (
       .from(TABLES.PROFILES)
       .insert({
         id: uid,
-        uid,
         name: userData.name,
         email: userData.email,
         phone: userData.phone || '',
         avatar: userData.avatar || '',
         addresses: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        created_at: Date.now(),
+        updated_at: Date.now(),
       });
 
     if (insertError) throw insertError;
@@ -253,7 +358,7 @@ export const createOrUpdateUser = async (
         name: userData.name,
         email: userData.email,
         ...(userData.avatar ? { avatar: userData.avatar } : {}),
-        updatedAt: Date.now(),
+        updated_at: Date.now(),
       })
       .eq('id', uid);
 
@@ -330,7 +435,7 @@ export const subscribeToUserProfile = (
 export const updateUserAddresses = async (uid: string, addresses: any[]): Promise<void> => {
   const { error } = await supabase
     .from(TABLES.PROFILES)
-    .update({ addresses, updatedAt: Date.now() })
+    .update({ addresses, updated_at: Date.now() })
     .eq('id', uid);
 
   if (error) throw error;
@@ -345,7 +450,7 @@ export const updateUserProfileInFirestore = async (
 ): Promise<void> => {
   const { error } = await supabase
     .from(TABLES.PROFILES)
-    .update({ ...updates, updatedAt: Date.now() })
+    .update({ ...updates, updated_at: Date.now() })
     .eq('id', uid);
 
   if (error) throw error;
@@ -371,16 +476,16 @@ export const subscribeToOrders = (
           event: '*',
           schema: 'public',
           table: TABLES.ORDERS,
-          ...(adminMode ? {} : { filter: `customerUid=eq.${customerUid}` }),
+          ...(adminMode ? {} : { filter: `user_id=eq.${customerUid}` }),
         },
         async () => {
           let query = supabase
             .from(TABLES.ORDERS)
             .select('*')
-            .order('createdAt', { ascending: false });
+            .order('created_at', { ascending: false });
 
           if (!adminMode && customerUid) {
-            query = query.eq('customerUid', customerUid);
+            query = query.eq('user_id', customerUid);
           }
 
           if (adminMode) {
@@ -402,10 +507,10 @@ export const subscribeToOrders = (
           let query = supabase
             .from(TABLES.ORDERS)
             .select('*')
-            .order('createdAt', { ascending: false });
+            .order('created_at', { ascending: false });
 
           if (!adminMode && customerUid) {
-            query = query.eq('customerUid', customerUid);
+            query = query.eq('user_id', customerUid);
           }
 
           if (adminMode) {
@@ -436,8 +541,8 @@ export const addOrderToFirestore = async (order: any): Promise<string> => {
     .from(TABLES.ORDERS)
     .insert({
       ...order,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      created_at: Date.now(),
+      updated_at: Date.now(),
     })
     .select('id')
     .single();
@@ -456,7 +561,7 @@ export const updateOrderStatusInFirestore = async (
     .update({
       status,
       ...additionalData,
-      updatedAt: Date.now(),
+      updated_at: Date.now(),
     })
     .eq('id', orderId);
 
@@ -478,8 +583,8 @@ export const syncCartToFirestore = async (
     const { error } = await supabase
       .from(TABLES.CARTS)
       .upsert(
-        { id: uid, uid, items, updatedAt: Date.now() },
-        { onConflict: 'id' }
+        { user_id: uid, items, updated_at: Date.now() },
+        { onConflict: 'user_id' }
       );
 
     if (error) console.log('Cart sync notice:', error.message);
@@ -498,7 +603,7 @@ export const loadCartFromFirestore = async (
     const { data, error } = await supabase
       .from(TABLES.CARTS)
       .select('items')
-      .eq('id', uid)
+      .eq('user_id', uid)
       .single();
 
     if (error || !data) return [];
@@ -520,12 +625,12 @@ export const subscribeToCart = (
     .channel(`cart-${uid}`)
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: TABLES.CARTS, filter: `id=eq.${uid}` },
+      { event: '*', schema: 'public', table: TABLES.CARTS, filter: `user_id=eq.${uid}` },
       async () => {
         const { data, error } = await supabase
           .from(TABLES.CARTS)
           .select('items')
-          .eq('id', uid)
+          .eq('user_id', uid)
           .single();
 
         if (error || !data) {
@@ -541,7 +646,7 @@ export const subscribeToCart = (
         supabase
           .from(TABLES.CARTS)
           .select('items')
-          .eq('id', uid)
+          .eq('user_id', uid)
           .single()
           .then(({ data, error }) => {
             if (error || !data) {
@@ -573,8 +678,8 @@ export const syncWishlistToFirestore = async (
     const { error } = await supabase
       .from(TABLES.WISHLISTS)
       .upsert(
-        { id: uid, uid, productIds, updatedAt: Date.now() },
-        { onConflict: 'id' }
+        { user_id: uid, product_ids: productIds, updated_at: Date.now() },
+        { onConflict: 'user_id' }
       );
 
     if (error) console.log('Wishlist sync notice:', error.message);
@@ -592,12 +697,12 @@ export const loadWishlistFromFirestore = async (
   try {
     const { data, error } = await supabase
       .from(TABLES.WISHLISTS)
-      .select('productIds')
-      .eq('id', uid)
+      .select('product_ids')
+      .eq('user_id', uid)
       .single();
 
     if (error || !data) return [];
-    return (data.productIds || []) as string[];
+    return (data.product_ids || []) as string[];
   } catch (error: any) {
     console.log('Wishlist load notice:', error.message);
     return [];
@@ -615,12 +720,12 @@ export const subscribeToWishlist = (
     .channel(`wishlist-${uid}`)
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: TABLES.WISHLISTS, filter: `id=eq.${uid}` },
+      { event: '*', schema: 'public', table: TABLES.WISHLISTS, filter: `user_id=eq.${uid}` },
       async () => {
         const { data, error } = await supabase
           .from(TABLES.WISHLISTS)
-          .select('productIds')
-          .eq('id', uid)
+          .select('product_ids')
+          .eq('user_id', uid)
           .single();
 
         if (error || !data) {
@@ -628,22 +733,22 @@ export const subscribeToWishlist = (
           return;
         }
 
-        callback((data.productIds || []) as string[]);
+        callback((data.product_ids || []) as string[]);
       }
     )
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') {
         supabase
           .from(TABLES.WISHLISTS)
-          .select('productIds')
-          .eq('id', uid)
+          .select('product_ids')
+          .eq('user_id', uid)
           .single()
           .then(({ data, error }) => {
             if (error || !data) {
               callback([]);
               return;
             }
-            callback((data.productIds || []) as string[]);
+            callback((data.product_ids || []) as string[]);
           });
       }
     });
@@ -670,7 +775,7 @@ export const subscribeToCategories = (
           const { data, error } = await supabase
             .from(TABLES.CATEGORIES)
             .select('*')
-            .order('displayOrder', { ascending: true });
+            .order('display_order', { ascending: true });
 
           if (error) {
             console.log('Supabase categories query error:', error.message);
@@ -685,7 +790,7 @@ export const subscribeToCategories = (
           supabase
             .from(TABLES.CATEGORIES)
             .select('*')
-            .order('displayOrder', { ascending: true })
+            .order('display_order', { ascending: true })
             .then(({ data, error }) => {
               if (error) return;
               callback((data || []) as Category[]);
@@ -702,9 +807,16 @@ export const subscribeToCategories = (
 };
 
 export const addCategoryToFirestore = async (cat: Omit<Category, 'id'>): Promise<string> => {
+  const row: Record<string, any> = {};
+  if (cat.name !== undefined) row.name = cat.name;
+  if ((cat as any).icon !== undefined) row.icon = (cat as any).icon;
+  if ((cat as any).description !== undefined) row.description = (cat as any).description;
+  if ((cat as any).displayOrder !== undefined) row.display_order = (cat as any).displayOrder;
+  if ((cat as any).isActive !== undefined) row.is_active = (cat as any).isActive;
+
   const { data, error } = await supabase
     .from(TABLES.CATEGORIES)
-    .insert(cat)
+    .insert(row)
     .select('id')
     .single();
 
@@ -716,9 +828,16 @@ export const updateCategoryInFirestore = async (
   id: string,
   updates: Partial<Category>
 ): Promise<void> => {
+  const row: Record<string, any> = {};
+  if ((updates as any).name !== undefined) row.name = (updates as any).name;
+  if ((updates as any).icon !== undefined) row.icon = (updates as any).icon;
+  if ((updates as any).description !== undefined) row.description = (updates as any).description;
+  if ((updates as any).displayOrder !== undefined) row.display_order = (updates as any).displayOrder;
+  if ((updates as any).isActive !== undefined) row.is_active = (updates as any).isActive;
+
   const { error } = await supabase
     .from(TABLES.CATEGORIES)
-    .update(updates)
+    .update(row)
     .eq('id', id);
 
   if (error) throw error;
@@ -744,8 +863,8 @@ export const subscribeToBanners = (callback: (banners: Banner[]) => void): Unsub
           const { data, error } = await supabase
             .from(TABLES.BANNERS)
             .select('*')
-            .eq('isActive', true)
-            .order('displayOrder', { ascending: true });
+            .eq('is_active', true)
+            .order('display_order', { ascending: true });
 
           if (error) {
             console.log('Supabase banners query error:', error.message);
@@ -760,8 +879,8 @@ export const subscribeToBanners = (callback: (banners: Banner[]) => void): Unsub
           supabase
             .from(TABLES.BANNERS)
             .select('*')
-            .eq('isActive', true)
-            .order('displayOrder', { ascending: true })
+            .eq('is_active', true)
+            .order('display_order', { ascending: true })
             .then(({ data, error }) => {
               if (error) return;
               callback((data || []) as Banner[]);
@@ -778,9 +897,17 @@ export const subscribeToBanners = (callback: (banners: Banner[]) => void): Unsub
 };
 
 export const addBannerToFirestore = async (banner: Omit<Banner, 'id'>): Promise<string> => {
+  const row: Record<string, any> = {};
+  if ((banner as any).imageUrl !== undefined) row.image_url = (banner as any).imageUrl;
+  if ((banner as any).title !== undefined) row.title = (banner as any).title;
+  if ((banner as any).subtitle !== undefined) row.subtitle = (banner as any).subtitle;
+  if ((banner as any).linkTarget !== undefined) row.link_target = (banner as any).linkTarget;
+  if ((banner as any).displayOrder !== undefined) row.display_order = (banner as any).displayOrder;
+  if ((banner as any).isActive !== undefined) row.is_active = (banner as any).isActive;
+
   const { data, error } = await supabase
     .from(TABLES.BANNERS)
-    .insert(banner)
+    .insert(row)
     .select('id')
     .single();
 
@@ -792,9 +919,17 @@ export const updateBannerInFirestore = async (
   id: string,
   updates: Partial<Banner>
 ): Promise<void> => {
+  const row: Record<string, any> = {};
+  if ((updates as any).imageUrl !== undefined) row.image_url = (updates as any).imageUrl;
+  if ((updates as any).title !== undefined) row.title = (updates as any).title;
+  if ((updates as any).subtitle !== undefined) row.subtitle = (updates as any).subtitle;
+  if ((updates as any).linkTarget !== undefined) row.link_target = (updates as any).linkTarget;
+  if ((updates as any).displayOrder !== undefined) row.display_order = (updates as any).displayOrder;
+  if ((updates as any).isActive !== undefined) row.is_active = (updates as any).isActive;
+
   const { error } = await supabase
     .from(TABLES.BANNERS)
-    .update(updates)
+    .update(row)
     .eq('id', id);
 
   if (error) throw error;
@@ -822,14 +957,14 @@ export const subscribeToProductReviews = (
           event: '*',
           schema: 'public',
           table: TABLES.REVIEWS,
-          filter: `productId=eq.${productId}`,
+          filter: `product_id=eq.${productId}`,
         },
         async () => {
           const { data, error } = await supabase
             .from(TABLES.REVIEWS)
             .select('*')
-            .eq('productId', productId)
-            .order('createdAt', { ascending: false })
+            .eq('product_id', productId)
+            .order('created_at', { ascending: false })
             .limit(50);
 
           if (error) {
@@ -845,8 +980,8 @@ export const subscribeToProductReviews = (
           supabase
             .from(TABLES.REVIEWS)
             .select('*')
-            .eq('productId', productId)
-            .order('createdAt', { ascending: false })
+            .eq('product_id', productId)
+            .order('created_at', { ascending: false })
             .limit(50)
             .then(({ data, error }) => {
               if (error) return;
@@ -864,9 +999,19 @@ export const subscribeToProductReviews = (
 };
 
 export const addReviewToFirestore = async (review: Omit<Review, 'id'>): Promise<string> => {
+  const row: Record<string, any> = {
+    product_id: (review as any).productId || (review as any).product_id,
+    user_id: (review as any).userId || (review as any).user_id,
+    rating: (review as any).rating,
+    text: (review as any).text || '',
+    photo_url: (review as any).photoUrl || (review as any).photo_url || '',
+    verified_purchase: (review as any).verifiedPurchase ?? (review as any).verified_purchase ?? false,
+    created_at: Date.now(),
+  };
+
   const { data, error: insertError } = await supabase
     .from(TABLES.REVIEWS)
-    .insert(review)
+    .insert(row)
     .select('id')
     .single();
 
@@ -878,7 +1023,7 @@ export const addReviewToFirestore = async (review: Omit<Review, 'id'>): Promise<
     const { data: allReviews } = await supabase
       .from(TABLES.REVIEWS)
       .select('rating')
-      .eq('productId', review.productId);
+      .eq('product_id', (review as any).productId || (review as any).product_id);
 
     if (allReviews && allReviews.length > 0) {
       const avgRating =
@@ -888,10 +1033,10 @@ export const addReviewToFirestore = async (review: Omit<Review, 'id'>): Promise<
         .from(TABLES.PRODUCTS)
         .update({
           rating: Math.round(avgRating * 10) / 10,
-          reviews: allReviews.length,
-          updatedAt: Date.now(),
+          reviews_count: allReviews.length,
+          updated_at: Date.now(),
         })
-        .eq('id', review.productId);
+        .eq('id', (review as any).productId || (review as any).product_id);
     }
   } catch (ratingError: any) {
     console.log('Rating update notice:', ratingError.message);
@@ -909,7 +1054,7 @@ export const saveUserPushToken = async (uid: string, token: string): Promise<voi
     const { error } = await supabase
       .from(TABLES.PROFILES)
       .upsert(
-        { id: uid, pushToken: token, updatedAt: Date.now() },
+        { id: uid, push_token: token, updated_at: Date.now() },
         { onConflict: 'id' }
       );
 

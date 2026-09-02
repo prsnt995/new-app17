@@ -19,14 +19,21 @@ const authHeaders = (idToken?: string) => {
   return headers;
 };
 
+const getAuthHeaders = async (): Promise<Record<string, string>> => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) return authHeaders(session.access_token);
+  } catch {}
+  return { 'Content-Type': 'application/json' };
+};
+
 // ─── WHATSAPP ORDER NOTIFICATIONS ──────────────────────────────────────────
 export const notifyWhatsAppOrderBackend = async (orderId: string, orderData?: any) => {
   try {
+    const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/orders/notify-whatsapp`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({ orderId, orderData }),
     });
     const result = await response.json();
@@ -42,11 +49,10 @@ export const notifyWhatsAppOrderBackend = async (orderId: string, orderData?: an
 
 export const retryWhatsAppOrderBackend = async (orderId: string) => {
   try {
+    const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/orders/retry-whatsapp`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({ orderId }),
     });
     const result = await response.json();
@@ -88,11 +94,10 @@ export interface VerifyAndCreateCardOrderPayload {
 
 export const verifyAndCreateKoreanCardOrder = async (payload: VerifyAndCreateCardOrderPayload) => {
   try {
+    const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/payments/verify-and-create`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await response.json();
@@ -106,24 +111,24 @@ export const verifyAndCreateKoreanCardOrder = async (payload: VerifyAndCreateCar
   }
 };
 
-export const verifyPaymentBackend = async (transactionId: string, paidAmount: number, cardCompany?: string) => {
+export const verifyPaymentBackend = async (transactionId: string, paidAmount: number, cardCompany?: string, orderId?: string) => {
   try {
+    const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/payments/verify`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ transactionId, paidAmount, cardCompany }),
+      headers,
+      body: JSON.stringify({ transactionId, paidAmount, cardCompany, orderId }),
     });
     return await response.json();
   } catch (error: any) {
     console.warn('Backend payment verify check notice:', error.message);
     return {
-      success: true,
-      verified: true,
+      success: false,
+      verified: false,
       transactionId,
       paidAmount,
-      status: 'DONE',
+      status: 'FAILED',
+      message: error.message || 'Network error during verification',
     };
   }
 };
@@ -164,10 +169,9 @@ export const sendOtp = async (email: string, _idToken?: string): Promise<SendOtp
   } catch (error: any) {
     console.warn('Supabase OTP send notice:', error.message);
     return {
-      success: true,
-      message: `Verification code sent to ${email}`,
+      success: false,
+      message: error.message || 'Failed to send verification code',
       email: email.trim().toLowerCase(),
-      expiresInMinutes: 10,
     };
   }
 };
@@ -218,6 +222,6 @@ export const saveUserProfile = async (
     return { success: true, message: 'Profile saved successfully' };
   } catch (error: any) {
     console.warn('Save profile notice:', error.message);
-    return { success: true, message: 'Profile saved (dev fallback)' };
+    return { success: false, message: error.message || 'Failed to save profile' };
   }
 };

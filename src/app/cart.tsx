@@ -58,9 +58,6 @@ export default function CartScreen() {
     createOrder,
     formatPrice,
     user,
-    setUser,
-    setOrders,
-    setProducts,
     t,
     isDarkMode,
   } = useApp();
@@ -90,7 +87,7 @@ export default function CartScreen() {
   );
   const [postalCode, setPostalCode] = useState(defaultRecipient?.postalCode || '06000');
   const [streetAddress, setStreetAddress] = useState(
-    defaultRecipient?.streetAddress || defaultRecipient?.fullAddress || defaultRecipient?.address || '서울특별시 강남구 테헤란로 123'
+    defaultRecipient?.streetAddress || defaultRecipient?.fullAddress || '서울특별시 강남구 테헤란로 123'
   );
   const [detailAddress, setDetailAddress] = useState(defaultRecipient?.detailAddress || '101동 202호');
   const [deliveryNote, setDeliveryNote] = useState('문 앞에 놓아주세요 (Leave at front door)');
@@ -119,7 +116,7 @@ export default function CartScreen() {
       setRecipientName(target.recipientName || user.name || '');
       setRecipientPhone(target.phone || target.phoneNumber || user.phone || '');
       setPostalCode(target.postalCode || '06000');
-      setStreetAddress(target.streetAddress || target.fullAddress || target.address || '');
+      setStreetAddress(target.streetAddress || target.fullAddress || '');
       setDetailAddress(target.detailAddress || '');
     }
   };
@@ -227,7 +224,6 @@ export default function CartScreen() {
       if (backendResult?.success && backendResult?.order && backendResult?.order?.firestorePersisted) {
         finalOrder = backendResult.order;
       } else {
-        // Direct / Fallback Firestore creation via active Firebase client SDK
         const { createOrderWithStockSafety } = await import('@/services/orderService');
         finalOrder = await createOrderWithStockSafety({
           userId: user?.id || 'guest',
@@ -246,25 +242,6 @@ export default function CartScreen() {
           shippingMethod: 'Standard',
         });
       }
-
-      // Update state
-      setOrders((prev) => [finalOrder, ...prev]);
-      setUser((prev) => ({
-        ...prev,
-        totalShipments: prev.totalShipments + 1,
-        totalSavedKRW: prev.totalSavedKRW + cartDiscountKRW,
-      }));
-
-      // Update local product stocks
-      setProducts((prev) =>
-        prev.map((p) => {
-          const ordered = cart.find((item) => item.product.id === p.id);
-          if (ordered && p.stock !== undefined) {
-            return { ...p, stock: Math.max(0, p.stock - ordered.quantity) };
-          }
-          return p;
-        })
-      );
 
       clearCart();
       setCreatedOrderData(finalOrder);
@@ -344,7 +321,7 @@ export default function CartScreen() {
         uploadedProofUrl = paymentScreenshot;
       }
 
-      // 2. Create order in Firestore atomically with PENDING_VERIFICATION
+      // 2. Create order in Supabase atomically with PENDING_VERIFICATION
       const { createOrderWithStockSafety } = await import('@/services/orderService');
       const finalOrder = await createOrderWithStockSafety({
         userId: user?.id || 'guest',
@@ -368,25 +345,6 @@ export default function CartScreen() {
         destinationCity: 'Seoul',
         shippingMethod: 'Standard',
       });
-
-      // Update state
-      setOrders((prev) => [finalOrder, ...prev]);
-      setUser((prev) => ({
-        ...prev,
-        totalShipments: prev.totalShipments + 1,
-        totalSavedKRW: prev.totalSavedKRW + cartDiscountKRW,
-      }));
-
-      // Update local product stocks
-      setProducts((prev) =>
-        prev.map((p) => {
-          const ordered = cart.find((item) => item.product.id === p.id);
-          if (ordered && p.stock !== undefined) {
-            return { ...p, stock: Math.max(0, p.stock - ordered.quantity) };
-          }
-          return p;
-        })
-      );
 
       clearCart();
       setCreatedOrderData(finalOrder);
@@ -507,7 +465,7 @@ export default function CartScreen() {
                       </Text>
 
                       <Text style={styles.itemPrice}>
-                        {formatPrice(product.priceKRW * quantity)}
+                        {formatPrice((product.finalPrice ?? product.priceKRW) * quantity)}
                       </Text>
                       {product.stock !== undefined && product.stock <= 0 && (
                         <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '800', marginTop: 2 }}>
@@ -829,7 +787,7 @@ export default function CartScreen() {
                 <View style={styles.totalRow}>
                   <View>
                     <Text style={styles.totalLabel}>{t('totalAmount')}</Text>
-                    <Text style={styles.totalSub}>Incl. VAT & delivery fee</Text>
+                    <Text style={styles.taxInclusive}>Incl. VAT & delivery fee</Text>
                   </View>
                   <Text style={styles.totalAmount}>{formatPrice(cartTotalKRW)}</Text>
                 </View>
@@ -868,7 +826,7 @@ export default function CartScreen() {
         <KoreanCardPaymentModal
           visible={isCardModalVisible}
           amountKRW={cartTotalKRW}
-          orderNumber={`NM-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`}
+           orderNumber={`NM-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`}
           customerName={recipientName}
           itemsSummary={`${cart[0]?.product.name || 'Order Items'}${cart.length > 1 ? ` 외 ${cart.length - 1}건` : ''}`}
           onSuccess={handleKoreanCardPaymentSuccess}
@@ -1573,6 +1531,9 @@ const getStyles = (isDark: boolean) => {
       color: '#FFFFFF',
       fontSize: 14,
       fontWeight: '800',
+    },
+    checkoutBtnDisabled: {
+      opacity: 0.5,
     },
     checkoutBtnAmount: {
       color: '#FFFFFF',

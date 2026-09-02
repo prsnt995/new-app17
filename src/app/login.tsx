@@ -231,15 +231,9 @@ export default function LoginScreen() {
     };
   }, [registerStep, expirySeconds]);
 
-  // ─── SUPABASE AUTH STATE LISTENER ────────────────────────────────────────
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session?.user) {
-        await finalizeSupabaseUser(session.user);
-      }
-    });
-    return () => subscription.unsubscribe();
-  }, []);
+  // Redirect is handled by AuthGate in _layout.tsx (respects pendingRoute)
+
+  // Auth is handled centrally in AppContext; login screen only triggers signInWithGoogle
 
   // ═════════════════════════════════════════════════════════════════════════════
   // GOOGLE LOGIN HANDLER (Supabase OAuth)
@@ -600,19 +594,7 @@ export default function LoginScreen() {
       }
     } catch (err: any) {
       setIsLoading(false);
-      console.warn('Registration completion notice:', err.message);
-      // Fallback: still log the user in locally so they are never stranded
-      updateUserProfile({
-        name,
-        email,
-        phone,
-        phoneNumber: phone,
-        isLoggedIn: true,
-        emailVerified: true,
-        profileSetupComplete: true,
-        authProvider: 'email',
-      });
-      router.replace('/');
+      Alert.alert('Registration Failed', err.message || 'Could not complete registration. Please try again.');
     }
   };
 
@@ -690,31 +672,8 @@ export default function LoginScreen() {
     );
   });
 
-  // ═════════════════════════════════════════════════════════════════════════════
-  // ADMIN LOGIN OVERRIDE
-  // ═════════════════════════════════════════════════════════════════════════════
   const handleAdminLogin = () => {
-    const u = adminUsername.trim().toLowerCase();
-    const p = adminPassword.trim();
-
-    if (
-      (u === 'admin' || u === 'admin@namastemart.com') &&
-      (p === '1234' || p === 'admin123')
-    ) {
-      updateUserProfile({
-        name: 'Master Admin',
-        email: 'admin@namastemart.com',
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500',
-        isLoggedIn: true,
-        isAdmin: true,
-        emailVerified: true,
-        profileSetupComplete: true,
-        authProvider: 'email',
-      });
-      router.replace('/admin');
-    } else {
-      Alert.alert('Admin Access Denied', 'Invalid administrator credentials.');
-    }
+    Alert.alert('Admin Login', 'Please sign in via Google with an admin-authorized email account.');
   };
 
   const handleGuestLogin = () => {
@@ -803,61 +762,63 @@ export default function LoginScreen() {
                       </Text>
                     </TouchableOpacity>
 
-                    <View style={styles.orDividerRow}>
-                      <View style={styles.dividerLine} />
-                      <Text style={styles.orText}>OR</Text>
-                      <View style={styles.dividerLine} />
-                    </View>
+                    {/* Other login methods temporarily hidden - only Google login active */}
+                    {false && (
+                      <View style={styles.orDividerRow}>
+                        <View style={styles.dividerLine} />
+                        <Text style={styles.orText}>OR</Text>
+                        <View style={styles.dividerLine} />
+                      </View>
+                    )}
 
-                    {/* TOP MODE TOGGLE: CREATE ACCOUNT VS LOG IN */}
-                    <View style={styles.authTabRow}>
-                      <TouchableOpacity
-                        style={[
-                          styles.authTabBtn,
-                          authTab === 'REGISTER' && styles.authTabBtnActive,
-                        ]}
-                        onPress={() => {
-                          setAuthTab('REGISTER');
-                          setRegisterStep(1);
-                        }}
-                      >
-                        <Text
+                    {false && (
+                      <View style={styles.authTabRow}>
+                        <TouchableOpacity
                           style={[
-                            styles.authTabBtnText,
-                            authTab === 'REGISTER' && styles.authTabBtnTextActive,
+                            styles.authTabBtn,
+                            authTab === 'REGISTER' && styles.authTabBtnActive,
                           ]}
+                          onPress={() => {
+                            setAuthTab('REGISTER');
+                            setRegisterStep(1);
+                          }}
                         >
-                          ✨ Create Account
-                        </Text>
-                      </TouchableOpacity>
+                          <Text
+                            style={[
+                              styles.authTabBtnText,
+                              authTab === 'REGISTER' && styles.authTabBtnTextActive,
+                            ]}
+                          >
+                            ✨ Create Account
+                          </Text>
+                        </TouchableOpacity>
 
-                      <TouchableOpacity
-                        style={[
-                          styles.authTabBtn,
-                          authTab === 'LOGIN' && styles.authTabBtnActive,
-                        ]}
-                        onPress={() => {
-                          setAuthTab('LOGIN');
-                          setIsLoginOtpSent(false);
-                        }}
-                      >
-                        <Text
+                        <TouchableOpacity
                           style={[
-                            styles.authTabBtnText,
-                            authTab === 'LOGIN' && styles.authTabBtnTextActive,
+                            styles.authTabBtn,
+                            authTab === 'LOGIN' && styles.authTabBtnActive,
                           ]}
+                          onPress={() => {
+                            setAuthTab('LOGIN');
+                            setIsLoginOtpSent(false);
+                          }}
                         >
-                          📱 Log In
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
+                          <Text
+                            style={[
+                              styles.authTabBtnText,
+                              authTab === 'LOGIN' && styles.authTabBtnTextActive,
+                            ]}
+                          >
+                            📱 Log In
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
                   </>
                 )}
 
-                {/* ═══════════════════════════════════════════════════════════ */}
-                {/* FLOW 1: CREATE ACCOUNT (THE 5-STEP REGISTRATION WIZARD)     */}
-                {/* ═══════════════════════════════════════════════════════════ */}
-                {authTab === 'REGISTER' && !showAdminLogin && (
+                {/* Other auth flows temporarily disabled - only Google login active */}
+                {false && authTab === 'REGISTER' && !showAdminLogin && (
                   <View style={styles.formContainer}>
                     {/* STEP PROGRESS INDICATOR */}
                     <View style={styles.wizardProgressRow}>
@@ -1238,7 +1199,7 @@ export default function LoginScreen() {
                 {/* ═══════════════════════════════════════════════════════════ */}
                 {/* FLOW 2: RETURNING CUSTOMER LOG IN                          */}
                 {/* ═══════════════════════════════════════════════════════════ */}
-                {authTab === 'LOGIN' && !showAdminLogin && (
+                {false && authTab === 'LOGIN' && !showAdminLogin && (
                   <View style={styles.formContainer}>
                     <Text style={styles.screenTitle}>Returning Customer Log In</Text>
                     <Text style={styles.screenSubtitle}>
@@ -1338,7 +1299,7 @@ export default function LoginScreen() {
                 {/* ═══════════════════════════════════════════════════════════ */}
                 {/* FLOW 3: ADMIN LOGIN OVERRIDE                               */}
                 {/* ═══════════════════════════════════════════════════════════ */}
-                {showAdminLogin && (
+                {false && showAdminLogin && (
                   <View style={styles.formContainer}>
                     <View style={styles.stepBadge}>
                       <Text style={styles.stepBadgeText}>ADMINISTRATOR PORTAL</Text>

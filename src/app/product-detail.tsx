@@ -39,9 +39,9 @@ export default function ProductDetailScreen() {
   const [reviewLoading, setReviewLoading] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
 
-  // Check if user has purchased this product (for verified purchase badge)
   const hasOrdered = orders.some((o) =>
-    o.items.some((item) => item.product.id === id) && o.status === 'DELIVERED'
+    o.items.some((item) => item.product?.id === id || (item as any).productId === id)
+    && (o.status?.toUpperCase() === 'DELIVERED' || (o as any).payment_status === 'paid' || (o as any).payment?.verified === true)
   );
 
   useEffect(() => {
@@ -192,15 +192,17 @@ export default function ProductDetailScreen() {
 
             {/* Price */}
             <View style={S.priceRow}>
-              <Text style={S.price}>{formatPrice(product.priceKRW)}</Text>
-              {product.oldPriceKRW > product.priceKRW && (
-                <Text style={S.oldPrice}>{formatPrice(product.oldPriceKRW)}</Text>
+              <Text style={S.price}>
+                {formatPrice(product.finalPrice ?? product.priceKRW)}
+              </Text>
+              {(product.discountPercent ?? 0) > 0 && product.oldPriceKRW > 0 && (
+                <Text style={S.oldPrice}>{formatPrice(product.oldPriceKRW || product.priceKRW)}</Text>
               )}
-              {product.discount ? (
+              {(product.discountPercent ?? 0) > 0 && (
                 <View style={S.discountBadge}>
-                  <Text style={S.discountText}>{product.discount}</Text>
+                  <Text style={S.discountText}>{product.discount || `${product.discountPercent}% OFF`}</Text>
                 </View>
-              ) : null}
+              )}
             </View>
 
             {/* Stock */}

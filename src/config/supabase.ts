@@ -5,17 +5,21 @@ import { Platform } from 'react-native';
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
 
-// Use AsyncStorage on native, localStorage on web
-const storageAdapter = Platform.OS === 'web'
+// Use AsyncStorage on native, localStorage on web (guarded for SSR)
+const isWeb = Platform.OS === 'web';
+const storageAdapter = isWeb
   ? {
       getItem: async (key: string) => {
-        try { return localStorage.getItem(key); } catch { return null; }
+        if (typeof window === 'undefined') return null;
+        try { return window.localStorage.getItem(key); } catch { return null; }
       },
       setItem: async (key: string, value: string) => {
-        try { localStorage.setItem(key, value); } catch {}
+        if (typeof window === 'undefined') return;
+        try { window.localStorage.setItem(key, value); } catch {}
       },
       removeItem: async (key: string) => {
-        try { localStorage.removeItem(key); } catch {}
+        if (typeof window === 'undefined') return;
+        try { window.localStorage.removeItem(key); } catch {}
       },
     }
   : (() => {

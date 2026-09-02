@@ -16,11 +16,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useApp } from '@/context/AppContext';
 import { BottomNav } from '@/components/BottomNav';
+import { ScreenLoader } from '@/components/ScreenLoader';
 import { OrderItem } from '@/types';
 
 export default function OrdersScreen() {
   const router = useRouter();
-  const { orders, reorder, formatPrice, isDarkMode, uploadPaymentScreenshot } = useApp();
+  const { orders, reorder, formatPrice, isDarkMode, uploadPaymentScreenshot, isOrdersLoading, isLoading } = useApp();
 
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
@@ -91,24 +92,19 @@ export default function OrdersScreen() {
       o.destinationCountry === 'Nepal'
   );
 
+  const isDelivered = (s: string) => s?.toUpperCase() === 'DELIVERED';
+  const isActive = (s: string) => ['IN_TRANSIT', 'ORDER_PLACED', 'PICKED_UP'].includes(s?.toUpperCase() || '');
+
   // Filtered lists based on active sub-tabs
   const filteredProductOrders = productOrders.filter((order) => {
-    if (productFilter === 'ACTIVE') {
-      return order.status === 'IN_TRANSIT' || order.status === 'ORDER_PLACED' || order.status === 'PICKED_UP';
-    }
-    if (productFilter === 'DELIVERED') {
-      return order.status === 'DELIVERED';
-    }
+    if (productFilter === 'ACTIVE') return isActive(order.status);
+    if (productFilter === 'DELIVERED') return isDelivered(order.status);
     return true;
   });
 
   const filteredParcelOrders = parcelOrders.filter((parcel) => {
-    if (parcelFilter === 'IN_TRANSIT') {
-      return parcel.status === 'IN_TRANSIT' || parcel.status === 'ORDER_PLACED' || parcel.status === 'PICKED_UP';
-    }
-    if (parcelFilter === 'DELIVERED') {
-      return parcel.status === 'DELIVERED';
-    }
+    if (parcelFilter === 'IN_TRANSIT') return isActive(parcel.status);
+    if (parcelFilter === 'DELIVERED') return isDelivered(parcel.status);
     return true;
   });
 
@@ -173,12 +169,13 @@ export default function OrdersScreen() {
   ];
 
   const getStepStatus = (parcel: OrderItem, index: number) => {
-    if (parcel.status === 'DELIVERED') return 'COMPLETED';
-    if (parcel.status === 'IN_TRANSIT') {
+    const s = parcel.status?.toUpperCase() || '';
+    if (s === 'DELIVERED') return 'COMPLETED';
+    if (s === 'IN_TRANSIT') {
       if (index <= 3) return index === 3 ? 'CURRENT' : 'COMPLETED';
       return 'PENDING';
     }
-    if (parcel.status === 'PICKED_UP') {
+    if (s === 'PICKED_UP') {
       if (index <= 1) return index === 1 ? 'CURRENT' : 'COMPLETED';
       return 'PENDING';
     }
@@ -267,6 +264,10 @@ export default function OrdersScreen() {
           {/* SECTION 1: MY ORDERS (PRODUCT PURCHASES) */}
           {activeSection === 'MY_ORDERS' && (
             <View>
+              {isOrdersLoading ? (
+                <ScreenLoader message="Loading your orders..." />
+              ) : (
+                <>
               {/* FILTER TABS FOR MY ORDERS */}
               <View style={styles.subFilterRow}>
                 {(['ALL', 'ACTIVE', 'DELIVERED'] as const).map((tab) => (
@@ -402,6 +403,8 @@ export default function OrdersScreen() {
                     </View>
                   );
                 })
+              )}
+                </>
               )}
             </View>
           )}

@@ -25,9 +25,9 @@ export interface UnifiedAuthResult {
  * On native: uses Expo AuthSession redirect.
  */
 export const signInWithGoogle = async (redirectTo?: string): Promise<void> => {
-  // On web, redirect to the current origin so Supabase can handle the callback
-  const redirect = redirectTo || (Platform.OS === 'web'
-    ? window.location.origin
+  const webOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const redirect = redirectTo || (Platform.OS === 'web' && webOrigin
+    ? webOrigin
     : 'namastemart://');
 
   const { error } = await supabase.auth.signInWithOAuth({
@@ -40,10 +40,7 @@ export const signInWithGoogle = async (redirectTo?: string): Promise<void> => {
   if (error) throw error;
 };
 
-/**
- * Handle the OAuth callback URL (extracts tokens from deep link).
- */
-export const handleOAuthCallback = async (url: string): Promise<Session | null> => {
+export const handleOAuthCallback = async (_url?: string): Promise<Session | null> => {
   const { data, error } = await supabase.auth.getSession();
   if (error) {
     console.warn('OAuth callback notice:', error.message);
