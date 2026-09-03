@@ -1058,13 +1058,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return Math.min(calculated, appliedCoupon.maxDiscountKRW);
   }, [appliedCoupon, cartSubtotalKRW]);
 
-  // Shipping calculation (택배비 rule: Subtotal < ₩43,000 => ₩3,500; Subtotal >= ₩43,000 => FREE ₩0)
+  // Shipping calculation (택배비 rule: Subtotal < ₩50,000 => ₩3,500; Subtotal >= ₩50,000 => FREE ₩0)
   const cartShippingFeeKRW = useMemo(() => {
     if (cart.length === 0) return 0;
-    if (cartSubtotalKRW >= 43000 || appliedCoupon?.code === 'FREESHIP') {
-      return 0; // Free delivery above ₩43,000 or with FREESHIP coupon
+    if (cartSubtotalKRW >= 50000 || appliedCoupon?.code === 'FREESHIP') {
+      return 0; // Free delivery above ₩50,000 or with FREESHIP coupon
     }
-    return 3500; // ₩3,500 shipping fee (택배비) below ₩43,000
+    return 3500; // ₩3,500 shipping fee (택배비) below ₩50,000
   }, [cart.length, cartSubtotalKRW, appliedCoupon]);
 
   const cartTotalKRW = useMemo(() => {

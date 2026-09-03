@@ -10,6 +10,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -55,6 +56,9 @@ export default function HomeScreen() {
     isProductsLoading,
   } = useApp();
 
+  const { width } = useWindowDimensions();
+  const isDesktop = width > 768;
+  const cardWidthStyle = isDesktop ? '23.5%' : '48.5%';
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
   const [search, setSearch] = useState('');
@@ -491,7 +495,7 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          {/* BEST SELLERS SECTION */}
+          {/* BEST SELLERS / POPULAR PRODUCTS SECTION */}
           <View style={styles.sectionHeader}>
             <View>
               <View style={styles.titleRow}>
@@ -516,105 +520,129 @@ export default function HomeScreen() {
           ) : (
             <View style={styles.productGrid}>
               {filteredProducts.map((product) => {
-              const isFav = wishlist.includes(product.id);
-              const isOutOfStock = (product.stock !== undefined && product.stock <= 0) || product.available === false;
-              return (
-                <TouchableOpacity
-                  key={product.id}
-                  style={styles.productCard}
-                  activeOpacity={0.9}
-                  onPress={() => router.push({ pathname: '/product-detail', params: { id: product.id } })}
-                >
-                  <View style={styles.productImageContainer}>
-                    <Image
-                      source={{ uri: product.image }}
-                      style={styles.productImage}
-                    />
+                const isFav = wishlist.includes(product.id);
+                const isOutOfStock = (product.stock !== undefined && product.stock <= 0) || product.available === false;
+                const hasDiscount = (product.discountPercent ?? 0) > 0;
+                const displayDiscount = product.discount || (hasDiscount ? `${product.discountPercent}% OFF` : '');
 
-                    {isOutOfStock ? (
-                      <View style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        backgroundColor: 'rgba(0,0,0,0.55)',
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                        zIndex: 3,
-                        borderRadius: 12,
-                      }}>
-                        <Text style={{ color: '#FFFFFF', fontWeight: '900', fontSize: 12, letterSpacing: 1.5 }}>
-                          OUT OF STOCK
+                return (
+                  <TouchableOpacity
+                    key={product.id}
+                    style={[styles.productCard, { width: cardWidthStyle }]}
+                    activeOpacity={0.9}
+                    onPress={() => router.push({ pathname: '/product-detail', params: { id: product.id } })}
+                  >
+                    <View style={styles.productImageContainer}>
+                      <Image
+                        source={{ uri: product.image }}
+                        style={styles.productImage}
+                        resizeMode="cover"
+                      />
+
+                      {isOutOfStock ? (
+                        <View style={{
+                          position: 'absolute',
+                          top: 0, left: 0, right: 0, bottom: 0,
+                          backgroundColor: 'rgba(0,0,0,0.55)',
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          zIndex: 3,
+                          borderRadius: 12,
+                        }}>
+                          <Text style={{ color: '#FFFFFF', fontWeight: '900', fontSize: 11, letterSpacing: 1.5 }}>
+                            OUT OF STOCK
+                          </Text>
+                        </View>
+                      ) : hasDiscount ? (
+                        <View style={styles.discountBadge}>
+                          <Text style={styles.discountText}>{displayDiscount}</Text>
+                        </View>
+                      ) : null}
+
+                      <View style={styles.originTag}>
+                        <Text style={styles.originText}>
+                          {product.origin === 'Nepal' ? '🇳🇵 Nepal' : '🇮🇳 India'}
                         </Text>
-                      </View>
-                    ) : (
-                      <View style={styles.discountBadge}>
-                        <Text style={styles.discountText}>{product.discount}</Text>
-                      </View>
-                    )}
-
-                    <View style={styles.originTag}>
-                      <Text style={styles.originText}>
-                        {product.origin === 'Nepal' ? '🇳🇵 Nepal' : '🇮🇳 India'}
-                      </Text>
-                    </View>
-
-                    <TouchableOpacity
-                      style={[styles.heartButton, isFav && styles.heartButtonActive]}
-                      onPress={(e) => {
-                        e.stopPropagation?.();
-                        toggleWishlist(product.id);
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={[styles.heart, isFav && styles.heartActive]}>
-                        {isFav ? '♥' : '♡'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={styles.productDetails}>
-                    <Text style={styles.productName} numberOfLines={2}>
-                      {product.name}
-                    </Text>
-
-                    <Text style={styles.productSize}>
-                      Size: {product.size} • Weight: {product.weightKg} kg
-                    </Text>
-
-                    <View style={styles.ratingRow}>
-                      <Text style={styles.star}>★</Text>
-                      <Text style={styles.rating}>{product.rating}</Text>
-                      <Text style={styles.review}>({product.reviews})</Text>
-                    </View>
-
-                    <View style={styles.priceRow}>
-                      <View>
-                        <Text style={styles.price}>{formatPrice(product.finalPrice ?? product.priceKRW)}</Text>
-                        {(product.discountPercent ?? 0) > 0 && (product.oldPriceKRW || 0) > 0 && (
-                          <Text style={styles.oldPrice}>{formatPrice(product.oldPriceKRW || product.priceKRW)}</Text>
-                        )}
                       </View>
 
                       <TouchableOpacity
-                        style={[styles.addButton, isOutOfStock && { backgroundColor: '#9CA3AF' }]}
-                        activeOpacity={0.8}
-                        disabled={isOutOfStock}
+                        style={[styles.heartButton, isFav && styles.heartButtonActive]}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          if (!isOutOfStock) addToCart(product.id);
+                          toggleWishlist(product.id);
                         }}
+                        activeOpacity={0.8}
                       >
-                        <Text style={[styles.plus, isOutOfStock && { fontSize: 11 }]}>
-                          {isOutOfStock ? 'Sold Out' : t('addBtn')}
+                        <Text style={[styles.heart, isFav && styles.heartActive]}>
+                          {isFav ? '♥' : '♡'}
                         </Text>
                       </TouchableOpacity>
                     </View>
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
+
+                    <View style={styles.productDetails}>
+                      <Text style={styles.productName} numberOfLines={2}>
+                        {product.name}
+                      </Text>
+
+                      <Text style={styles.productSize}>
+                        Size: {product.size} • {product.brand || 'Authentic'}
+                      </Text>
+
+                      <View style={styles.ratingRow}>
+                        <Text style={styles.star}>★</Text>
+                        <Text style={styles.rating}>{product.rating || 4.8}</Text>
+                        <Text style={styles.review}>({product.reviews || 12})</Text>
+                      </View>
+
+                      <View style={styles.priceRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.price}>{formatPrice(product.finalPrice ?? product.priceKRW)}</Text>
+                          {hasDiscount && (product.oldPriceKRW || 0) > 0 && (
+                            <Text style={styles.oldPrice}>{formatPrice(product.oldPriceKRW || product.priceKRW)}</Text>
+                          )}
+                        </View>
+
+                        <TouchableOpacity
+                          style={[styles.addButton, isOutOfStock && { backgroundColor: '#9CA3AF' }]}
+                          activeOpacity={0.8}
+                          disabled={isOutOfStock}
+                          onPress={(e) => {
+                            e.stopPropagation?.();
+                            if (!isOutOfStock) addToCart(product.id);
+                          }}
+                        >
+                          <Text style={[styles.plus, isOutOfStock && { fontSize: 10 }]}>
+                            {isOutOfStock ? 'Sold Out' : t('addBtn')}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+
+          {/* VIEW ALL PRODUCTS BUTTON AT THE BOTTOM OF THIS SECTION */}
+          {!isProductsLoading && filteredProducts.length > 0 && (
+            <View style={{ paddingHorizontal: 20, marginTop: 16 }}>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: isDarkMode ? '#272017' : '#FFFBEB',
+                  borderWidth: 1.5,
+                  borderColor: '#D97706',
+                  borderRadius: 14,
+                  paddingVertical: 14,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                activeOpacity={0.85}
+                onPress={() => setSelectedCategory('All')}
+              >
+                <Text style={{ color: '#D97706', fontSize: 14, fontWeight: '900' }}>
+                  🛍️ View All Products ({products.length} Items) →
+                </Text>
+              </TouchableOpacity>
             </View>
           )}
 

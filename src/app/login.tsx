@@ -718,28 +718,14 @@ export default function LoginScreen() {
             >
               {/* MAIN AUTH CARD */}
               <View style={styles.authCard}>
-                {/* EXPRESS CARGO HEADER BANNER */}
-                <View style={styles.flightBannerContainer}>
-                  <Image
-                    source={{
-                      uri: 'https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=1000',
-                    }}
-                    style={styles.flightBannerImage}
-                  />
-                  <View style={styles.flightOverlayBadge}>
-                    <View style={styles.liveFlightPill}>
-                      <View style={styles.greenDot} />
-                      <Text style={styles.liveFlightText}>AIR CARGO ACTIVE</Text>
-                    </View>
-                    <Text style={styles.flightBadgeText}>
-                      ✈️ SEOUL (KR) ⇄ NEW DELHI (IN) ⇄ KATHMANDU (NP)
-                    </Text>
-                  </View>
-                </View>
 
                 {/* BRAND HEADER */}
                 <View style={styles.brandContainer}>
-                  <Text style={styles.brandLogoText}>NamasteMart</Text>
+                  <Image
+                    source={require('../../assets/images/namaste-mart-logo.png')}
+                    style={styles.brandLogo}
+                    resizeMode="contain"
+                  />
                   <Text style={styles.brandSubText}>
                     Korea ⇄ India & Nepal Express Logistics & Groceries
                   </Text>
@@ -1551,6 +1537,13 @@ const getStyles = (isDark: boolean) => {
     brandContainer: {
       alignItems: 'center',
       marginBottom: 18,
+    },
+    brandLogo: {
+      width: 160,
+      height: 160,
+      borderRadius: 80,
+      marginBottom: 12,
+      alignSelf: 'center',
     },
     brandLogoText: {
       fontSize: 28,

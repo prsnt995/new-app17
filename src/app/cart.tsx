@@ -440,7 +440,7 @@ export default function CartScreen() {
   };
 
   // Free shipping threshold
-  const freeShippingThreshold = 43000;
+  const freeShippingThreshold = 50000;
   const amountNeededForFreeShipping = Math.max(0, freeShippingThreshold - cartSubtotalKRW);
   const progressRatio = Math.min(1, cartSubtotalKRW / freeShippingThreshold);
 

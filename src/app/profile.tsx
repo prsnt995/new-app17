@@ -6,6 +6,7 @@ import React, { useState } from 'react';
 import {
   Alert,
   Image,
+  Linking,
   Modal,
   Platform,
   ScrollView,
@@ -1218,32 +1219,86 @@ export default function ProfileScreen() {
                 <Text style={styles.dialogSubtitle}>Contact our multi-lingual support team:</Text>
 
                 <View style={styles.supportOptions}>
+                  {/* WHATSAPP SUPPORT */}
                   <TouchableOpacity
                     style={styles.supportCard}
-                    onPress={() => {
-                      Alert.alert('WhatsApp Support', 'Opening WhatsApp chat with +82 10-9876-5432...');
+                    onPress={async () => {
+                      const url = 'https://wa.me/919485713011';
+                      try {
+                        await Linking.openURL(url);
+                      } catch (_) {
+                        if (typeof window !== 'undefined') {
+                          window.open(url, '_blank');
+                        }
+                      }
                     }}
+                    activeOpacity={0.85}
                   >
                     <Text style={styles.supportIcon}>💬</Text>
                     <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={styles.supportTitle}>WhatsApp Live Chat</Text>
-                      <Text style={styles.supportSub}>Instant replies in English, Hindi & Nepali</Text>
+                      <Text style={styles.supportTitle}>WhatsApp Support</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '900', color: '#D97706', marginVertical: 2 }}>
+                        +91 9485713011
+                      </Text>
+                      <Text style={styles.supportSub}>Chat with us on WhatsApp</Text>
                     </View>
                   </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={styles.supportCard}
-                    onPress={() => {
-                      Alert.alert('Phone Helpline', 'Calling Korea toll-free helpline: 1588-9999...');
-                    }}
+                  {/* BANK TRANSFER DETAILS CARD */}
+                  <View
+                    style={[
+                      styles.supportCard,
+                      {
+                        flexDirection: 'column',
+                        alignItems: 'flex-start',
+                        backgroundColor: isDarkMode ? '#1E1912' : '#FFFBEB',
+                        borderColor: '#FDE68A',
+                        borderWidth: 1,
+                      },
+                    ]}
                   >
-                    <Text style={styles.supportIcon}>📞</Text>
-                    <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={styles.supportTitle}>Korea Phone Helpline</Text>
-                      <Text style={styles.supportSub}>Mon - Sat: 9:00 AM - 8:00 PM KST</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 }}>
+                      <Text style={{ fontSize: 18 }}>🏦</Text>
+                      <Text style={[styles.supportTitle, { color: '#D97706', fontSize: 14 }]}>BANK TRANSFER</Text>
                     </View>
-                  </TouchableOpacity>
 
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: isDarkMode ? '#FFF' : '#111', marginTop: 2 }}>
+                      Bank: Woori Bank (우리은행)
+                    </Text>
+                    <Text style={{ fontSize: 14, fontWeight: '900', color: '#D97706', marginTop: 2 }}>
+                      Account Number: 1002340390276
+                    </Text>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: isDarkMode ? '#DDD' : '#444', marginTop: 2 }}>
+                      Account Holder: 박기삼
+                    </Text>
+
+                    <TouchableOpacity
+                      style={{
+                        marginTop: 10,
+                        backgroundColor: '#D97706',
+                        paddingHorizontal: 12,
+                        paddingVertical: 7,
+                        borderRadius: 8,
+                        alignSelf: 'flex-start',
+                      }}
+                      activeOpacity={0.8}
+                      onPress={async () => {
+                        const accNo = '1002340390276';
+                        try {
+                          if (typeof window !== 'undefined' && navigator?.clipboard) {
+                            await navigator.clipboard.writeText(accNo);
+                          }
+                        } catch (_) {}
+                        Alert.alert('Copied! ✅', 'Account number copied!');
+                      }}
+                    >
+                      <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '900' }}>
+                        📋 Copy Account Number
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* EMAIL SUPPORT */}
                   <TouchableOpacity
                     style={styles.supportCard}
                     onPress={() => {
@@ -1254,6 +1309,31 @@ export default function ProfileScreen() {
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <Text style={styles.supportTitle}>Email Inquiries</Text>
                       <Text style={styles.supportSub}>support@namastemart.com</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* INSTAGRAM SUPPORT */}
+                  <TouchableOpacity
+                    style={styles.supportCard}
+                    onPress={async () => {
+                      const url = 'https://instagram.com/namastemart.kr';
+                      try {
+                        await Linking.openURL(url);
+                      } catch (_) {
+                        if (typeof window !== 'undefined') {
+                          window.open(url, '_blank');
+                        }
+                      }
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.supportIcon}>📸</Text>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.supportTitle}>Instagram Support</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '900', color: '#D97706', marginVertical: 2 }}>
+                        @namastemart.kr
+                      </Text>
+                      <Text style={styles.supportSub}>Follow & message us on Instagram</Text>
                     </View>
                   </TouchableOpacity>
                 </View>
