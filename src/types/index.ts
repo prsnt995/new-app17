@@ -313,13 +313,6 @@ export interface Product {
   updatedAt?: number;
 }
 
-export interface AIImageOption {
-  id: string;
-  url: string;
-  title: string;
-  source: string;
-}
-
 // ─── CART ──────────────────────────────────────────────────────────────────────
 export interface CartItem {
   product: Product;

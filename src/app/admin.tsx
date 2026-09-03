@@ -63,7 +63,6 @@ import {
   subscribeAllItemRequestsAdmin,
   updateItemRequestAdmin,
 } from '@/services/itemRequestService';
-import { findProductImagesAI } from '@/services/aiImageService';
 import {
   FirestoreUser,
   OrderItem,
@@ -76,7 +75,6 @@ import {
   ParcelStatus,
   ItemRequestRecord,
   ItemRequestStatus,
-  AIImageOption,
 } from '@/types';
 
 function useScreenWidth() {
@@ -248,11 +246,6 @@ export default function AdminScreen() {
   const [fStock, setFStock] = useState('50');
   const [fAvailable, setFAvailable] = useState(true);
   const [productLoading, setProductLoading] = useState(false);
-
-  // ── AI PRODUCT IMAGE FINDER STATES ──────────────────────────────────────
-  const [aiImageOptions, setAiImageOptions] = useState<AIImageOption[]>([]);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
 
   // Auto-calculated final price based on original price and discount percentage
   const basePriceNum = parseInt(fPriceKRW, 10) || 0;
@@ -587,8 +580,6 @@ export default function AdminScreen() {
     setFDiscountPercent('0');
     setFStock('50');
     setFAvailable(true);
-    setAiImageOptions([]);
-    setAiError(null);
     setActiveTab('ADD_PRODUCT');
   };
 
@@ -603,34 +594,7 @@ export default function AdminScreen() {
     setFDiscountPercent((product.discountPercent ?? 0).toString());
     setFStock((product.stock ?? 50).toString());
     setFAvailable(product.available !== false);
-    setAiImageOptions([]);
-    setAiError(null);
     setActiveTab('ADD_PRODUCT');
-  };
-
-  const handleAiFindImage = async () => {
-    if (!fName.trim() && !fCategory.trim()) {
-      Alert.alert('Product Name Required', 'Please enter a product name (e.g. Kurkure, Ladoo, Wai Wai Noodles) before finding AI images.');
-      return;
-    }
-
-    try {
-      setAiLoading(true);
-      setAiError(null);
-      const options = await findProductImagesAI({
-        name: fName,
-        brand: fBrand,
-        category: fCategory,
-        description: fDescription,
-      });
-      setAiImageOptions(options);
-    } catch (err: any) {
-      console.log('AI Image Search error:', err.message);
-      setAiError('No suitable image found. Please upload an image manually.');
-      setAiImageOptions([]);
-    } finally {
-      setAiLoading(false);
-    }
   };
 
   const handlePickProductImage = async () => {
@@ -1461,10 +1425,6 @@ export default function AdminScreen() {
                 available={fAvailable}
                 setAvailable={setFAvailable}
                 loading={productLoading}
-                aiOptions={aiImageOptions}
-                aiLoading={aiLoading}
-                aiError={aiError}
-                onAiFindImage={handleAiFindImage}
                 onPickImage={handlePickProductImage}
                 onSave={handleSaveProduct}
                 onCancel={() => setActiveTab('PRODUCTS')}
@@ -2070,13 +2030,13 @@ function ProductsManagementSection({
 }
 
 /**
- * 3. ADD / EDIT PRODUCT SECTION (With AI Automatic Product Image Finder)
+ * 3. ADD / EDIT PRODUCT SECTION
  */
 function AddProductSection({
   S, isEditing, name, setName, brand, setBrand, category, setCategory, desc, setDesc,
   image, setImage, price, setPrice, discountPct, setDiscountPct,
   calculatedFinalPrice, stock, setStock, available, setAvailable,
-  loading, aiOptions, aiLoading, aiError, onAiFindImage, onPickImage, onSave, onCancel, isDarkMode,
+  loading, onPickImage, onSave, onCancel, isDarkMode,
 }: any) {
   return (
     <View style={S.panelContainer}>
@@ -2088,7 +2048,7 @@ function AddProductSection({
         <Text style={S.formLabel}>Product Name *</Text>
         <TextInput
           style={S.formInput}
-          placeholder="e.g. Kurkure Masala Munch, Wai Wai Noodles, Ladoo"
+          placeholder="e.g. Royal Basmati Rice 5kg"
           placeholderTextColor={isDarkMode ? '#666' : '#999'}
           value={name}
           onChangeText={setName}
@@ -2129,130 +2089,14 @@ function AddProductSection({
           multiline
         />
 
-        {/* Product Photo Header & AI Find Image Button */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, marginBottom: 8 }}>
-          <Text style={[S.formLabel, { marginBottom: 0 }]}>Product Photo *</Text>
-
-          <TouchableOpacity
-            style={[
-              {
-                backgroundColor: '#D97706',
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-                borderRadius: 10,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 6,
-              },
-              aiLoading && { opacity: 0.6 },
-            ]}
-            onPress={onAiFindImage}
-            disabled={aiLoading}
-            activeOpacity={0.8}
-          >
-            {aiLoading ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <>
-                <Text style={{ fontSize: 13 }}>✨</Text>
-                <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '800' }}>AI Find Image</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* AI Candidates Options Drawer / Grid (3-4 Choices) */}
-        {aiLoading && (
-          <View style={{ backgroundColor: isDarkMode ? '#2D271E' : '#FFFBEB', borderRadius: 12, padding: 14, marginBottom: 12, alignItems: 'center', borderWidth: 1, borderColor: '#FDE68A' }}>
-            <ActivityIndicator color="#D97706" size="small" />
-            <Text style={{ fontSize: 12, fontWeight: '800', color: '#B45309', marginTop: 6 }}>
-              ✨ AI is searching suitable images for "{name || category}"...
-            </Text>
-          </View>
-        )}
-
-        {aiError && !aiLoading && (
-          <View style={{ backgroundColor: '#FEE2E2', borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#FCA5A5' }}>
-            <Text style={{ fontSize: 12, fontWeight: '800', color: '#991B1B' }}>⚠️ {aiError}</Text>
-            <TouchableOpacity
-              style={{ marginTop: 6, backgroundColor: '#DC2626', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, alignSelf: 'flex-start' }}
-              onPress={onAiFindImage}
-            >
-              <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '800' }}>Retry AI Search 🔄</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {aiOptions && aiOptions.length > 0 && !aiLoading && (
-          <View style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F9FAFB', borderRadius: 14, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: '#D97706' }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <Text style={{ fontSize: 13, fontWeight: '900', color: isDarkMode ? '#FFF' : '#111' }}>
-                ✨ AI Found {aiOptions.length} Image Options (Select One):
-              </Text>
-              <TouchableOpacity onPress={onAiFindImage}>
-                <Text style={{ fontSize: 11, color: '#D97706', fontWeight: '800' }}>Retry 🔄</Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
-              {aiOptions.map((opt: AIImageOption) => {
-                const isSelected = image === opt.url;
-                return (
-                  <TouchableOpacity
-                    key={opt.id}
-                    style={[
-                      {
-                        width: 120,
-                        backgroundColor: isDarkMode ? '#262626' : '#FFFFFF',
-                        borderRadius: 12,
-                        padding: 6,
-                        borderWidth: 2,
-                        borderColor: isSelected ? '#10B981' : isDarkMode ? '#444' : '#E5E7EB',
-                        alignItems: 'center',
-                      },
-                      isSelected && { backgroundColor: isDarkMode ? '#14382B' : '#ECFDF5' },
-                    ]}
-                    onPress={() => setImage(opt.url)}
-                    activeOpacity={0.8}
-                  >
-                    <Image source={{ uri: opt.url }} style={{ width: 106, height: 90, borderRadius: 8, resizeMode: 'cover' }} />
-                    <Text style={{ fontSize: 10, fontWeight: '800', color: isDarkMode ? '#EEE' : '#333', marginTop: 4, textAlign: 'center' }} numberOfLines={1}>
-                      {opt.title}
-                    </Text>
-                    <Text style={{ fontSize: 9, color: '#D97706', marginTop: 1 }} numberOfLines={1}>
-                      {opt.source}
-                    </Text>
-                    <View style={[{ marginTop: 6, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: isSelected ? '#10B981' : '#D97706' }]}>
-                      <Text style={{ color: '#FFFFFF', fontSize: 9, fontWeight: '900' }}>
-                        {isSelected ? 'SELECTED ✓' : 'Select ✅'}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* Selected Image Preview & Control Box */}
+        {/* Product Photo Upload */}
+        <Text style={S.formLabel}>Product Photo *</Text>
         <View style={S.photoUploadRow}>
-          <View style={{ position: 'relative' }}>
-            <Image source={{ uri: image || 'https://via.placeholder.com/100' }} style={S.photoPreview} />
-            {image ? (
-              <TouchableOpacity
-                style={{ position: 'absolute', top: -6, right: -6, backgroundColor: '#EF4444', width: 20, height: 20, borderRadius: 10, justifyContent: 'center', alignItems: 'center' }}
-                onPress={() => setImage('')}
-              >
-                <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>✕</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-
+          <Image source={{ uri: image || 'https://via.placeholder.com/100' }} style={S.photoPreview} />
           <View style={{ flex: 1, gap: 8 }}>
             <TouchableOpacity style={S.photoPickBtn} onPress={onPickImage}>
               <Text style={S.photoPickBtnText}>📷 Upload from Device</Text>
             </TouchableOpacity>
-
             <TextInput
               style={[S.formInput, { marginBottom: 0 }]}
               placeholder="Or paste image URL"
@@ -2260,12 +2104,6 @@ function AddProductSection({
               value={image}
               onChangeText={setImage}
             />
-
-            {image ? (
-              <TouchableOpacity style={{ alignSelf: 'flex-start' }} onPress={() => setImage('')}>
-                <Text style={{ fontSize: 11, color: '#EF4444', fontWeight: '800' }}>Clear/Remove Image 🗑️</Text>
-              </TouchableOpacity>
-            ) : null}
           </View>
         </View>
 
