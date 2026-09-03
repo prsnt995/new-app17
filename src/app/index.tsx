@@ -533,11 +533,11 @@ export default function HomeScreen() {
                     onPress={() => router.push({ pathname: '/product-detail', params: { id: product.id } })}
                   >
                     <View style={styles.productImageContainer}>
-                      <Image
-                        source={{ uri: product.image }}
-                        style={styles.productImage}
-                        resizeMode="cover"
-                      />
+                      {(() => { const supaUri = (product.image || '').includes('supabase.co/storage') ? product.image : undefined; return supaUri ? (
+                        <Image source={{ uri: supaUri }} style={styles.productImage} resizeMode="cover" />
+                      ) : (
+                        <View style={[styles.productImage, { backgroundColor: '#F0ECE1', justifyContent: 'center', alignItems: 'center' }]} />
+                      );})()}
 
                       {isOutOfStock ? (
                         <View style={{
@@ -585,7 +585,7 @@ export default function HomeScreen() {
                       </Text>
 
                       <Text style={styles.productSize}>
-                        Size: {product.size} • {product.brand || 'Authentic'}
+                        Size: {product.size || (product.weightKg ? (product.weightKg < 1 ? `${Math.round(product.weightKg*1000)} g` : `${product.weightKg} kg`) : '1 Pack')} • {product.brand || 'Authentic'}
                       </Text>
 
                       <View style={styles.ratingRow}>

@@ -880,6 +880,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 // Clear guest storage after merge
                 if (mergedCartItems) try { const r = s.removeItem(GUEST_CART_KEY); if ((r as any)?.catch) (r as any).catch(() => {}); } catch {}
                 if (mergedWishIds) try { const r = s.removeItem(GUEST_WISHLIST_KEY); if ((r as any)?.catch) (r as any).catch(() => {}); } catch {}
+                // Merge guest addresses (device-level) into Supabase on login
+                try {
+                  const rawGuestAddrs = await s.getItem('guest_addresses');
+                  if (rawGuestAddrs) {
+                    const guestAddrs: any[] = JSON.parse(rawGuestAddrs);
+                    if (guestAddrs.length > 0) {
+                      const { data: profile } = await supabase.from('profiles').select('addresses').eq('id', uid).single();
+                      const existingAddrs: any[] = (profile as any)?.addresses || [];
+                      const existingKeys = new Set(existingAddrs.map((a: any) => `${a.recipientName}|${a.postalCode}|${a.address}`.toLowerCase()));
+                      const toAdd = guestAddrs.filter((a: any) => !existingKeys.has(`${a.recipientName}|${a.postalCode}|${a.address}`.toLowerCase()));
+                      if (toAdd.length > 0) {
+                        const merged = [...existingAddrs, ...toAdd.map((a: any) => ({ ...a, isDefault: false }))];
+                        await supabase.from('profiles').update({ addresses: merged, updated_at: Date.now() }).eq('id', uid);
+                        setUser((prev: any) => ({ ...prev, savedAddresses: [...prev.savedAddresses, ...toAdd.map((a: any) => ({ id: a.id, title: a.label || 'Home', type: 'HOME', recipientName: a.recipientName, phone: a.phoneNumber || a.phone || '', phoneNumber: a.phoneNumber || a.phone || '', fullAddress: `${a.address}, ${a.detailAddress || ''} (${a.postalCode})`, streetAddress: a.address, detailAddress: a.detailAddress || '', city: a.city || 'Seoul', postalCode: a.postalCode, country: 'South Korea', isDefault: false, label: a.label || 'Home' }))]}));
+                      }
+                      try { const r = s.removeItem('guest_addresses'); if ((r as any)?.catch) (r as any).catch(() => {}); } catch {}
+                    }
+                  }
+                } catch {}
               }
             } catch {}
           } catch (e: any) {
@@ -999,6 +1018,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, 500);
   }, [authUid]);
 
+  // Clear debounced sync on unmount / logout
+  React.useEffect(() => {
+    return () => {
+      if (syncCartTimeout.current) clearTimeout(syncCartTimeout.current);
+      if (syncWishlistTimeout.current) clearTimeout(syncWishlistTimeout.current);
+    };
+  }, []);
+  React.useEffect(() => {
+    if (!authUid) {
+      if (syncCartTimeout.current) { clearTimeout(syncCartTimeout.current); syncCartTimeout.current = null; }
+      if (syncWishlistTimeout.current) { clearTimeout(syncWishlistTimeout.current); syncWishlistTimeout.current = null; }
+    }
+  }, [authUid]);
+
   // ── SYNC ADDRESSES TO FIRESTORE ───────────────────────────────────────
   const syncAddressesToCloud = useCallback((addresses: Address[]) => {
     if (!authUid) return;
@@ -1010,7 +1043,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       phone: a.phone,
       address: a.streetAddress || a.fullAddress,
       streetAddress: a.streetAddress || a.fullAddress,
-      detailAddress: a.detailedAddress || a.buildingApt || '',
+      detailAddress: a.detailAddress || a.detailedAddress || a.buildingApt || '',
       fullAddress: a.fullAddress,
       district: a.district || '',
       city: a.city || 'Seoul',
@@ -1121,8 +1154,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addToCart = (productId: string, quantity = 1) => {
     const product = products.find((p) => p.id === productId);
     if (!product) return;
-    // Stock check: prevent adding if out of stock
-    if ((product.stock ?? 1) <= 0) return;
+    if (product.stock !== undefined && product.stock <= 0) return;
 
     setCart((prev) => {
       const existing = prev.find((item) => item.product.id === productId);
@@ -1683,15 +1715,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const formatPrice = (amountKRW: number): string => {
+    const safe = amountKRW ?? 0;
     if (currency === 'INR') {
-      const inr = Math.round(amountKRW * EXCHANGE_RATES.INR);
+      const inr = Math.round(safe * EXCHANGE_RATES.INR);
       return `₹${inr.toLocaleString('en-IN')}`;
     }
     if (currency === 'NPR') {
-      const npr = Math.round(amountKRW * EXCHANGE_RATES.NPR);
+      const npr = Math.round(safe * EXCHANGE_RATES.NPR);
       return `रू ${npr.toLocaleString('en-NP')}`;
     }
-    return `₩${amountKRW.toLocaleString('en-KR')}`;
+    return `₩${safe.toLocaleString('en-KR')}`;
   };
 
   const t = (key: string): string => {

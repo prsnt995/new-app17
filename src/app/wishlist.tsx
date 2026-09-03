@@ -119,10 +119,11 @@ export default function WishlistScreen() {
               {wishlistProducts.map((product) => (
                 <View key={product.id} style={styles.card}>
                   <View style={styles.imageContainer}>
-                    <Image
-                      source={{ uri: product.image }}
-                      style={styles.productImage}
-                    />
+                    {(product.image && product.image.includes('supabase.co/storage')) ? (
+                      <Image source={{ uri: product.image }} style={styles.productImage} />
+                    ) : (
+                      <View style={[styles.productImage, { backgroundColor: '#F0ECE1' }]} />
+                    )}
 
                     <View style={styles.discountBadge}>
                       <Text style={styles.discountText}>{product.discount}</Text>
@@ -148,7 +149,7 @@ export default function WishlistScreen() {
                     </Text>
 
                     <Text style={styles.productSize}>
-                      {product.size} • {product.weightKg} kg
+                      {product.size || `${product.weightKg} kg`} • {product.weightKg < 1 ? `${Math.round(product.weightKg*1000)} g` : `${product.weightKg} kg`}
                     </Text>
 
                     <View style={styles.ratingRow}>
@@ -193,7 +194,7 @@ export default function WishlistScreen() {
               <View style={styles.suggestedList}>
                 {suggestedProducts.map((p) => (
                   <View key={p.id} style={styles.suggestedCard}>
-                    <Image source={{ uri: p.image }} style={styles.suggestedImg} />
+                    {(p.image && p.image.includes('supabase.co/storage')) ? <Image source={{ uri: p.image }} style={styles.suggestedImg} /> : <View style={[styles.suggestedImg, { backgroundColor: '#F0ECE1' }]} />}
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <Text style={styles.suggestedName} numberOfLines={1}>
                         {p.name}

@@ -59,7 +59,7 @@ export default function OrdersScreen() {
           orderId: order.id,
           userId: order.userId || (user as any)?.uid || (user as any)?.id || 'guest',
           screenshotUri: result.assets[0].uri,
-          transferredAmount: order.totalKRW || order.totalAmount || 0,
+          transferredAmount: (order as any).total_amount || order.totalKRW || order.totalAmount || 0,
           senderName: order.senderName || order.customerName,
         });
 
@@ -95,16 +95,11 @@ export default function OrdersScreen() {
     }
   };
 
-  // Filter Product Orders vs Parcel Shipments
-  const productOrders = orders.filter(
-    (o) => o.orderType === 'PRODUCT' || o.destinationCountry === 'South Korea'
-  );
-  const parcelOrders = orders.filter(
-    (o) =>
-      o.orderType === 'PARCEL' ||
-      o.destinationCountry === 'India' ||
-      o.destinationCountry === 'Nepal'
-  );
+  // Filter Product Orders vs Parcel Shipments (handle both snake_case DB + camelCase)
+  const getDestCountry = (o: any) => o.destinationCountry || o.destination_country;
+  const getOrderType = (o: any) => o.orderType || (getDestCountry(o) === 'South Korea' ? 'PRODUCT' : 'PARCEL');
+  const productOrders = orders.filter((o) => getOrderType(o) === 'PRODUCT' || getDestCountry(o) === 'South Korea');
+  const parcelOrders = orders.filter((o) => getOrderType(o) === 'PARCEL' || ['India', 'Nepal'].includes(getDestCountry(o)));
 
   const isDelivered = (s: string) => s?.toUpperCase() === 'DELIVERED';
   const isActive = (s: string) => ['IN_TRANSIT', 'ORDER_PLACED', 'PICKED_UP'].includes(s?.toUpperCase() || '');
@@ -158,10 +153,22 @@ export default function OrdersScreen() {
         };
       case 'Payment Pending':
       case 'payment_pending':
+      case 'PENDING_VERIFICATION':
+      case 'pending_verification':
+      case 'pending':
+      case 'Payment Submitted':
         return {
           label: 'Payment Pending ⏳',
           bg: isDarkMode ? '#2D2014' : '#FFF8E1',
           text: isDarkMode ? '#FFB74D' : '#F57C00',
+        };
+      case 'Payment Rejected':
+      case 'REJECTED':
+      case 'rejected':
+        return {
+          label: 'Payment Rejected 🔴',
+          bg: isDarkMode ? '#3A1A1A' : '#FEE2E2',
+          text: isDarkMode ? '#F87171' : '#B91C1C',
         };
       default:
         return {
@@ -356,7 +363,8 @@ export default function OrdersScreen() {
                 </View>
               ) : (
                 filteredProductOrders.map((order) => {
-                  const statusBadge = getStatusBadge(order.status);
+                  const isRejectedPs = String((order as any).paymentStatus || (order as any).payment_status || (order as any).payment?.status || '').toLowerCase() === 'rejected';
+                  const statusBadge = isRejectedPs ? getStatusBadge('Payment Rejected' as any) : getStatusBadge(order.status);
 
                   return (
                     <View key={order.id} style={styles.orderCard}>
@@ -365,7 +373,7 @@ export default function OrdersScreen() {
                           <Text style={styles.orderNumberText}>{order.orderNumber}</Text>
                           <Text style={styles.orderDateText}>{order.date}</Text>
                           {(() => {
-                            const pBadge = getPaymentStatusBadge(order.payment, order.paymentMethod);
+                            const pBadge = getPaymentStatusBadge(order.payment, order.paymentMethod, (order as any).paymentStatus || (order as any).payment_status);
                             return (
                               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
                                 <View
@@ -396,15 +404,20 @@ export default function OrdersScreen() {
                       {/* PRODUCTS THUMBNAIL SUMMARY */}
                       <View style={styles.productsRow}>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                          {order.items.map((item, idx) => (
-                            <View key={idx} style={styles.productThumbWrap}>
-                              <Image
-                                source={{ uri: item.product.image }}
-                                style={styles.productThumb}
-                              />
-                              <Text style={styles.productQtyBadge}>x{item.quantity}</Text>
-                            </View>
-                          ))}
+                          {order.items.map((item: any, idx: number) => {
+                            const imgUri = item.product?.image || item.imageUrl || item.image || '';
+                            const isSupabase = imgUri.includes('supabase.co/storage');
+                            return (
+                              <View key={idx} style={styles.productThumbWrap}>
+                                {imgUri && isSupabase ? (
+                                  <Image source={{ uri: imgUri }} style={styles.productThumb} />
+                                ) : (
+                                  <View style={[styles.productThumb, { backgroundColor: '#F0ECE1' }]} />
+                                )}
+                                <Text style={styles.productQtyBadge}>x{item.quantity}</Text>
+                              </View>
+                            );
+                          })}
                         </ScrollView>
                       </View>
 
@@ -413,7 +426,7 @@ export default function OrdersScreen() {
                         <View>
                           <Text style={styles.totalPriceLabel}>Total Amount</Text>
                           <Text style={styles.totalPriceVal}>
-                            {formatPrice(order.totalKRW)}
+                            {formatPrice((order as any).total_amount || order.totalKRW || 0)}
                           </Text>
                         </View>
 
@@ -757,31 +770,39 @@ export default function OrdersScreen() {
 
                   {/* PURCHASED PRODUCTS */}
                   <Text style={styles.timelineTitle}>Purchased Products</Text>
-                  {selectedProductOrder.items.map((item, idx) => (
-                    <View key={idx} style={styles.modalItemRow}>
-                      <Image source={{ uri: item.product.image }} style={styles.modalItemImg} />
-                      <View style={{ flex: 1, marginLeft: 10 }}>
-                        <Text style={styles.modalItemTitle}>{item.product.name}</Text>
-                        <Text style={styles.modalItemSub}>
-                          Quantity: {item.quantity} · {formatPrice(item.product.priceKRW)} each
-                        </Text>
+                  {selectedProductOrder.items.map((item: any, idx: number) => {
+                    const p = item.product || item;
+                    const imgUri = p.image || p.imageUrl || item.imageUrl || item.image || '';
+                    const isSupabase = imgUri.includes('supabase.co/storage');
+                    const price = p.priceKRW ?? item.price ?? item.finalPrice ?? 0;
+                    return (
+                      <View key={idx} style={styles.modalItemRow}>
+                        {isSupabase && imgUri ? (
+                          <Image source={{ uri: imgUri }} style={styles.modalItemImg} />
+                        ) : (
+                          <View style={[styles.modalItemImg, { backgroundColor: '#F0ECE1' }]} />
+                        )}
+                        <View style={{ flex: 1, marginLeft: 10 }}>
+                          <Text style={styles.modalItemTitle}>{p.name || item.name}</Text>
+                          <Text style={styles.modalItemSub}>
+                            Quantity: {item.quantity} · {formatPrice(price)} each
+                          </Text>
+                        </View>
+                        <Text style={styles.modalItemPrice}>{formatPrice(price * item.quantity)}</Text>
                       </View>
-                      <Text style={styles.modalItemPrice}>
-                        {formatPrice(item.product.priceKRW * item.quantity)}
-                      </Text>
-                    </View>
-                  ))}
+                    );
+                  })}
 
                   <View style={styles.modalTotalRow}>
                     <Text style={styles.modalTotalLabel}>Total Amount</Text>
                     <Text style={styles.modalTotalVal}>
-                      {formatPrice(selectedProductOrder.totalKRW)}
+                      {formatPrice((selectedProductOrder as any).total_amount || selectedProductOrder.totalKRW)}
                     </Text>
                   </View>
 
                   {/* BANK TRANSFER & SCREENSHOT DETAILS */}
                   {(() => {
-                    const pBadge = getPaymentStatusBadge(selectedProductOrder.payment);
+                    const pBadge = getPaymentStatusBadge(selectedProductOrder.payment, (selectedProductOrder as any).paymentMethod || (selectedProductOrder as any).payment_method, (selectedProductOrder as any).paymentStatus || (selectedProductOrder as any).payment_status);
                     return (
                       <View
                         style={{
@@ -826,7 +847,7 @@ export default function OrdersScreen() {
                           </View>
                         </View>
                         <Text style={{ fontSize: 10, color: isDarkMode ? '#A0A0A0' : '#706D65' }}>
-                          Method: {selectedProductOrder.paymentMethod}
+                          Method: {(selectedProductOrder as any).payment_method || selectedProductOrder.paymentMethod || selectedProductOrder.payment?.paymentType || 'Bank Transfer'}
                         </Text>
                         {selectedProductOrder.bankAccount && (
                           <Text
@@ -869,8 +890,36 @@ export default function OrdersScreen() {
                           </View>
                         )}
 
-                        {/* SCREENSHOT DISPLAY OR UPLOAD BUTTON */}
-                        {selectedProductOrder.paymentScreenshot ? (
+                        {/* SCREENSHOT — show if exists; upload-new only on REJECTED */}
+                        {selectedProductOrder.payment?.screenshotUrl || selectedProductOrder.paymentScreenshot ? (
+                          <View style={{ marginTop: 10 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '800', color: '#10B981', marginBottom: 6 }}>✓ Payment Screenshot Attached</Text>
+                            <TouchableOpacity
+                              onPress={() => setPreviewScreenshotUrl(selectedProductOrder.payment?.screenshotUrl || selectedProductOrder.paymentScreenshot || null)}
+                              activeOpacity={0.85}
+                              style={{ flexDirection: 'row', alignItems: 'center' }}
+                            >
+                              <Image source={{ uri: selectedProductOrder.payment?.screenshotUrl || selectedProductOrder.paymentScreenshot }} style={{ width: 80, height: 80, borderRadius: 8, borderWidth: 1, borderColor: isDarkMode ? '#444' : '#DDD' }} />
+                              <View style={{ marginLeft: 12 }}>
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: isDarkMode ? '#D4AF37' : '#C88D2B' }}>🔍 Tap to expand preview</Text>
+                                <Text style={{ fontSize: 9, color: isDarkMode ? '#888' : '#777', marginTop: 2 }}>Storage URL linked securely</Text>
+                              </View>
+                            </TouchableOpacity>
+                            {(selectedProductOrder.paymentStatus === 'REJECTED' || selectedProductOrder.payment?.status === 'rejected') && (
+                              <TouchableOpacity style={{ marginTop: 10, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: '#DC2626', borderRadius: 8, alignItems: 'center' }} onPress={() => handleUploadScreenshotForOrder(selectedProductOrder)} disabled={isUploadingScreenshot}>
+                                <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '900' }}>{isUploadingScreenshot ? 'Uploading New Proof...' : '📷 Upload New Payment Proof (새 영수증 업로드)'}</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        ) : (selectedProductOrder.paymentStatus === 'REJECTED' || selectedProductOrder.payment?.status === 'rejected') ? (
+                          <View style={{ marginTop: 10 }}>
+                            <Text style={{ fontSize: 10, color: '#EF4444', fontWeight: '700', marginBottom: 6 }}>❌ No proof after rejection — please upload new</Text>
+                            <TouchableOpacity style={{ paddingVertical: 10, paddingHorizontal: 14, backgroundColor: '#DC2626', borderRadius: 8, alignItems: 'center' }} onPress={() => handleUploadScreenshotForOrder(selectedProductOrder)} disabled={isUploadingScreenshot}>
+                              <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '900' }}>{isUploadingScreenshot ? 'Uploading...' : '📷 Upload New Payment Proof'}</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : null}
+                        {false && selectedProductOrder.paymentScreenshot ? (
                           <View style={{ marginTop: 10 }}>
                             <Text
                               style={{
@@ -945,39 +994,7 @@ export default function OrdersScreen() {
                               </TouchableOpacity>
                             )}
                           </View>
-                        ) : (
-                          <View style={{ marginTop: 10 }}>
-                            <Text
-                              style={{
-                                fontSize: 10,
-                                color: '#F59E0B',
-                                fontWeight: '700',
-                                marginBottom: 6,
-                              }}
-                            >
-                              ⚠️ No Payment Screenshot Uploaded Yet
-                            </Text>
-                            <TouchableOpacity
-                              style={{
-                                paddingVertical: 10,
-                                paddingHorizontal: 14,
-                                backgroundColor: isDarkMode ? '#D4AF37' : '#C88D2B',
-                                borderRadius: 8,
-                                alignItems: 'center',
-                              }}
-                              onPress={() =>
-                                handleUploadScreenshotForOrder(selectedProductOrder)
-                              }
-                              disabled={isUploadingScreenshot}
-                            >
-                              <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '800' }}>
-                                {isUploadingScreenshot
-                                  ? 'Uploading...'
-                                  : '📷 Upload Payment Screenshot Now'}
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                        )}
+                        ) : null}
                       </View>
                     );
                   })()}

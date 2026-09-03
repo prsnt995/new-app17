@@ -303,7 +303,7 @@ export default function ClothesScreen() {
                     </Text>
 
                     <Text style={styles.sizeInfo}>
-                      Size: {product.size} • {product.weightKg} kg
+                      Size: {product.size || `${product.weightKg} kg`} • {product.weightKg < 1 ? `${Math.round(product.weightKg*1000)} g` : `${product.weightKg} kg`}
                     </Text>
 
                     <View style={styles.ratingRow}>

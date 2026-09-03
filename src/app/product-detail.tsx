@@ -77,12 +77,11 @@ export default function ProductDetailScreen() {
     : product.rating ?? 0;
 
   const allImages: string[] = [];
-  if (product.images && product.images.length > 0) {
-    allImages.push(...product.images);
-  } else if (product.image) {
-    allImages.push(product.image);
-  }
-  const mainImage = allImages[selectedImageIndex] ?? product.image;
+  const supaOnly = (u?: string) => u && u.includes('supabase.co/storage') ? u : undefined;
+  const rawImages = product.images && product.images.length > 0 ? product.images : (product.image ? [product.image] : []);
+  const filteredImages = rawImages.map(supaOnly).filter(Boolean) as string[];
+  if (filteredImages.length > 0) allImages.push(...filteredImages);
+  const mainImage = allImages[selectedImageIndex] ?? filteredImages[0];
   const descIsLong = (product.description ?? '').length > 200;
 
   const handleAddToCart = () => {
@@ -194,12 +193,12 @@ export default function ProductDetailScreen() {
 
       <View style={S.divider} />
 
-      {product.size ? (
+      {(product.size || product.weightKg) ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           <Text style={S.labelText}>Pack Size:</Text>
-          <View style={S.sizeChip}><Text style={S.sizeChipText}>{product.size}</Text></View>
+          <View style={S.sizeChip}><Text style={S.sizeChipText}>{product.size || `${product.weightKg} kg`}</Text></View>
           {product.weightKg ? (
-            <View style={S.sizeChip}><Text style={S.sizeChipText}>{product.weightKg} kg</Text></View>
+            <View style={S.sizeChip}><Text style={S.sizeChipText}>{product.weightKg < 1 ? `${Math.round(product.weightKg*1000)} g` : `${product.weightKg} kg`}</Text></View>
           ) : null}
         </View>
       ) : null}
@@ -295,7 +294,7 @@ export default function ProductDetailScreen() {
           <View style={S.desktopRow}>
             <View style={S.imagePanel}>
               <View style={S.mainImageBox}>
-                <Image source={{ uri: mainImage }} style={S.mainImage} resizeMode="contain" />
+                {mainImage ? <Image source={{ uri: mainImage }} style={S.mainImage} resizeMode="contain" /> : <View style={[S.mainImage, { backgroundColor: '#F0ECE1' }]} />}
                 {isOutOfStock && (
                   <View style={S.outOverlay}>
                     <Text style={S.outOverlayText}>OUT OF STOCK</Text>
@@ -325,7 +324,7 @@ export default function ProductDetailScreen() {
         ) : (
           <View>
             <View style={S.mainImageBoxMobile}>
-              <Image source={{ uri: mainImage }} style={S.mainImageMobile} resizeMode="contain" />
+              {mainImage ? <Image source={{ uri: mainImage }} style={S.mainImageMobile} resizeMode="contain" /> : <View style={[S.mainImageMobile, { backgroundColor: '#F0ECE1' }]} />}
               {isOutOfStock && (
                 <View style={S.outOverlay}>
                   <Text style={S.outOverlayText}>OUT OF STOCK</Text>

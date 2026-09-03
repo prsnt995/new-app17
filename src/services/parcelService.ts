@@ -4,29 +4,8 @@
  * Handles dynamic parcel pricing, booking requests, custom photo uploads, and admin controls.
  */
 
-import {
-  db,
-  doc,
-  collection,
-  getDoc,
-  getDocs,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  onSnapshot,
-  query,
-  where,
-  orderBy,
-  serverTimestamp,
-  ensureFirebaseAuth,
-} from '@/config/firebase';
-import { uploadPaymentScreenshotToFirestoreStorage } from './storage';
-import {
-  ParcelPricingItem,
-  ParcelBookingItem,
-  ParcelBookingRequest,
-  ParcelStatus,
-} from '@/types';
+import { supabase } from '@/config/supabase';
+import { ParcelPricingItem, ParcelBookingItem, ParcelBookingRequest, ParcelStatus } from '@/types';
 
 // ─── DEFAULT PARCEL PRICING ──────────────────────────────────────────────────
 export const DEFAULT_PARCEL_PRICING: ParcelPricingItem[] = [

@@ -516,7 +516,8 @@ export interface UserProfile {
   role?: string;
 }
 
-export interface FirestoreUser {
+export type FirestoreUser = SupabaseUser;
+export interface SupabaseUser {
   uid: string;
   name: string;
   email: string;

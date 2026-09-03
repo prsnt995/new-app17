@@ -61,9 +61,9 @@ export const createOrderWithStockSafety = async (
   const productIds = payload.items.map((it) => it.productId);
   const quantities = payload.items.map((it) => it.quantity);
 
-  const { error: stockError } = await supabase.rpc('decrement_stock', {
-    product_ids: productIds,
-    quantities,
+  const { error: stockError } = await supabase.rpc('decrement_stock_batch', {
+    p_ids: productIds,
+    p_quantities: quantities,
   });
 
   if (stockError) {
@@ -268,6 +268,34 @@ export const createOrderWithStockSafety = async (
 /**
  * Subscribe to customer's own orders in real time via Supabase Realtime.
  */
+const fromOrderRow = (row: any): OrderItem => ({
+  ...row,
+  orderNumber: row.order_number || row.orderNumber,
+  userId: row.user_id || row.userId,
+  customerUid: row.user_id || row.customerUid || row.customer_uid,
+  subtotalKRW: row.subtotal ?? row.subtotalKRW ?? 0,
+  shippingFeeKRW: row.shipping_fee ?? row.deliveryFee ?? row.shippingFeeKRW ?? 0,
+  discountKRW: row.discount ?? row.total_discount ?? row.discountKRW ?? 0,
+  totalKRW: row.total_amount ?? row.totalAmount ?? row.totalKRW ?? 0,
+  totalAmount: row.total_amount ?? row.totalAmount ?? 0,
+  subtotal: row.subtotal,
+  discount: row.discount,
+  shipping_fee: row.shipping_fee,
+  total_amount: row.total_amount,
+  order_status: row.order_status,
+  payment_status: row.payment_status,
+  paymentStatus: row.payment_status || row.paymentStatus,
+  orderStatus: row.order_status || row.orderStatus,
+  createdAt: row.created_at || row.createdAt,
+  updatedAt: row.updated_at || row.updatedAt,
+  destinationCountry: row.destination_country || row.destinationCountry,
+  destinationCity: row.destination_city || row.destinationCity,
+  originHub: row.origin_hub || row.originHub,
+  shippingMethod: row.shipping_method || row.shippingMethod,
+  trackingNumber: row.tracking_number || row.trackingNumber,
+  date: row.date,
+} as OrderItem);
+
 export const subscribeUserOrders = (
   userId: string,
   callback: (orders: OrderItem[]) => void
@@ -284,8 +312,8 @@ export const subscribeUserOrders = (
       return;
     }
 
-    const orders = (data || []) as OrderItem[];
-    orders.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const orders = (data || []).map(fromOrderRow);
+    orders.sort((a: any, b: any) => ((b.createdAt || b.created_at) || 0) - ((a.createdAt || a.created_at) || 0));
     callback(orders);
   };
 
@@ -332,8 +360,8 @@ export const subscribeAllOrdersAdmin = (
       return;
     }
 
-    const orders = (data || []) as OrderItem[];
-    orders.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const orders = (data || []).map(fromOrderRow);
+    orders.sort((a: any, b: any) => ((b.createdAt || (b as any).created_at) || 0) - ((a.createdAt || (a as any).created_at) || 0));
     callback(orders);
   };
 
@@ -371,7 +399,7 @@ export const updateOrderStatusByAdmin = async (
     .from(TABLES.ORDERS)
     .update({
       status,
-      updated_at: new Date().toISOString(),
+      updated_at: Date.now(),
     })
     .eq('id', orderId);
 
@@ -390,7 +418,7 @@ export const updateParcelStatusByAdmin = async (
 ): Promise<void> => {
   const updates: any = {
     parcel_status: parcelStatus,
-    updated_at: new Date().toISOString(),
+    updated_at: Date.now(),
   };
 
   if (parcelStatus === 'Shipped') {

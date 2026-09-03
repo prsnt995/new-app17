@@ -211,6 +211,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+CREATE OR REPLACE FUNCTION public.increment_stock(p_product_id UUID, p_quantity INTEGER) RETURNS VOID AS $$
+BEGIN
+  UPDATE products SET stock = stock + p_quantity, available = true, updated_at = (extract(epoch from now()) * 1000)::bigint WHERE id = p_product_id;
+END; $$ LANGUAGE plpgsql SECURITY DEFINER;
+
 CREATE OR REPLACE FUNCTION public.decrement_stock_batch(p_ids UUID[], p_quantities INTEGER[])
 RETURNS VOID AS $$
 DECLARE

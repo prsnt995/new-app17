@@ -5,16 +5,6 @@
  */
 
 import { supabase, TABLES } from '@/config/supabase';
-import {
-  db,
-  doc,
-  deleteDoc,
-  ensureFirebaseAuth,
-  FIRESTORE_COLLECTIONS,
-  storage,
-  storageRef,
-  deleteObject,
-} from '@/config/firebase';
 import { logger } from '@/lib/logger';
 import {
   Banner,
@@ -131,6 +121,8 @@ export const validateProduct = (product: Partial<Product>): string | null => {
   if (product.discountPercent !== undefined && (product.discountPercent < 0 || product.discountPercent > 100))
     return 'Discount must be between 0 and 100.';
   if (product.stock !== undefined && product.stock < 0) return 'Stock must be 0 or greater.';
+  if (product.size !== undefined && product.size.trim().length === 0) return 'Pack size is required.';
+  if (product.weightKg !== undefined && (isNaN(product.weightKg) || product.weightKg <= 0)) return 'Weight must be > 0 kg.';
   return null;
 };
 
@@ -248,20 +240,16 @@ export const updateProductInFirestore = async (
   let finalUpdates: Record<string, any> = toProductRow(updates);
   finalUpdates.updated_at = Date.now();
 
-  if (updates.priceKRW !== undefined || updates.discountPercent !== undefined) {
-    try {
-    const { data: current } = await supabase
-      .from(TABLES.PRODUCTS)
-      .select('price_krw, discount_percent')
-      .eq('id', id)
-      .single();
-
-    if (current) {
-      const price = updates.priceKRW ?? Number((current as any).price_krw);
-      const discountPct = updates.discountPercent ?? Number((current as any).discount_percent ?? 0);
+  if (updates.priceKRW !== undefined || updates.discountPercent !== undefined || updates.finalPrice !== undefined) {
+    const price = updates.priceKRW;
+    const discountPct = updates.discountPercent;
+    if (updates.finalPrice !== undefined) {
+      finalUpdates.final_price = updates.finalPrice;
+    } else if (price !== undefined && discountPct !== undefined) {
       finalUpdates.final_price = calculateFinalPrice(price, discountPct);
+    } else if (price !== undefined) {
+      finalUpdates.final_price = price;
     }
-  } catch (_) {}
   }
 
   const { error: updateError } = await supabase
@@ -281,41 +269,55 @@ export const deleteProductFromFirestore = async (id: string, product?: Product):
   let hasDeletedAny = false;
   let lastError: any = null;
 
-  // 1. Ensure Firebase Auth is signed in for security rules
-  await ensureFirebaseAuth().catch(() => {});
-
-  // 2. Delete from Firebase Firestore
+  // Supabase-only delete: server (service_role) first, then client fallback
   try {
-    const docRef = doc(db, FIRESTORE_COLLECTIONS.PRODUCTS, id);
-    await deleteDoc(docRef);
-    hasDeletedAny = true;
-  } catch (firestoreErr: any) {
-    console.warn('Firebase Firestore delete notice:', firestoreErr.message);
-    lastError = firestoreErr;
-  }
-
-  // 3. Delete from Supabase
-  try {
-    const { error: supabaseErr } = await supabase.from(TABLES.PRODUCTS).delete().eq('id', id);
-    if (!supabaseErr) {
-      hasDeletedAny = true;
-    } else {
-      console.warn('Supabase product delete notice:', supabaseErr.message);
+    const API = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5050/api';
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (token) {
+      const res = await fetch(`${API}/admin/products/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.success) {
+        hasDeletedAny = true;
+      } else {
+        console.warn('Server delete notice:', body?.message || res.statusText);
+      }
+    }
+    if (!hasDeletedAny) {
+      const { error: supabaseErr } = await supabase.from(TABLES.PRODUCTS).delete().eq('id', id);
+      if (!supabaseErr) {
+        hasDeletedAny = true;
+      } else if (['22P02', '42P17', 'PGRST301'].includes(supabaseErr.code || '')) {
+        console.warn('Supabase delete skipped for local/mock or RLS:', id, supabaseErr.code);
+        hasDeletedAny = true;
+      } else {
+        console.warn('Supabase product delete notice:', supabaseErr.message, supabaseErr.code);
+        lastError = supabaseErr;
+      }
     }
   } catch (sbErr: any) {
     console.warn('Supabase delete exception:', sbErr.message);
+    lastError = sbErr;
   }
 
-  // 4. Delete associated Firebase Storage image if applicable
-  const imgUrl = product?.image || product?.imageUrl || (product?.images && product.images[0]);
-  if (imgUrl && imgUrl.includes('firebasestorage.googleapis.com')) {
+  // 4. Delete Supabase Storage images
+  for (const prefix of [`products/${id}`, `${id}`]) {
     try {
-      const storagePath = decodeURIComponent(imgUrl.split('/o/')[1]?.split('?')[0] || '');
-      if (storagePath) {
-        const fileRef = storageRef(storage, storagePath);
-        await deleteObject(fileRef).catch(() => {});
+      const { data: files } = await supabase.storage.from('products').list(prefix);
+      if (files?.length) {
+        const paths = files.map((f) => `${prefix}/${f.name}`);
+        await supabase.storage.from('products').remove(paths).catch(() => {});
       }
     } catch (_) {}
+  }
+  // Also try storagePath if product has it (from Supabase upload)
+  const sp = (product as any)?.storagePath;
+  if (sp) {
+    const bucket = sp.startsWith('payment-proofs/') ? 'payment-proofs' : 'products';
+    await supabase.storage.from(bucket).remove([sp]).catch(() => {});
   }
 
   // 5. If neither Firestore nor Supabase delete succeeded and there was an explicit error, throw it

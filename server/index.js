@@ -9,6 +9,7 @@ const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/auth');
 const orderRoutes = require('./routes/orders');
 const paymentRoutes = require('./routes/payments');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 const PORT = process.env.PORT || 5050;
@@ -58,6 +59,7 @@ app.use('/api/payments', authLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/admin', adminRoutes);
 
 // HEALTH CHECK
 app.get('/api/health', (req, res) => {

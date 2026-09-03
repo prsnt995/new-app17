@@ -310,6 +310,10 @@ router.post('/verify-and-create', authMiddleware, async (req, res) => {
  */
 router.post('/verify', authMiddleware, async (req, res) => {
   try {
+    const { data: adminCheck } = await supabase.from('admins').select('id').eq('id', req.user.uid).limit(1);
+    if (!adminCheck || adminCheck.length === 0) {
+      return res.status(403).json({ success: false, verified: false, message: 'Admin only' });
+    }
     const { transactionId, paidAmount, cardCompany, orderId } = req.body;
     if (!transactionId || !paidAmount) {
       return res.status(400).json({
@@ -325,7 +329,7 @@ router.post('/verify', authMiddleware, async (req, res) => {
     if (orderId) {
       const { data: order, error: orderError } = await supabase
         .from('orders')
-        .select('total_amount, payment')
+        .select('total_amount, payment, user_id')
         .eq('id', orderId)
         .single();
 

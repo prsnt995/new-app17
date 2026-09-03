@@ -300,7 +300,7 @@ export default function PerfumesScreen() {
                     </Text>
 
                     <Text style={styles.sizeInfo}>
-                      Volume: {product.size}
+                      Volume: {product.size || `${product.weightKg} kg`}
                     </Text>
 
                     <View style={styles.ratingRow}>

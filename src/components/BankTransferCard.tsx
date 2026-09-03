@@ -116,10 +116,12 @@ export function BankTransferCard({
     try {
       if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(bankSettings.accountNumber);
+      } else {
+        const Clipboard = await import('expo-clipboard').then(m => m).catch(() => null);
+        if (Clipboard?.setStringAsync) await Clipboard.setStringAsync(bankSettings.accountNumber);
       }
       setCopiedNotification(true);
       setTimeout(() => setCopiedNotification(false), 3000);
-
       Alert.alert(
         '계좌번호 복사 완료 (Copied!)',
         `[${bankSettings.bankName}]\n계좌번호: ${bankSettings.accountNumber}\n예금주: ${bankSettings.accountHolder}`

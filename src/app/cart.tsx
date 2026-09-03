@@ -147,9 +147,17 @@ export default function CartScreen() {
   const [createdOrderData, setCreatedOrderData] = useState<OrderItem | null>(null);
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
   const [cardReceipt, setCardReceipt] = useState<KoreanCardPaymentDetails | null>(null);
+  const [addressChoice, setAddressChoice] = useState<{ existing: any; newAddr: any } | null>(null);
+  const addressChoiceResolver = React.useRef<((v: 'update' | 'new' | 'once') => void) | null>(null);
 
+  const LAST_ADDR_KEY = 'last_used_address_id';
   const handleSelectSavedAddress = (addrId: string) => {
     setSelectedAddressId(addrId);
+    try {
+      const s = typeof window !== 'undefined' && (window as any).localStorage ? (window as any).localStorage : null;
+      if (s) s.setItem(LAST_ADDR_KEY, addrId);
+      else { const AS = require('@react-native-async-storage/async-storage').default; AS.setItem(LAST_ADDR_KEY, addrId).catch(()=>{}); }
+    } catch {}
     const target = koreanAddresses.find((a) => a.id === addrId);
     if (target) {
       setRecipientName(target.recipientName || user.name || '');
@@ -159,9 +167,27 @@ export default function CartScreen() {
       setDetailAddress(target.detailAddress || '');
     }
   };
+  // Restore last used address (stable, doesn't flip)
+  React.useEffect(() => {
+    if (selectedAddressId) return;
+    if (koreanAddresses.length === 0) return;
+    try {
+      const s = typeof window !== 'undefined' && (window as any).localStorage ? (window as any).localStorage : null;
+      const load = async () => {
+        let saved: string | null = null;
+        if (s) saved = s.getItem(LAST_ADDR_KEY);
+        else { try { const AS = require('@react-native-async-storage/async-storage').default; saved = await AS.getItem(LAST_ADDR_KEY); } catch {} }
+        if (saved && koreanAddresses.some(a => a.id === saved)) setSelectedAddressId(saved);
+        else if (koreanAddresses[0]) setSelectedAddressId(koreanAddresses[0].id);
+      };
+      load();
+    } catch {}
+  }, [koreanAddresses.length]);
+
 
   // ─── STEP 1 → STEP 2 ────────────────────────────────────────────────────────
   const handleContinueToAddress = () => {
+    if (isCreatingOrder) return;
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to your cart before proceeding.');
       return;
@@ -178,6 +204,12 @@ export default function CartScreen() {
 
   // ─── STEP 2 → STEP 3 ────────────────────────────────────────────────────────
   const handleConfirmAddressAndPay = async () => {
+    if (!user?.isLoggedIn) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert('Please sign in via Google to create an order.');
+      else Alert.alert('Sign In Required', 'Please sign in via Google to create an order.');
+      router.push('/login');
+      return;
+    }
     if (isCreatingOrder) return;
 
     if (!recipientName.trim()) {
@@ -197,7 +229,6 @@ export default function CartScreen() {
       Alert.alert('Postal Code Required', 'Please enter your postal code (우편번호).');
       return;
     }
-
     setIsCreatingOrder(true);
 
     try {
@@ -214,7 +245,8 @@ export default function CartScreen() {
 
       let targetAddressId = existingMatching ? existingMatching.id : selectedAddressId;
 
-      // Save/update address idempotently
+      // Stable address: snapshot for order; don't flip defaults at checkout
+      // New address created here is not made default — keeps Address 1 default unless user changes via profile
       if (!existingMatching) {
         targetAddressId = selectedAddressId || `kr-addr-${Date.now()}`;
         await addKoreanAddress({
@@ -226,31 +258,63 @@ export default function CartScreen() {
           detailAddress: detailAddress.trim(),
           deliveryInstructions: deliveryNote.trim(),
           country: 'South Korea',
-          label: 'Home',
-          isDefault: true,
+          label: targetAddressId === koreanAddresses[0]?.id ? 'Home' : 'Address 2',
+          isDefault: false,
         });
       } else {
+        const norm = (v: any) => (v || '').trim();
         const isEdited =
-          existingMatching.recipientName !== recipientName.trim() ||
-          (existingMatching.phone || existingMatching.phoneNumber) !== recipientPhone.trim() ||
-          existingMatching.postalCode !== postalCode.trim() ||
-          (existingMatching.streetAddress || existingMatching.fullAddress) !== streetAddress.trim() ||
-          existingMatching.detailAddress !== detailAddress.trim() ||
-          existingMatching.deliveryInstructions !== deliveryNote.trim();
+          norm(existingMatching.recipientName) !== norm(recipientName) ||
+          norm(existingMatching.phone || existingMatching.phoneNumber) !== norm(recipientPhone) ||
+          norm(existingMatching.postalCode) !== norm(postalCode) ||
+          norm(existingMatching.streetAddress || existingMatching.fullAddress) !== norm(streetAddress) ||
+          norm(existingMatching.detailAddress) !== norm(detailAddress) ||
+          norm(existingMatching.deliveryInstructions) !== norm(deliveryNote);
 
         if (isEdited) {
-          await addKoreanAddress({
-            id: existingMatching.id,
+          const newAddrPreview = {
             recipientName: recipientName.trim(),
-            phoneNumber: recipientPhone.trim(),
+            phone: recipientPhone.trim(),
             postalCode: postalCode.trim(),
             address: streetAddress.trim(),
             detailAddress: detailAddress.trim(),
             deliveryInstructions: deliveryNote.trim(),
-            country: 'South Korea',
-            label: existingMatching.label || 'Home',
-            isDefault: existingMatching.isDefault,
+          };
+          const choice: 'update' | 'new' | 'once' = await new Promise((resolve) => {
+            addressChoiceResolver.current = resolve;
+            setAddressChoice({ existing: existingMatching, newAddr: newAddrPreview });
           });
+          if (choice === 'once') {
+            // use snapshot only, don't mutate savedAddresses
+          } else if (choice === 'new') {
+            const newId = `kr-addr-${Date.now()}`;
+            await addKoreanAddress({
+              id: newId,
+              recipientName: recipientName.trim(),
+              phoneNumber: recipientPhone.trim(),
+              postalCode: postalCode.trim(),
+              address: streetAddress.trim(),
+              detailAddress: detailAddress.trim(),
+              deliveryInstructions: deliveryNote.trim(),
+              country: 'South Korea',
+              label: 'Address 2',
+              isDefault: false,
+            });
+            targetAddressId = newId;
+          } else {
+            await addKoreanAddress({
+              id: existingMatching.id,
+              recipientName: recipientName.trim(),
+              phoneNumber: recipientPhone.trim(),
+              postalCode: postalCode.trim(),
+              address: streetAddress.trim(),
+              detailAddress: detailAddress.trim(),
+              deliveryInstructions: deliveryNote.trim(),
+              country: 'South Korea',
+              label: existingMatching.label || 'Home',
+              isDefault: existingMatching.isDefault,
+            });
+          }
         }
       }
 
@@ -265,45 +329,21 @@ export default function CartScreen() {
         imageUrl: it.product.image || (it.product.images && it.product.images[0]) || '',
       }));
 
-      const fullAddress = `${streetAddress.trim()} ${detailAddress.trim()}`.trim();
-
-      const { createBankTransferOrder } = await import('@/services/firestorePaymentService');
-      const result = await createBankTransferOrder({
-        userId: user?.id || 'guest',
-        customer: {
-          name: recipientName.trim(),
-          email: user?.email || '',
-          phone: recipientPhone.trim(),
-          address: fullAddress,
-        },
-        deliveryAddress: {
-          recipientName: recipientName.trim(),
-          phone: recipientPhone.trim(),
-          fullAddress: streetAddress.trim(),
-          detailAddress: detailAddress.trim(),
-          postalCode: postalCode.trim(),
-          city: city.trim() || 'Seoul',
-          country: 'South Korea',
-          deliveryInstructions: deliveryNote.trim(),
-        },
-        items: itemsPayload,
-        subtotal: cartSubtotalKRW,
-        shippingFee: cartShippingFeeKRW,
-        discount: cartDiscountKRW,
-        totalAmount: cartTotalKRW,
-        bankAccount: {
-          bankName: bankSettings.bankName,
-          accountNumber: bankSettings.accountNumber,
-          accountHolder: bankSettings.accountHolder,
-        },
-        destinationCity: city.trim() || 'Seoul',
-        shippingMethod: 'Standard',
-      });
-
-      setCreatedOrderId(result.orderId);
-      setCreatedOrderNumber(result.orderNumber);
-      setCreatedOrderData(result.order);
-      clearCart();
+      const customerSnapshot = {
+        name: recipientName.trim(),
+        email: user?.email || '',
+        phoneNumber: recipientPhone.trim(),
+      };
+      const deliveryAddressSnapshot = {
+        recipientName: recipientName.trim(),
+        phoneNumber: recipientPhone.trim(),
+        postalCode: postalCode.trim(),
+        address: streetAddress.trim(),
+        detailAddress: detailAddress.trim(),
+        deliveryInstructions: deliveryNote.trim(),
+        country: 'South Korea' as const,
+      };
+      // Bank transfer: don't create order yet — order will be created together with proof in next step
       setCheckoutStep('PAYMENT');
     } catch (err: any) {
       Alert.alert('Order Creation Failed', err.message || 'Error creating order. Please try again.');
@@ -314,6 +354,16 @@ export default function CartScreen() {
 
   // ─── STEP 3: Submit Payment ──────────────────────────────────────────────────
   const handleSubmitPayment = async () => {
+    if (!user?.isLoggedIn) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert('Please sign in via Google to submit payment proof.');
+      else Alert.alert('Sign In Required', 'Please sign in via Google to submit payment proof.');
+      router.push('/login');
+      return;
+    }
+    if (!senderName.trim() || senderName.trim().length < 2) {
+      Alert.alert('Sender Required', 'Please enter depositor name (2+ characters) as shown on bank statement.');
+      return;
+    }
     if (!paymentScreenshot) {
       Alert.alert(
         'Payment Screenshot Required / 입금 확인증 필요',
@@ -322,14 +372,14 @@ export default function CartScreen() {
       return;
     }
 
-    const numericTransferred = Number(transferredAmount.replace(/[^0-9]/g, '')) || cartTotalKRW;
-    if (numericTransferred <= 0) {
-      Alert.alert('Transferred Amount Required', 'Please enter the transferred amount in Korean Won (₩).');
+    const rawAmount = transferredAmount.replace(/[^0-9]/g, '');
+    if (!rawAmount || Number(rawAmount) <= 0) {
+      Alert.alert('Invalid Amount', 'Please enter transferred amount matching the order total.');
       return;
     }
-
-    if (!createdOrderId) {
-      Alert.alert('Error', 'No order found. Please go back and try again.');
+    const numericTransferred = Number(rawAmount);
+    if (numericTransferred <= 0) {
+      Alert.alert('Transferred Amount Required', 'Please enter the transferred amount in Korean Won (₩).');
       return;
     }
 
@@ -337,18 +387,70 @@ export default function CartScreen() {
     setUploadProgress(10);
 
     try {
-      const { submitPaymentForOrder } = await import('@/services/firestorePaymentService');
-      await submitPaymentForOrder({
-        orderId: createdOrderId,
-        userId: user?.id || 'guest',
-        screenshotUri: paymentScreenshot,
-        transferredAmount: numericTransferred,
-        senderName: senderName.trim() || recipientName.trim(),
-        onUploadProgress: (p) => setUploadProgress(p.percentage),
-      });
+      // If bank order not yet created (deferred until proof exists), create it now with proof
+      let orderIdForProof = createdOrderId;
+      let orderNumForProof = createdOrderNumber;
+      if (!orderIdForProof) {
+        const { uploadPaymentProofFile } = await import('@/services/storage');
+        const tempId = `pending-${Date.now()}`;
+        const proofRes = await uploadPaymentProofFile(paymentScreenshot, user?.id || 'guest', tempId, (p: any) => setUploadProgress(p.percentage));
+        const orderSnapshot = {
+          recipientName: recipientName.trim(),
+          phoneNumber: recipientPhone.trim(),
+          postalCode: postalCode.trim(),
+          address: streetAddress.trim(),
+          detailAddress: detailAddress.trim(),
+          deliveryInstructions: deliveryNote.trim(),
+          country: 'South Korea' as const,
+        };
+        const customerSnap = { name: recipientName.trim(), email: user?.email || '', phoneNumber: recipientPhone.trim() };
+        const { createOrderWithStockSafety } = await import('@/services/orderService');
+        const newOrder: any = await createOrderWithStockSafety({
+          userId: user?.id || 'guest',
+          customer: customerSnap,
+          deliveryAddress: orderSnapshot,
+          items: cart.map((it) => ({
+            productId: it.product.id, name: it.product.name,
+            imageUrl: it.product.image || (it.product.images?.[0] || ''),
+            quantity: it.quantity,
+            originalPrice: it.product.oldPriceKRW || it.product.priceKRW,
+            discount: it.product.discountPercent ?? 0,
+            finalPrice: it.product.finalPrice ?? it.product.priceKRW,
+            subtotal: (it.product.finalPrice ?? it.product.priceKRW) * it.quantity,
+            weightKg: it.product.weightKg,
+          })),
+          subtotal: cartSubtotalKRW, totalDiscount: cartDiscountKRW,
+          deliveryFee: cartShippingFeeKRW, totalAmount: cartTotalKRW,
+          paymentMethod: 'BANK_TRANSFER',
+          paymentStatus: 'PENDING_VERIFICATION',
+          paymentScreenshotUri: proofRes.downloadUrl,
+          bankAccount: { bankName: bankSettings.bankName, accountNumber: bankSettings.accountNumber, accountHolder: bankSettings.accountHolder },
+          senderName: senderName.trim() || recipientName.trim(),
+          originHub: 'Seoul Main Hub', destinationCity: city.trim() || 'Seoul', shippingMethod: 'Standard',
+        });
+        // Link proof storage path to order (already has downloadUrl, just ensure payment_status)
+        orderIdForProof = newOrder.id;
+        orderNumForProof = (newOrder as any).order_number || (newOrder as any).orderId || newOrder.id;
+        setCreatedOrderId(orderIdForProof);
+        setCreatedOrderNumber(orderNumForProof);
+        setCreatedOrderData(newOrder as any);
+        clearCart();
+        // Proof already uploaded to tempId path, but order expects payment-proofs/{userId}/{orderId}/ — re-link via update
+        try {
+          const { supabase } = await import('@/config/supabase');
+          await supabase.from('orders').update({
+            payment: { screenshotUrl: proofRes.downloadUrl, storagePath: proofRes.storagePath, uploaded: true, verified: false, status: 'PENDING_VERIFICATION', paymentType: 'BANK_TRANSFER' },
+          }).eq('id', orderIdForProof);
+        } catch {}
+      } else {
+        const { uploadAndLinkPaymentScreenshot } = await import('@/services/paymentService');
+        await uploadAndLinkPaymentScreenshot(paymentScreenshot, user?.id || 'guest', orderIdForProof, (p: any) => setUploadProgress(p.percentage));
+      }
 
+      const totalForSuccess = (createdOrderData as any)?.total_amount ?? orderTotalForDisplay;
       setCardReceipt(null);
       setCheckoutStep('SUBMITTED');
+      router.push({ pathname: '/order-success', params: { orderId: orderIdForProof || createdOrderId, orderNumber: orderNumForProof || createdOrderNumber || orderIdForProof, amount: String(totalForSuccess) } } as any);
     } catch (err: any) {
       Alert.alert('Payment Submission Failed', err.message || 'Error submitting payment proof.');
     } finally {
@@ -406,7 +508,7 @@ export default function CartScreen() {
       });
 
       let finalOrder: OrderItem;
-      if (backendResult?.success && backendResult?.order && backendResult?.order?.firestorePersisted) {
+      if (backendResult?.success && backendResult?.order && (backendResult.order as any)?.persisted) {
         finalOrder = backendResult.order;
       } else {
         const { createOrderWithStockSafety } = await import('@/services/orderService');
@@ -432,6 +534,7 @@ export default function CartScreen() {
       setCreatedOrderData(finalOrder);
       setCardReceipt(paymentDetails);
       setCheckoutStep('SUBMITTED');
+      router.push({ pathname: '/order-success', params: { orderId: (finalOrder as any).id, orderNumber: (finalOrder as any).order_number || (finalOrder as any).orderId || (finalOrder as any).id, amount: String(cartTotalKRW) } } as any);
     } catch (err: any) {
       Alert.alert('Payment Confirmation Notice', err.message || 'Error completing payment verification.');
     } finally {
@@ -472,11 +575,11 @@ export default function CartScreen() {
     </View>
   );
 
-  // Bill summary (shared)
-  const orderTotalForDisplay = createdOrderData?.totalKRW || createdOrderData?.totalAmount || cartTotalKRW;
-  const orderSubtotalForDisplay = createdOrderData?.subtotalKRW || createdOrderData?.subtotal || cartSubtotalKRW;
-  const orderShippingForDisplay = createdOrderData?.shippingFeeKRW || createdOrderData?.deliveryFee || cartShippingFeeKRW;
-  const orderDiscountForDisplay = createdOrderData?.discountKRW || createdOrderData?.totalDiscount || cartDiscountKRW;
+  // Bill summary (shared) — handle both camelCase (legacy) and snake_case (Supabase) + cart cleared after order
+  const orderTotalForDisplay = (createdOrderData as any)?.total_amount ?? createdOrderData?.totalKRW ?? createdOrderData?.totalAmount ?? cartTotalKRW ?? 0;
+  const orderSubtotalForDisplay = (createdOrderData as any)?.subtotal ?? createdOrderData?.subtotalKRW ?? (createdOrderData as any)?.subtotal ?? cartSubtotalKRW ?? 0;
+  const orderShippingForDisplay = (createdOrderData as any)?.shipping_fee ?? createdOrderData?.shippingFeeKRW ?? (createdOrderData as any)?.deliveryFee ?? cartShippingFeeKRW ?? 0;
+  const orderDiscountForDisplay = (createdOrderData as any)?.discount ?? createdOrderData?.discountKRW ?? (createdOrderData as any)?.totalDiscount ?? cartDiscountKRW ?? 0;
 
   const renderBillSummary = () => (
     <View style={styles.billCard}>
@@ -590,10 +693,10 @@ export default function CartScreen() {
                     <Text style={styles.sectionHeading}>Shipment Items ({cart.length})</Text>
                     {cart.map(({ product, quantity }) => (
                       <View key={product.id} style={styles.cartItemCard}>
-                        <Image source={{ uri: product.image }} style={styles.itemImage} />
+                        {(product.image && product.image.includes('supabase.co/storage')) ? <Image source={{ uri: product.image }} style={styles.itemImage} /> : <View style={[styles.itemImage, { backgroundColor: '#F0ECE1' }]} />}
                         <View style={styles.itemInfo}>
                           <Text style={styles.itemName} numberOfLines={2}>{product.name}</Text>
-                          <Text style={styles.itemMeta}>{product.size} • {product.weightKg} kg/unit • {product.origin}</Text>
+                          <Text style={styles.itemMeta}>{product.size || `${product.weightKg} kg`} • {product.weightKg < 1 ? `${Math.round(product.weightKg*1000)} g` : `${product.weightKg} kg`}/unit • {product.origin}</Text>
                           <Text style={styles.itemPrice}>{formatPrice((product.finalPrice ?? product.priceKRW) * quantity)}</Text>
                           {product.stock !== undefined && product.stock <= 0 && (
                             <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '800', marginTop: 2 }}>⚠️ Out of Stock</Text>
@@ -913,6 +1016,45 @@ export default function CartScreen() {
         />
 
         <BottomNav currentTab="cart" />
+
+        <Modal visible={!!addressChoice} transparent animationType="slide" onRequestClose={() => { addressChoiceResolver.current?.('once'); setAddressChoice(null); }}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+            <View style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 32 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: '#DDD', alignSelf: 'center', marginBottom: 16 }} />
+              <Text style={{ fontSize: 16, fontWeight: '900', color: isDarkMode ? '#FFF' : '#212121', marginBottom: 4 }}>Address changed</Text>
+              <Text style={{ fontSize: 12, color: isDarkMode ? '#A0A0A0' : '#8A857A', marginBottom: 16 }}>What would you like to do with the updated address?</Text>
+              {addressChoice && (
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+                  <View style={{ flex: 1, backgroundColor: isDarkMode ? '#262626' : '#F8F7F3', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: isDarkMode ? '#333' : '#EFEBE4' }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#C88D2B', marginBottom: 4 }}>CURRENT · {addressChoice.existing.label || 'Home'}</Text>
+                    <Text style={{ fontSize: 11, color: isDarkMode ? '#FFF' : '#212121' }}>{addressChoice.existing.recipientName}</Text>
+                    <Text style={{ fontSize: 10, color: isDarkMode ? '#A0A0A0' : '#666' }}>{addressChoice.existing.address}, {addressChoice.existing.detailAddress} ({addressChoice.existing.postalCode})</Text>
+                  </View>
+                  <View style={{ flex: 1, backgroundColor: isDarkMode ? '#1A2E1F' : '#E8F5E9', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#10B981' }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#10B981', marginBottom: 4 }}>NEW</Text>
+                    <Text style={{ fontSize: 11, color: isDarkMode ? '#FFF' : '#212121' }}>{addressChoice.newAddr.recipientName}</Text>
+                    <Text style={{ fontSize: 10, color: isDarkMode ? '#A0A0A0' : '#666' }}>{addressChoice.newAddr.address}, {addressChoice.newAddr.detailAddress} ({addressChoice.newAddr.postalCode})</Text>
+                  </View>
+                </View>
+              )}
+              <TouchableOpacity style={{ backgroundColor: '#C88D2B', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginBottom: 8 }} onPress={() => { addressChoiceResolver.current?.('update'); setAddressChoice(null); }}>
+                <Text style={{ color: '#FFF', fontWeight: '800', fontSize: 13 }}>Update Current Address</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 10, marginTop: 2 }}>Overwrite {addressChoice?.existing.label || 'Home'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ backgroundColor: isDarkMode ? '#2D271E' : '#FFF9EE', borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#C88D2B', marginBottom: 8 }} onPress={() => { addressChoiceResolver.current?.('new'); setAddressChoice(null); }}>
+                <Text style={{ color: '#C88D2B', fontWeight: '800', fontSize: 13 }}>Save as Address 2</Text>
+                <Text style={{ color: isDarkMode ? '#A0A0A0' : '#8A857A', fontSize: 10, marginTop: 2 }}>Keep both addresses</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ backgroundColor: isDarkMode ? '#262626' : '#F8F7F3', borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: isDarkMode ? '#333' : '#EFEBE4' }} onPress={() => { addressChoiceResolver.current?.('once'); setAddressChoice(null); }}>
+                <Text style={{ color: isDarkMode ? '#FFF' : '#212121', fontWeight: '800', fontSize: 13 }}>Just This Order</Text>
+                <Text style={{ color: isDarkMode ? '#A0A0A0' : '#8A857A', fontSize: 10, marginTop: 2 }}>Don't save, use once</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ alignItems: 'center', paddingVertical: 8 }} onPress={() => { addressChoiceResolver.current?.('once'); setAddressChoice(null); }}>
+                <Text style={{ color: isDarkMode ? '#888' : '#999', fontSize: 12 }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </>
   );

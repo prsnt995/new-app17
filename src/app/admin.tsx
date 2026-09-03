@@ -35,15 +35,7 @@ import {
   updateParcelStatusByAdmin,
 } from '@/services/orderService';
 import { subscribeAllUsersAdmin } from '@/services/userService';
-import { verifyOrderPayment, rejectOrderPayment } from '@/services/paymentService';
-import {
-  subscribeToPendingPaymentsAdmin,
-  subscribeToPaymentLogsAdmin,
-  verifyBankTransferPaymentAdmin,
-  rejectBankTransferPaymentAdmin,
-  getPaymentVerificationLogs,
-  FirestorePayment,
-} from '@/services/firestorePaymentService';
+import { verifyOrderPayment, rejectOrderPayment, getPaymentVerificationLogs } from '@/services/paymentService';
 import {
   getBankTransferSettings,
   updateBankTransferSettings,
@@ -125,11 +117,9 @@ const PARCEL_STATUS_LIST = [
 // ─── TABS ─────────────────────────────────────────────────────────────────
 type AdminTab =
   | 'DASHBOARD'
-  | 'PAYMENT_VERIFICATION'
   | 'PRODUCTS'
   | 'ADD_PRODUCT'
   | 'ORDERS'
-  | 'PENDING_ORDERS'
   | 'PARCELS'
   | 'PARCEL_PRICING'
   | 'ITEM_REQUESTS'
@@ -183,11 +173,11 @@ export default function AdminScreen() {
   const [isSavingBankSettings, setIsSavingBankSettings] = useState(false);
 
   // ── PAYMENT VERIFICATION & AUDIT TRAIL STATES ───────────────────────────
-  const [firestorePendingPayments, setFirestorePendingPayments] = useState<FirestorePayment[]>([]);
+  const [firestorePendingPayments, setFirestorePendingPayments] = useState<any[]>([]);
   const [verificationLogs, setVerificationLogs] = useState<PaymentVerificationLog[]>([]);
   const [paymentVerificationSearch, setPaymentVerificationSearch] = useState('');
   const [paymentVerificationSubTab, setPaymentVerificationSubTab] = useState<'PENDING' | 'AUDIT_LOGS'>('PENDING');
-  const [rejectModalOrder, setRejectModalOrder] = useState<OrderItem | FirestorePayment | any | null>(null);
+  const [rejectModalOrder, setRejectModalOrder] = useState<any | null>(null);
   const [rejectReasonText, setRejectReasonText] = useState('입금자명 또는 입금액 불일치 (Sender name or amount mismatch)');
   const [screenshotModalUrl, setScreenshotModalUrl] = useState<string | null>(null);
   const [isProcessingAction, setIsProcessingAction] = useState(false);
@@ -245,6 +235,9 @@ export default function AdminScreen() {
   const [fDiscountPercent, setFDiscountPercent] = useState('0');
   const [fStock, setFStock] = useState('50');
   const [fAvailable, setFAvailable] = useState(true);
+  const [fSize, setFSize] = useState('1 Pack');
+  const [fWeightKg, setFWeightKg] = useState('1');
+  const [fOrigin, setFOrigin] = useState('India / Nepal');
   const [productLoading, setProductLoading] = useState(false);
 
   // Auto-calculated final price based on original price and discount percentage
@@ -326,30 +319,55 @@ export default function AdminScreen() {
     return () => unsub();
   }, [isAuthenticated]);
 
-  // ── SUBSCRIBE TO PENDING BANK TRANSFER PAYMENTS IN REAL TIME ────────────
+  // ── PENDING PAYMENTS DERIVED FROM SUPABASE ORDERS (no Firestore) ─────
   const prevPaymentCountRef = useRef<number>(0);
   useEffect(() => {
     if (!isAuthenticated) return;
-    const unsub = subscribeToPendingPaymentsAdmin((payments) => {
-      setFirestorePendingPayments(payments);
-      if (payments.length > prevPaymentCountRef.current && prevPaymentCountRef.current > 0) {
-        const latest = payments[0];
-        setNewPaymentAlert(
-          `🔔 New Payment Verification Request: Order #${latest.orderNumber || latest.orderId} (₩${(latest.expectedAmount || latest.uploadedAmount || 0).toLocaleString()}) from ${latest.customerName || latest.senderName || 'Customer'}`
-        );
-      }
-      prevPaymentCountRef.current = payments.length;
-    });
-    return () => unsub();
-  }, [isAuthenticated]);
+    // Derive pending payments from orders where payment_status is pending (Supabase) — handle both snake/camel and all pending variants
+    const isPendingStatus = (s: any) => {
+      const v = String(s || '').toLowerCase();
+      return v === 'pending_verification' || v === 'payment_pending' || v === 'pending' || v === 'payment submitted' || v === 'under_review' || v === 'submitted';
+    };
+    const isRejectedPs = (o: any) => String(o.paymentStatus || o.payment_status || o.payment?.status || '').toLowerCase() === 'rejected';
+    const pending = allOrders
+      .filter((o) => !isRejectedPs(o) && (isPendingStatus((o as any).paymentStatus) || isPendingStatus((o as any).payment_status) || isPendingStatus((o.payment as any)?.status) || o.status === 'Payment Submitted' || o.status === 'Payment Pending'))
+      .map((o) => ({
+        paymentId: o.id,
+        orderId: o.id,
+        orderNumber: (o as any).order_number || (o as any).orderNumber || o.id,
+        senderName: (o as any).sender_name || o.senderName || o.customerName || '',
+        customerName: (o as any).customer?.name || o.customerName || '',
+        expectedAmount: (o as any).total_amount || o.totalAmount || 0,
+        uploadedAmount: (o as any).total_amount || o.totalAmount || 0,
+        screenshotUrl: (o as any).payment?.screenshotUrl || (o as any).payment?.paymentProofUrl || o.paymentScreenshot || '',
+        status: 'pending' as const,
+        createdAt: (o as any).created_at || o.createdAt || Date.now(),
+      })) as any;
+    setFirestorePendingPayments(pending as any);
+    if (pending.length > prevPaymentCountRef.current && prevPaymentCountRef.current > 0) {
+      const latest = pending[0] as any;
+      setNewPaymentAlert(`🔔 New Payment Verification Request: Order #${latest.orderNumber || latest.orderId} (₩${(latest.expectedAmount || 0).toLocaleString()}) from ${latest.customerName || latest.senderName || 'Customer'}`);
+    }
+    prevPaymentCountRef.current = pending.length;
+  }, [isAuthenticated, allOrders]);
 
-  // ── SUBSCRIBE TO VERIFICATION LOGS IN REAL TIME ─────────────────────────
+  // ── VERIFICATION LOGS FROM SUPABASE ─────────────────────────────────────
   useEffect(() => {
     if (!isAuthenticated) return;
-    const unsub = subscribeToPaymentLogsAdmin((logs) => {
-      setVerificationLogs(logs);
-    });
-    return () => unsub();
+    let cancelled = false;
+    const loadLogs = async () => {
+      try {
+        const logs = await getPaymentVerificationLogs(50);
+        if (!cancelled) setVerificationLogs(logs as any);
+      } catch {}
+    };
+    loadLogs();
+    const { supabase } = require('@/config/supabase');
+    const channel = supabase
+      .channel('payment-verification-logs')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_verification_logs' }, () => loadLogs())
+      .subscribe();
+    return () => { cancelled = true; try { supabase.removeChannel(channel); } catch {} };
   }, [isAuthenticated]);
 
   // ── PULL TO REFRESH ─────────────────────────────────────────────────────
@@ -377,7 +395,7 @@ export default function AdminScreen() {
       const d = o.createdAt ? new Date(o.createdAt).toISOString().slice(0, 10) : '';
       return d === todayStr;
     });
-    const todaySalesAmount = todayOrders.reduce((s, o) => s + (o.totalAmount || o.totalKRW || 0), 0);
+    const todaySalesAmount = todayOrders.reduce((s, o) => s + ((o as any).total_amount || o.totalAmount || o.totalKRW || 0), 0);
     const todayProductsSold = todayOrders.reduce(
       (s, o) => s + (o.items || []).reduce((is, i) => is + (i.quantity || 1), 0),
       0
@@ -388,7 +406,7 @@ export default function AdminScreen() {
       const d = o.createdAt ? new Date(o.createdAt).toISOString().slice(0, 7) : '';
       return d === thisMonthStr;
     });
-    const monthSalesAmount = thisMonthOrders.reduce((s, o) => s + (o.totalAmount || o.totalKRW || 0), 0);
+    const monthSalesAmount = thisMonthOrders.reduce((s, o) => s + ((o as any).total_amount || o.totalAmount || o.totalKRW || 0), 0);
     const monthProductsSold = thisMonthOrders.reduce(
       (s, o) => s + (o.items || []).reduce((is, i) => is + (i.quantity || 1), 0),
       0
@@ -404,11 +422,12 @@ export default function AdminScreen() {
     );
     const waitingPayment = allOrders.filter(
       (o) =>
-        o.status === 'Payment Pending' ||
+        String((o as any).paymentStatus || (o as any).payment_status || (o as any).payment?.status || '').toLowerCase() !== 'rejected' &&
+        (o.status === 'Payment Pending' ||
         o.status === 'payment_pending' ||
         o.status === 'Payment Submitted' ||
         o.status === 'payment_uploaded' ||
-        (o.payment && !o.payment.verified)
+        (o.payment && !o.payment.verified))
     );
     const waitingParcel = allOrders.filter(
       (o) =>
@@ -443,7 +462,7 @@ export default function AdminScreen() {
         const od = o.createdAt ? new Date(o.createdAt).toISOString().slice(0, 10) : '';
         return od === dStr;
       });
-      const dayRev = dayOrders.reduce((s, o) => s + (o.totalAmount || o.totalKRW || 0), 0);
+      const dayRev = dayOrders.reduce((s, o) => s + ((o as any).total_amount || o.totalAmount || o.totalKRW || 0), 0);
       return {
         label: d.toLocaleDateString('en', { weekday: 'short' }),
         revenue: dayRev,
@@ -580,6 +599,9 @@ export default function AdminScreen() {
     setFDiscountPercent('0');
     setFStock('50');
     setFAvailable(true);
+    setFSize('1 Pack');
+    setFWeightKg('1');
+    setFOrigin('India / Nepal');
     setActiveTab('ADD_PRODUCT');
   };
 
@@ -594,6 +616,9 @@ export default function AdminScreen() {
     setFDiscountPercent((product.discountPercent ?? 0).toString());
     setFStock((product.stock ?? 50).toString());
     setFAvailable(product.available !== false);
+    setFSize(product.size || '1 Pack');
+    setFWeightKg(String(product.weightKg ?? 1));
+    setFOrigin(product.origin || 'India / Nepal');
     setActiveTab('ADD_PRODUCT');
   };
 
@@ -610,18 +635,7 @@ export default function AdminScreen() {
       quality: 0.85,
     });
     if (!result.canceled && result.assets && result.assets[0]) {
-      const localUri = result.assets[0].uri;
-      setFImage(localUri);
-      try {
-        setProductLoading(true);
-        const uploaded = await uploadProductImage(localUri, fName || 'product');
-        setFImage(uploaded.downloadUrl);
-        Alert.alert('Image Ready', 'Product image uploaded to Firebase Storage.');
-      } catch (err: any) {
-        console.log('Image upload notice:', err.message);
-      } finally {
-        setProductLoading(false);
-      }
+      setFImage(result.assets[0].uri);
     }
   };
 
@@ -656,7 +670,7 @@ export default function AdminScreen() {
           setFImage(finalImageUrl);
         } catch (uploadErr: any) {
           console.log('Failed to upload image before save:', uploadErr.message);
-          Alert.alert('Upload Error', `Failed to upload image to Firebase Storage: ${uploadErr.message}`);
+          Alert.alert('Upload Error', `Failed to upload image to Supabase Storage: ${uploadErr.message}`);
           setProductLoading(false);
           return;
         }
@@ -664,6 +678,9 @@ export default function AdminScreen() {
 
       const defaultFallback = 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500';
       const resolvedImg = finalImageUrl || defaultFallback;
+      const oldImg = editingProduct ? (editingProduct.image || editingProduct.imageUrl || editingProduct.images?.[0]) : null;
+      const isNewSupabase = resolvedImg.includes('supabase.co/storage');
+      const isOldSupabase = oldImg ? oldImg.includes('supabase.co/storage') : false;
 
       const payload: Partial<Product> = {
         name: fName.trim(),
@@ -680,23 +697,42 @@ export default function AdminScreen() {
         finalPrice,
         stock,
         available: fAvailable && stock > 0,
-        origin: 'India / Nepal',
-        size: '1 Pack',
-        weightKg: 1,
+        origin: fOrigin.trim() || 'India / Nepal',
+        size: fSize.trim() || '1 Pack',
+        weightKg: Math.max(0.01, parseFloat(fWeightKg) || 1),
         rating: editingProduct?.rating || 4.8,
         reviews: editingProduct?.reviews || 12,
       };
 
       if (editingProduct) {
-        await updateProductInFirestore(editingProduct.id, payload);
         updateProduct(editingProduct.id, payload);
+        setActiveTab('PRODUCTS');
         Alert.alert('Product Updated 🎉', `"${fName}" has been successfully updated.`);
-        setActiveTab('PRODUCTS');
+        if (isOldSupabase && oldImg !== resolvedImg) {
+          try {
+            let rawPath = decodeURIComponent((oldImg as string).split('/storage/v1/object/')[1]?.split('?')[0] || '');
+            rawPath = rawPath.replace(/^(sign|public)\//, '');
+            // rawPath is like "products/abc/file.jpg" or "products/products/abc/file.jpg" (legacy double)
+            // Strip leading bucket name to get path relative to bucket
+            const bucketPrefix = 'products/';
+            let relPath = rawPath.startsWith(bucketPrefix) ? rawPath.slice(bucketPrefix.length) : rawPath;
+            // Handle legacy double prefix products/products/...
+            if (relPath.startsWith('products/')) relPath = relPath.slice('products/'.length);
+            if (relPath) { const { deleteImage } = await import('@/services/storage'); await deleteImage(relPath, 'products').catch(() => {}); }
+          } catch {}
+        }
+        updateProductInFirestore(editingProduct.id, payload).catch((e: any) => {
+          Alert.alert('Sync Warning', `Saved locally but Supabase sync failed: ${e.message}`);
+        });
       } else {
-        const newId = await addProductToFirestore(payload as any);
-        addProduct({ ...payload, id: newId } as any);
-        Alert.alert('Product Created 🎉', `"${fName}" is now live on Namaste Mart.`);
+        const local = addProduct(payload as any);
         setActiveTab('PRODUCTS');
+        Alert.alert('Product Created 🎉', `"${fName}" is now live on Namaste Mart.`);
+        addProductToFirestore(payload as any).then((newId) => {
+          updateProduct(local.id, { id: newId } as any);
+        }).catch((e: any) => {
+          Alert.alert('Sync Warning', `Created locally but Supabase sync failed: ${e.message}`);
+        });
       }
     } catch (err: any) {
       Alert.alert('Save Error', `${err.message || 'Could not save product.'}\n\nDetails: ${err.details || err.hint || ''}`);
@@ -708,38 +744,43 @@ export default function AdminScreen() {
   const handleDeleteProduct = (product: Product) => {
     if (isProcessingAction) return;
 
-    Alert.alert(
-      'Delete Product',
-      `Are you sure you want to delete "${product.name}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            if (isProcessingAction) return;
-            try {
-              setIsProcessingAction(true);
-              setProductLoading(true);
+    const doDelete = async () => {
+      if (isProcessingAction) return;
+      try {
+        setIsProcessingAction(true);
+        setProductLoading(true);
+        // Optimistic local delete (instant UI)
+        deleteProduct(product.id);
+        if (Platform.OS === 'web') {
+          window.alert('Product deleted successfully.');
+        } else {
+          Alert.alert('Success ✅', 'Product deleted successfully.');
+        }
+        // Background backend delete (don't block UI)
+        deleteProductFromFirestore(product.id, product).catch((bgErr: any) => {
+          console.warn('Background delete notice:', bgErr.message);
+        });
+      } catch (err: any) {
+        console.error('Delete product error:', err);
+        if (Platform.OS === 'web') {
+          window.alert(err.message || 'Failed to delete product from database.');
+        } else {
+          Alert.alert('Delete Error ❌', err.message || 'Failed to delete product from database.');
+        }
+      } finally {
+        setIsProcessingAction(false);
+        setProductLoading(false);
+      }
+    };
 
-              // 1. Delete from Firebase/Firestore, Supabase, and Storage
-              await deleteProductFromFirestore(product.id, product);
-
-              // 2. Immediately update local Admin & Customer UI state
-              deleteProduct(product.id);
-
-              Alert.alert('Success ✅', 'Product deleted successfully.');
-            } catch (err: any) {
-              console.error('Delete product error:', err);
-              Alert.alert('Delete Error ❌', err.message || 'Failed to delete product from database.');
-            } finally {
-              setIsProcessingAction(false);
-              setProductLoading(false);
-            }
-          },
-        },
-      ]
-    );
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Are you sure you want to delete "${product.name}"?`)) doDelete();
+      return;
+    }
+    Alert.alert('Delete Product', `Are you sure you want to delete "${product.name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: doDelete },
+    ]);
   };
 
   const handleQuickStockUpdate = async (product: Product, delta: number) => {
@@ -849,15 +890,7 @@ export default function AdminScreen() {
       const finalPaymentId =
         paymentId || targetPayment?.paymentId || (targetOrder as any)?.paymentId || `pay_${orderId}`;
 
-      await verifyBankTransferPaymentAdmin({
-        paymentId: finalPaymentId,
-        orderId,
-        receivedAmount: finalAmount,
-        adminUid: user?.id || 'admin',
-        adminEmail: user?.email || 'admin@namastemart.com',
-        transactionId: txId || `TX-${Date.now()}`,
-        note: adminNote || 'Bank transaction verified by store admin',
-      });
+      await verifyOrderPayment(orderId, user?.id || 'admin', user?.email || 'admin@namastemart.com', finalAmount, finalCustName, finalOrderNumber);
 
       // Optimistically update local orders
       setAllOrders((prev) =>
@@ -907,13 +940,13 @@ export default function AdminScreen() {
 
       loadVerificationLogs();
       setIsProcessingAction(false);
-      Alert.alert(
-        'Payment Verified ✅',
-        `Order ${finalOrderNumber} has been verified and confirmed.`
-      );
+      if (Platform.OS === 'web') window.alert(`Payment Verified ✅\nOrder ${finalOrderNumber} has been verified and confirmed.`);
+      else Alert.alert('Payment Verified ✅', `Order ${finalOrderNumber} has been verified and confirmed.`);
     } catch (err: any) {
       setIsProcessingAction(false);
-      Alert.alert('Verification Notice', err.message || 'Failed to verify payment.');
+      console.error('Verify failed:', err);
+      if (Platform.OS === 'web') window.alert(err.message || 'Failed to verify payment.');
+      else Alert.alert('Verification Notice', err.message || 'Failed to verify payment.');
     }
   };
 
@@ -937,18 +970,35 @@ export default function AdminScreen() {
       `pay_${orderId}`;
     const reason =
       rejectReasonText.trim() || '입금 확인증 식별 불가 (Screenshot illegible / Invalid proof)';
+    const targetOrder = allOrders.find((o) => o.id === orderId);
+    const finalCustName = (targetOrder as any)?.customer?.name || targetOrder?.customerName || rejectModalOrder.customerName || 'Customer';
+    const finalOrderNumber = rejectModalOrder.orderNumber || (targetOrder as any)?.order_number || (targetOrder as any)?.orderNumber || orderId;
 
     try {
       setIsProcessingAction(true);
-      await rejectBankTransferPaymentAdmin({
-        paymentId,
-        orderId,
-        adminUid: user?.id || 'admin',
-        adminEmail: user?.email || 'admin@namastemart.com',
-        reason,
-      });
+      await rejectOrderPayment(orderId, user?.id || 'admin', reason, user?.email || 'admin@namastemart.com', 0, finalCustName || 'Customer', finalOrderNumber || orderId);
 
-      // Optimistically update local orders
+      // Restore stock (best-effort, don't block rejection on stock error)
+      const rejectedOrder = allOrders.find((o) => o.id === orderId);
+      if (rejectedOrder?.items?.length) {
+        const { supabase } = await import('@/config/supabase');
+        for (const it of rejectedOrder.items as any[]) {
+          const pid = it.productId || it.product?.id;
+          const qty = it.quantity || 1;
+          if (!pid) continue;
+          try {
+            const { error } = await supabase.rpc('increment_stock', { p_product_id: pid, p_quantity: qty });
+            if (error) throw error;
+          } catch {
+            try {
+              const { data: prod } = await supabase.from('products').select('stock').eq('id', pid).single();
+              if (prod) await supabase.from('products').update({ stock: (prod.stock || 0) + qty, available: true }).eq('id', pid);
+            } catch {}
+          }
+        }
+      }
+
+      // Optimistically update local orders — customer sees rejected badge + re-upload button, order stays in pending list
       setAllOrders((prev) =>
         prev.map((o) =>
           o.id === orderId
@@ -1107,7 +1157,7 @@ export default function AdminScreen() {
           'South Korea',
         itemsSummary,
         totalQuantity: totalQty,
-        totalAmount: order.totalAmount || order.totalKRW || 0,
+        totalAmount: (order as any).total_amount || order.totalAmount || order.totalKRW || 0,
         orderDate: order.createdAt || Date.now(),
         parcelStatus: order.parcelStatus || mapOrderStatusToParcel(order.status),
       };
@@ -1128,7 +1178,7 @@ export default function AdminScreen() {
       const userOrders = allOrders.filter(
         (o) => o.userId === userDoc.uid || o.customerUid === userDoc.uid
       );
-      const totalSpent = userOrders.reduce((sum, o) => sum + (o.totalAmount || o.totalKRW || 0), 0);
+      const totalSpent = userOrders.reduce((sum, o) => sum + ((o as any).total_amount || o.totalAmount || o.totalKRW || 0), 0);
       const firstAddr = (userDoc.addresses && userDoc.addresses[0]) || null;
       return {
         ...userDoc,
@@ -1184,16 +1234,9 @@ export default function AdminScreen() {
 
   const SIDEBAR_ITEMS: SidebarItem[] = [
     { id: 'DASHBOARD', label: 'Dashboard', icon: '📊' },
-    {
-      id: 'PAYMENT_VERIFICATION',
-      label: 'Payment Verification (입금 확인)',
-      icon: '💳',
-      badge: pendingPaymentOrders.length > 0 ? pendingPaymentOrders.length : undefined,
-    },
     { id: 'PRODUCTS', label: 'Products / Items', icon: '📦' },
     { id: 'ADD_PRODUCT', label: 'Add New Product', icon: '➕' },
     { id: 'ORDERS', label: 'Orders', icon: '🛍️', badge: allOrders.length },
-    { id: 'PENDING_ORDERS', label: 'Pending Orders', icon: '⏳', badge: stats.pendingOrdersCount },
     { id: 'PARCELS', label: 'Parcel Management', icon: '🚚', badge: stats.pendingParcelsCount },
     { id: 'PARCEL_PRICING', label: 'Parcel Pricing Settings', icon: '⚙️' },
     {
@@ -1424,6 +1467,12 @@ export default function AdminScreen() {
                 setStock={setFStock}
                 available={fAvailable}
                 setAvailable={setFAvailable}
+                packSize={fSize}
+                setPackSize={setFSize}
+                weightKg={fWeightKg}
+                setWeightKg={setFWeightKg}
+                origin={fOrigin}
+                setOrigin={setFOrigin}
                 loading={productLoading}
                 onPickImage={handlePickProductImage}
                 onSave={handleSaveProduct}
@@ -1589,16 +1638,26 @@ export default function AdminScreen() {
                 <View style={S.modalSection}>
                   <Text style={S.modalSectionTitle}>🇰🇷 South Korean Delivery Address</Text>
                   <Text style={S.modalText}>
-                    Recipient: {selectedOrder.deliveryAddress?.recipientName || selectedOrder.recipient?.name || 'Customer'}
+                    Recipient: {selectedOrder.deliveryAddress?.recipientName || selectedOrder.recipient?.name || selectedOrder.customer?.name || 'Customer'}
                   </Text>
                   <Text style={S.modalText}>
-                    Address: {selectedOrder.deliveryAddress?.address || selectedOrder.recipient?.address || 'N/A'}
+                    Phone: {selectedOrder.deliveryAddress?.phoneNumber || selectedOrder.deliveryAddress?.phone || selectedOrder.recipient?.phone || selectedOrder.customer?.phone || selectedOrder.customer?.phoneNumber || 'N/A'}
+                  </Text>
+                  <Text style={S.modalText}>
+                    Street: {selectedOrder.deliveryAddress?.address || selectedOrder.deliveryAddress?.streetAddress || selectedOrder.recipient?.address || 'N/A'}
                   </Text>
                   {selectedOrder.deliveryAddress?.detailAddress ? (
                     <Text style={S.modalText}>Detail: {selectedOrder.deliveryAddress.detailAddress}</Text>
                   ) : null}
+                  {selectedOrder.deliveryAddress?.district ? (
+                    <Text style={S.modalText}>District: {selectedOrder.deliveryAddress.district}</Text>
+                  ) : null}
+                  <Text style={S.modalText}>City: {selectedOrder.deliveryAddress?.city || selectedOrder.recipient?.city || 'Seoul'}</Text>
                   <Text style={S.modalText}>Postal Code: {selectedOrder.deliveryAddress?.postalCode || selectedOrder.recipient?.postalCode || 'N/A'}</Text>
-                  <Text style={S.modalText}>Country: South Korea (대한민국)</Text>
+                  {selectedOrder.deliveryAddress?.deliveryInstructions ? (
+                    <Text style={S.modalText}>Instructions: {selectedOrder.deliveryAddress.deliveryInstructions}</Text>
+                  ) : null}
+                  <Text style={S.modalText}>Country: {selectedOrder.deliveryAddress?.country || selectedOrder.recipient?.country || 'South Korea'} (대한민국)</Text>
                 </View>
 
                 {/* Items Snapshot */}
@@ -1627,7 +1686,7 @@ export default function AdminScreen() {
                   <View style={S.modalTotalRow}>
                     <Text style={S.modalTotalLabel}>Total Amount:</Text>
                     <Text style={S.modalTotalValue}>
-                      ₩{(selectedOrder.totalAmount || selectedOrder.totalKRW || 0).toLocaleString()}
+                      ₩{((selectedOrder as any).total_amount || selectedOrder.totalAmount || selectedOrder.totalKRW || 0).toLocaleString()}
                     </Text>
                   </View>
                 </View>
@@ -1643,7 +1702,7 @@ export default function AdminScreen() {
                     ) : null}
                   </View>
 
-                  <Text style={S.modalText}>Method: {selectedOrder.paymentMethod || 'Credit/Debit Card'}</Text>
+                  <Text style={S.modalText}>Method: {selectedOrder.paymentMethod || selectedOrder.payment?.paymentType || (selectedOrder.payment?.cardDetails ? 'Korean Card' : 'Bank Transfer')}</Text>
                   <Text style={S.modalText}>Order Status: {selectedOrder.status}</Text>
 
                   {/* Structured Korean Card Payment Receipt */}
@@ -1690,26 +1749,35 @@ export default function AdminScreen() {
               </ScrollView>
 
               {/* Status Update Actions */}
-              <View style={S.modalActionsRow}>
-                <TouchableOpacity
-                  style={[S.actionBtn, { backgroundColor: '#10B981' }]}
-                  onPress={() => handleVerifyPayment(selectedOrder.id)}
-                >
-                  <Text style={S.actionBtnText}>✅ Verify Payment</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[S.actionBtn, { backgroundColor: '#EF4444' }]}
-                  onPress={() => handleRejectPayment(selectedOrder.id)}
-                >
-                  <Text style={S.actionBtnText}>❌ Reject</Text>
-                </TouchableOpacity>
+              {(() => {
+                const isPaid = selectedOrder.paymentStatus === 'paid' || selectedOrder.payment?.verified === true || selectedOrder.status === 'Payment Confirmed';
+                const isRejected = selectedOrder.paymentStatus === 'rejected' || selectedOrder.payment?.status === 'rejected';
+                const disabled = isPaid || isRejected || isProcessingAction;
+                return (
+                  <View style={S.modalActionsRow}>
+                    <TouchableOpacity
+                      style={[S.actionBtn, { backgroundColor: disabled ? '#9CA3AF' : '#10B981', opacity: disabled ? 0.6 : 1 }]}
+                      onPress={() => handleVerifyPayment(selectedOrder.id)}
+                      disabled={disabled}
+                    >
+                      <Text style={S.actionBtnText}>{isPaid ? '✓ Already Verified' : isRejected ? 'Rejected' : '✅ Verify Payment'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[S.actionBtn, { backgroundColor: disabled ? '#9CA3AF' : '#EF4444', opacity: disabled ? 0.6 : 1 }]}
+                      onPress={() => handleRejectPayment(selectedOrder.id)}
+                      disabled={disabled}
+                    >
+                      <Text style={S.actionBtnText}>{isRejected ? 'Already Rejected' : '❌ Reject'}</Text>
+                    </TouchableOpacity>
                 <TouchableOpacity
                   style={[S.actionBtn, { backgroundColor: '#3B82F6' }]}
                   onPress={() => handleUpdateOrderStatus(selectedOrder.id, 'Shipped')}
                 >
                   <Text style={S.actionBtnText}>🚚 Mark Shipped</Text>
                 </TouchableOpacity>
-              </View>
+                  </View>
+                );
+              })()}
             </View>
           </View>
         </Modal>
@@ -1910,7 +1978,7 @@ function DashboardOverviewSection({ S, stats, isDarkMode, setActiveTab }: any) {
           stats.topSelling.map((p: any, idx: number) => (
             <View key={idx} style={S.topProductItem}>
               <Text style={S.topRankBadge}>#{idx + 1}</Text>
-              <Image source={{ uri: p.image || 'https://via.placeholder.com/50' }} style={S.topProductThumb} />
+              {(() => { const u = p.image; const ok = u && u.includes('supabase.co/storage'); return ok ? <Image source={{ uri: u }} style={S.topProductThumb} /> : <View style={[S.topProductThumb, { backgroundColor: '#F0ECE1' }]} />; })()}
               <View style={{ flex: 1 }}>
                 <Text style={S.topProductName}>{p.name}</Text>
                 <Text style={S.topProductSub}>{p.units} units sold</Text>
@@ -1982,7 +2050,7 @@ function ProductsManagementSection({
       ) : (
         products.map((p: Product) => (
           <View key={p.id} style={S.productCard}>
-            <Image source={{ uri: p.image || p.imageUrl }} style={S.productCardImg} />
+            {(() => { const u = p.image || p.imageUrl; const ok = u && u.includes('supabase.co/storage'); return ok ? <Image source={{ uri: u }} style={S.productCardImg} /> : <View style={[S.productCardImg, { backgroundColor: '#F0ECE1' }]} />; })()}
             <View style={{ flex: 1 }}>
               <View style={S.productHeaderRow}>
                 <Text style={S.productName}>{p.name}</Text>
@@ -2036,8 +2104,20 @@ function AddProductSection({
   S, isEditing, name, setName, brand, setBrand, category, setCategory, desc, setDesc,
   image, setImage, price, setPrice, discountPct, setDiscountPct,
   calculatedFinalPrice, stock, setStock, available, setAvailable,
+  packSize, setPackSize, weightKg, setWeightKg, origin, setOrigin,
   loading, onPickImage, onSave, onCancel, isDarkMode,
 }: any) {
+  const PACK_PRESETS = ['100 g','250 g','500 g','750 g','1 kg','1.5 kg','2 kg','5 kg','10 kg','1 Pack','2 Pack','5 Pack','Box','Tin','Custom'];
+  const ORIGINS = ['India','Nepal','India / Nepal','South Korea','Other'];
+  const applyPreset = (p: string) => {
+    if (p === 'Custom') { setPackSize(''); return; }
+    setPackSize(p);
+    const n = parseFloat(p);
+    if (!isNaN(n)) {
+      if (p.includes('kg')) setWeightKg(String(n));
+      else if (p.includes('g')) setWeightKg(String(n/1000));
+    }
+  };
   return (
     <View style={S.panelContainer}>
       <Text style={S.panelHeading}>{isEditing ? '✏️ Edit Product' : '➕ Add New Product'}</Text>
@@ -2144,6 +2224,46 @@ function AddProductSection({
           </Text>
         </View>
 
+        {/* Pack Size - Admin Managed */}
+        <Text style={S.formLabel}>Pack Size *</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+          {PACK_PRESETS.map((p) => (
+            <TouchableOpacity key={p} style={[S.filterChip, packSize === p && S.filterChipActive]} onPress={() => applyPreset(p)}>
+              <Text style={[S.filterChipText, packSize === p && S.filterChipTextActive]}>{p}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <TextInput
+          style={S.formInput}
+          placeholder="e.g. 500 g, 1 kg, 1 Pack, 750 g Box"
+          placeholderTextColor={isDarkMode ? '#666' : '#999'}
+          value={packSize}
+          onChangeText={setPackSize}
+        />
+        <View style={S.rowFields}>
+          <View style={{ flex: 1 }}>
+            <Text style={S.formLabel}>Weight (kg) *</Text>
+            <TextInput
+              style={S.formInput}
+              placeholder="1"
+              placeholderTextColor={isDarkMode ? '#666' : '#999'}
+              value={weightKg}
+              onChangeText={setWeightKg}
+              keyboardType="decimal-pad"
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={S.formLabel}>Origin</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 0 }}>
+              {ORIGINS.map((o) => (
+                <TouchableOpacity key={o} style={[S.filterChip, origin === o && S.filterChipActive]} onPress={() => setOrigin(o)}>
+                  <Text style={[S.filterChipText, origin === o && S.filterChipTextActive]}>{o}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+
         {/* Stock Quantity */}
         <Text style={S.formLabel}>Available Stock Quantity *</Text>
         <TextInput
@@ -2236,7 +2356,11 @@ function OrdersManagementSection({
                   {order.createdAt ? new Date(order.createdAt).toLocaleString() : 'Recent'}
                 </Text>
               </View>
-              {order.payment?.verified || order.status === 'Payment Confirmed' || order.status === 'PAID' || order.paymentStatus === 'paid' ? (
+              {String((order as any).paymentStatus || (order as any).payment_status || (order as any).payment?.status || '').toLowerCase() === 'rejected' || order.status === 'Payment Rejected' ? (
+                <View style={[S.statusBadgePill, { backgroundColor: '#EF4444' }]}>
+                  <Text style={[S.statusBadgePillText, { color: '#FFFFFF', fontWeight: '900' }]}>🔴 Payment Rejected</Text>
+                </View>
+              ) : order.payment?.verified || order.status === 'Payment Confirmed' || order.status === 'PAID' || String((order as any).paymentStatus || '').toLowerCase() === 'paid' ? (
                 <View style={[S.statusBadgePill, { backgroundColor: '#10B981' }]}>
                   <Text style={[S.statusBadgePillText, { color: '#FFFFFF', fontWeight: '900' }]}>
                     💳 PAID (결제완료)
@@ -2281,7 +2405,7 @@ function OrdersManagementSection({
 
             {/* Order Items Summary */}
             <Text style={S.orderItemCount}>
-              🛍️ {(order.items || []).length} items · Total: <Text style={{ fontWeight: '900', color: '#10B981' }}>₩{(order.totalAmount || order.totalKRW || 0).toLocaleString()}</Text>
+              🛍️ {(order.items || []).length} items · Total: <Text style={{ fontWeight: '900', color: '#10B981' }}>₩{((order as any).total_amount || order.totalAmount || order.totalKRW || 0).toLocaleString()}</Text>
             </Text>
 
             {/* Payment Proof Preview if present */}
@@ -2325,11 +2449,6 @@ function OrdersManagementSection({
               <TouchableOpacity style={S.viewDetailsBtn} onPress={() => onSelectOrder(order)}>
                 <Text style={S.viewDetailsBtnText}>🔍 Full Details</Text>
               </TouchableOpacity>
-              {order.payment?.verified ? null : (
-                <TouchableOpacity style={S.quickVerifyBtn} onPress={() => onVerifyPayment(order.id)}>
-                  <Text style={S.quickVerifyBtnText}>✅ Verify</Text>
-                </TouchableOpacity>
-              )}
               <TouchableOpacity
                 style={S.quickStatusBtn}
                 onPress={() => onUpdateStatus(order.id, 'Shipped')}
@@ -2389,7 +2508,7 @@ function PendingOrdersSection({
               📍 {order.deliveryAddress?.address || order.recipient?.address || 'South Korea'}
             </Text>
             <Text style={S.orderItemCount}>
-              Total: ₩{(order.totalAmount || order.totalKRW || 0).toLocaleString()}
+              Total: ₩{((order as any).total_amount || order.totalAmount || order.totalKRW || 0).toLocaleString()}
             </Text>
 
             {/* Quick action buttons per prompt */}
@@ -3320,7 +3439,7 @@ function SalesAnalyticsSection({ S, stats, isDarkMode }: any) {
           stats.topSelling.map((p: any, idx: number) => (
             <View key={idx} style={S.topProductItem}>
               <Text style={S.topRankBadge}>#{idx + 1}</Text>
-              <Image source={{ uri: p.image || 'https://via.placeholder.com/50' }} style={S.topProductThumb} />
+              {(() => { const u = p.image; const ok = u && u.includes('supabase.co/storage'); return ok ? <Image source={{ uri: u }} style={S.topProductThumb} /> : <View style={[S.topProductThumb, { backgroundColor: '#F0ECE1' }]} />; })()}
               <View style={{ flex: 1 }}>
                 <Text style={S.topProductName}>{p.name}</Text>
                 <Text style={S.topProductSub}>{p.units} units sold</Text>
@@ -3367,7 +3486,7 @@ function InventoryManagementSection({ S, products, filter, setFilter, threshold,
 
       {filtered.map((p: Product) => (
         <View key={p.id} style={S.inventoryCard}>
-          <Image source={{ uri: p.image || p.imageUrl }} style={S.inventoryThumb} />
+          {(() => { const u = p.image || p.imageUrl; const ok = u && u.includes('supabase.co/storage'); return ok ? <Image source={{ uri: u }} style={S.inventoryThumb} /> : <View style={[S.inventoryThumb, { backgroundColor: '#F0ECE1' }]} />; })()}
           <View style={{ flex: 1 }}>
             <Text style={S.inventoryName}>{p.name}</Text>
             <Text style={S.inventorySub}>Current Stock: <Text style={{ fontWeight: '900', color: (p.stock ?? 0) <= 0 ? '#EF4444' : (p.stock ?? 0) < threshold ? '#F59E0B' : '#10B981' }}>{p.stock ?? 0} units</Text></Text>
@@ -3517,7 +3636,7 @@ function PaymentVerificationSection({
           order.customerName ||
           order.customer?.name ||
           'Customer',
-        expectedAmount: order.totalAmount || order.totalKRW || 0,
+        expectedAmount: (order as any).total_amount || order.totalAmount || order.totalKRW || 0,
         uploadedAmount:
           (order.payment as any)?.uploadedAmount ||
           order.totalAmount ||
@@ -3536,7 +3655,7 @@ function PaymentVerificationSection({
     });
 
     // Add firestore payments if not already included
-    (firestorePayments || []).forEach((payment: FirestorePayment) => {
+    (firestorePayments || []).forEach((payment: any) => {
       if (!seenOrderIds.has(payment.orderId) && !seenOrderIds.has(payment.paymentId)) {
         list.push({
           id: payment.paymentId,

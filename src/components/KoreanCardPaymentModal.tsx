@@ -223,7 +223,7 @@ export function KoreanCardPaymentModal({
             <View style={styles.amountBanner}>
               <View>
                 <Text style={styles.amountLabel}>결제 요청 금액 (Total Amount)</Text>
-                <Text style={styles.amountValue}>₩{amountKRW.toLocaleString()}</Text>
+                <Text style={styles.amountValue}>₩{(amountKRW ?? 0).toLocaleString()}</Text>
               </View>
               <View style={styles.orderMetaCol}>
                 <Text style={styles.orderMetaText}>주문번호: {orderNumber}</Text>
@@ -522,7 +522,7 @@ export function KoreanCardPaymentModal({
               ) : (
                 <View style={styles.payBtnRow}>
                   <Text style={styles.payButtonText}>
-                    {selectedCard.nameKr} ₩{amountKRW.toLocaleString()} 결제하기
+                    {selectedCard.nameKr} ₩{(amountKRW ?? 0).toLocaleString()} 결제하기
                   </Text>
                   <Text style={styles.payButtonArrow}>→</Text>
                 </View>

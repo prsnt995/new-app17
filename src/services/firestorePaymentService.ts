@@ -185,14 +185,24 @@ export const createBankTransferOrderAndPayment = async (
   const orderNumber = generateOrderNumber();
   const trackingNumber = `KR-CJ${Date.now().toString().slice(-8)}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-  // 1. Validate Product Prices & Totals
+  // 1. Validate Product Prices & Totals (use finalPrice if present, else price - percent)
   let calculatedSubtotal = 0;
   for (const it of payload.items) {
-    calculatedSubtotal += (Number(it.price) - Number(it.discount || 0)) * Number(it.quantity);
+    const effPrice = (it as any).finalPrice != null ? Number((it as any).finalPrice) : (Number(it.price) - (Number(it.price) * Number(it.discount || 0)) / 100);
+    calculatedSubtotal += effPrice * Number(it.quantity);
   }
   const expectedTotal = Math.max(0, calculatedSubtotal + Number(payload.shippingFee || 0) - Number(payload.discount || 0));
 
-  // 2. Upload Screenshot to Firebase Storage
+  // 2. Decrement stock atomically (prevent oversell for bank orders too)
+  const { supabase } = await import('@/config/supabase');
+  const pIds = payload.items.map((it: any) => it.productId).filter(Boolean);
+  const pQtys = payload.items.map((it: any) => Number(it.quantity) || 1);
+  if (pIds.length > 0) {
+    const { error: stockErr } = await supabase.rpc('decrement_stock_batch', { p_ids: pIds, p_quantities: pQtys });
+    if (stockErr) throw new Error(stockErr.message || 'Insufficient stock');
+  }
+
+  // 3. Upload Screenshot to Storage
   const uploadRes = await uploadPaymentScreenshotToFirestoreStorage(
     payload.screenshotUri,
     payload.userId,

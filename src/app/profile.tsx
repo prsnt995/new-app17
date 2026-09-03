@@ -120,7 +120,7 @@ export default function ProfileScreen() {
 
   // Dynamic Statistics
   const totalOrdersCount = orders.length;
-  const totalSpentKRW = orders.reduce((sum, o) => sum + (o.totalKRW || 0), 0);
+  const totalSpentKRW = orders.reduce((sum, o) => sum + (((o as any).total_amount || o.totalKRW || 0)), 0);
   const savedAddressesCount = user.savedAddresses.length;
 
   const handleOpenEditProfile = () => {
