@@ -1486,33 +1486,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     (user.savedAddresses || []).find((a) => a.country === 'South Korea');
 
   const addKoreanAddress = async (addr: KoreanAddress) => {
+    let savedObj = addr;
     if (authUid) {
       const { addUserKoreanAddress } = await import('@/services/addressService');
-      await addUserKoreanAddress(authUid, addr).catch(() => {});
+      savedObj = await addUserKoreanAddress(authUid, addr).catch(() => addr);
     }
+    const finalId = savedObj.id || addr.id;
     const newAddr: Address = {
-      id: addr.id,
-      title: addr.label || 'Home',
+      id: finalId,
+      title: savedObj.label || addr.label || 'Home',
       type: 'HOME',
-      recipientName: addr.recipientName,
-      phone: addr.phoneNumber,
-      phoneNumber: addr.phoneNumber,
-      fullAddress: `${addr.address}, ${addr.detailAddress} (${addr.postalCode})`,
-      streetAddress: addr.address,
-      detailAddress: addr.detailAddress,
+      recipientName: savedObj.recipientName || addr.recipientName,
+      phone: savedObj.phoneNumber || addr.phoneNumber,
+      phoneNumber: savedObj.phoneNumber || addr.phoneNumber,
+      fullAddress: `${savedObj.address || addr.address}, ${savedObj.detailAddress || addr.detailAddress} (${savedObj.postalCode || addr.postalCode})`,
+      streetAddress: savedObj.address || addr.address,
+      detailAddress: savedObj.detailAddress || addr.detailAddress,
       city: 'Seoul',
-      postalCode: addr.postalCode,
+      postalCode: savedObj.postalCode || addr.postalCode,
       country: 'South Korea',
-      isDefault: addr.isDefault,
-      label: addr.label,
+      isDefault: savedObj.isDefault ?? addr.isDefault,
+      label: savedObj.label || addr.label || 'Home',
     };
     setUser((prev) => {
-      const addresses = addr.isDefault
-        ? prev.savedAddresses.map((a) => ({ ...a, isDefault: false }))
-        : prev.savedAddresses;
+      let addresses = prev.savedAddresses || [];
+
+      if (newAddr.isDefault) {
+        addresses = addresses.map((a) => ({ ...a, isDefault: false }));
+      }
+
+      const existingIdx = addresses.findIndex(
+        (a) =>
+          a.id === finalId ||
+          ((a.recipientName || '').trim().toLowerCase() === (newAddr.recipientName || '').trim().toLowerCase() &&
+           (a.phoneNumber || a.phone || '').trim() === (newAddr.phoneNumber || newAddr.phone || '').trim() &&
+           (a.postalCode || '').trim() === (newAddr.postalCode || '').trim() &&
+           (a.streetAddress || a.fullAddress || '').trim().toLowerCase() === (newAddr.streetAddress || '').trim().toLowerCase() &&
+           (a.detailAddress || '').trim().toLowerCase() === (newAddr.detailAddress || '').trim().toLowerCase())
+      );
+
+      let updatedList: Address[];
+      if (existingIdx >= 0) {
+        updatedList = [...addresses];
+        updatedList[existingIdx] = { ...updatedList[existingIdx], ...newAddr, id: addresses[existingIdx].id };
+      } else {
+        updatedList = [...addresses, newAddr];
+      }
+
+      syncAddressesToCloud(updatedList);
       return {
         ...prev,
-        savedAddresses: [...addresses, newAddr],
+        savedAddresses: updatedList,
       };
     });
   };

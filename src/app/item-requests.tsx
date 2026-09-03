@@ -17,60 +17,53 @@ import * as ImagePicker from 'expo-image-picker';
 import { useApp } from '@/context/AppContext';
 import { BottomNav } from '@/components/BottomNav';
 import { BankTransferCard } from '@/components/BankTransferCard';
-import { getRandomBankAccount } from '@/data/mockData';
 import {
-  subscribeCustomerParcels,
-  submitParcelPaymentProof,
-} from '@/services/parcelService';
-import { ParcelBookingRequest, ParcelStatus } from '@/types';
+  subscribeCustomerItemRequests,
+  submitItemRequestPaymentProof,
+} from '@/services/itemRequestService';
+import { ItemRequestRecord, ItemRequestStatus } from '@/types';
 
-export default function ParcelsScreen() {
+export default function ItemRequestsScreen() {
   const router = useRouter();
   const { user, formatPrice, isDarkMode } = useApp();
 
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
-  const [parcels, setParcels] = useState<ParcelBookingRequest[]>([]);
+  const [requests, setRequests] = useState<ItemRequestRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeFilter, setActiveFilter] = useState<'ALL' | 'PENDING' | 'IN_TRANSIT' | 'DELIVERED'>('ALL');
-  const [selectedParcel, setSelectedParcel] = useState<ParcelBookingRequest | null>(null);
+  const [activeFilter, setActiveFilter] = useState<'ALL' | 'PENDING' | 'PRICE_CONFIRMED' | 'DELIVERED'>('ALL');
+  const [selectedRequest, setSelectedRequest] = useState<ItemRequestRecord | null>(null);
 
-  // Bank Transfer Payment Upload State
+  // Bank Transfer Payment Upload Modal State
   const [isPayModalOpen, setIsPayModalOpen] = useState(false);
-  const [payParcel, setPayParcel] = useState<ParcelBookingRequest | null>(null);
+  const [payRequest, setPayRequest] = useState<ItemRequestRecord | null>(null);
   const [paymentScreenshot, setPaymentScreenshot] = useState<string | null>(null);
   const [senderName, setSenderName] = useState(user.name || '');
   const [isSubmittingPay, setIsSubmittingPay] = useState(false);
 
   useEffect(() => {
     setLoading(true);
-    const unsub = subscribeCustomerParcels(user.id || '', (data) => {
-      setParcels(data);
+    const unsub = subscribeCustomerItemRequests(user.id || '', (data) => {
+      setRequests(data);
       setLoading(false);
     });
     return () => unsub();
   }, [user.id]);
 
-  const filteredParcels = parcels.filter((p) => {
+  const filteredRequests = requests.filter((r) => {
     if (activeFilter === 'PENDING') {
-      return p.status === 'Pending Review' || p.status === 'Price Confirmed' || p.status === 'Payment Pending';
+      return r.status === 'Pending Review' || r.status === 'pending';
     }
-    if (activeFilter === 'IN_TRANSIT') {
-      return (
-        p.status === 'Payment Received' ||
-        p.status === 'Parcel Received' ||
-        p.status === 'Packed' ||
-        p.status === 'Shipped' ||
-        p.status === 'In Transit'
-      );
+    if (activeFilter === 'PRICE_CONFIRMED') {
+      return r.status === 'Price Confirmed' || r.status === 'Payment Pending' || r.status === 'Payment Submitted';
     }
     if (activeFilter === 'DELIVERED') {
-      return p.status === 'Delivered';
+      return r.status === 'Delivered';
     }
     return true;
   });
 
-  const getStatusConfig = (status: ParcelStatus) => {
+  const getStatusConfig = (status: ItemRequestStatus) => {
     switch (status) {
       case 'Pending Review':
         return { label: 'Pending Review ⏳', bg: '#FEF3C7', text: '#B45309' };
@@ -80,16 +73,15 @@ export default function ParcelsScreen() {
         return { label: 'Payment Pending 💳', bg: '#FFEDD5', text: '#C2410C' };
       case 'Payment Submitted':
         return { label: 'Payment Submitted 📑', bg: '#E0E7FF', text: '#4338CA' };
-      case 'Payment Received':
-      case 'Parcel Received':
-        return { label: 'Parcel Received 📦', bg: '#DCFCE7', text: '#15803D' };
-      case 'Packed':
-        return { label: 'Packed & Ready 🎁', bg: '#F3E8FF', text: '#7E22CE' };
-      case 'Shipped':
-      case 'In Transit':
+      case 'Purchased / Sourced':
+        return { label: 'Purchased / Sourced 🛍️', bg: '#DCFCE7', text: '#15803D' };
+      case 'Shipped from Origin':
+      case 'Arrived in Korea':
         return { label: 'In Transit ✈️', bg: '#DBEAFE', text: '#1D4ED8' };
       case 'Delivered':
         return { label: 'Delivered ✓', bg: '#D1FAE5', text: '#047857' };
+      case 'Rejected':
+        return { label: 'Rejected ❌', bg: '#FEE2E2', text: '#991B1B' };
       default:
         return { label: status, bg: isDarkMode ? '#262626' : '#F3F4F6', text: isDarkMode ? '#D1D5DB' : '#4B5563' };
     }
@@ -118,7 +110,7 @@ export default function ParcelsScreen() {
   };
 
   const handleSubmitPayment = async () => {
-    if (!payParcel) return;
+    if (!payRequest) return;
     if (!paymentScreenshot) {
       Alert.alert('Proof Required', 'Please attach a screenshot of your bank transfer receipt.');
       return;
@@ -126,9 +118,9 @@ export default function ParcelsScreen() {
 
     try {
       setIsSubmittingPay(true);
-      const amountToPay = payParcel.finalConfirmedPriceKRW || payParcel.estimatedPriceKRW;
-      await submitParcelPaymentProof({
-        parcelId: payParcel.parcelId,
+      const amountToPay = payRequest.finalConfirmedPriceKRW || 0;
+      await submitItemRequestPaymentProof({
+        requestId: payRequest.requestId,
         userId: user.id || 'guest',
         screenshotUri: paymentScreenshot,
         transferredAmount: amountToPay,
@@ -158,18 +150,18 @@ export default function ParcelsScreen() {
             <Text style={styles.backIcon}>←</Text>
           </TouchableOpacity>
           <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.headerTitle}>My Parcels 📦</Text>
-            <Text style={styles.headerSub}>Track your Korea ➔ India/Nepal shipments</Text>
+            <Text style={styles.headerTitle}>My Item Requests 🛍️</Text>
+            <Text style={styles.headerSub}>Track products sourced from India & Nepal to Korea</Text>
           </View>
 
-          <TouchableOpacity style={styles.newParcelBtn} onPress={() => router.push('/send-parcel')} activeOpacity={0.8}>
-            <Text style={styles.newParcelBtnText}>+ New Parcel ✈️</Text>
+          <TouchableOpacity style={styles.newReqBtn} onPress={() => router.push('/request-item')} activeOpacity={0.8}>
+            <Text style={styles.newReqBtnText}>+ New Request 🛍️</Text>
           </TouchableOpacity>
         </View>
 
         {/* FILTER TABS */}
         <View style={styles.tabBar}>
-          {(['ALL', 'PENDING', 'IN_TRANSIT', 'DELIVERED'] as const).map((tab) => (
+          {(['ALL', 'PENDING', 'PRICE_CONFIRMED', 'DELIVERED'] as const).map((tab) => (
             <TouchableOpacity
               key={tab}
               style={[styles.tabChip, activeFilter === tab && styles.tabChipActive]}
@@ -178,11 +170,11 @@ export default function ParcelsScreen() {
             >
               <Text style={[styles.tabChipText, activeFilter === tab && styles.tabChipTextActive]}>
                 {tab === 'ALL'
-                  ? 'All Parcels'
+                  ? 'All Requests'
                   : tab === 'PENDING'
                   ? 'Pending Review'
-                  : tab === 'IN_TRANSIT'
-                  ? 'In Transit'
+                  : tab === 'PRICE_CONFIRMED'
+                  ? 'Price Confirmed'
                   : 'Delivered'}
               </Text>
             </TouchableOpacity>
@@ -193,35 +185,35 @@ export default function ParcelsScreen() {
           {loading ? (
             <View style={styles.loadingWrap}>
               <ActivityIndicator size="large" color="#D97706" />
-              <Text style={styles.loadingText}>Loading your parcels...</Text>
+              <Text style={styles.loadingText}>Loading your item requests...</Text>
             </View>
-          ) : filteredParcels.length === 0 ? (
+          ) : filteredRequests.length === 0 ? (
             <View style={styles.emptyWrap}>
-              <Text style={styles.emptyIcon}>📦</Text>
-              <Text style={styles.emptyTitle}>No Parcels Found</Text>
+              <Text style={styles.emptyIcon}>🛍️</Text>
+              <Text style={styles.emptyTitle}>No Item Requests Found</Text>
               <Text style={styles.emptySub}>
                 {activeFilter === 'ALL'
-                  ? 'You have not submitted any parcel booking requests yet.'
-                  : `No parcels found for filter "${activeFilter}".`}
+                  ? 'You have not submitted any item sourcing requests yet.'
+                  : `No requests found for filter "${activeFilter}".`}
               </Text>
-              <TouchableOpacity style={styles.bookNowBtn} onPress={() => router.push('/send-parcel')}>
-                <Text style={styles.bookNowBtnText}>Send Parcel Now ✈️</Text>
+              <TouchableOpacity style={styles.requestNowBtn} onPress={() => router.push('/request-item')}>
+                <Text style={styles.requestNowBtnText}>Request Item Now 🛍️</Text>
               </TouchableOpacity>
             </View>
           ) : (
-            filteredParcels.map((parcel) => {
-              const statusCfg = getStatusConfig(parcel.status);
-              const isPriceConfirmed = parcel.isPriceConfirmed || parcel.status === 'Price Confirmed';
-              const confirmedPrice = parcel.finalConfirmedPriceKRW || parcel.estimatedPriceKRW;
+            filteredRequests.map((req) => {
+              const statusCfg = getStatusConfig(req.status);
+              const isPriceConfirmed = req.isPriceConfirmed || req.status === 'Price Confirmed';
+              const confirmedPrice = req.finalConfirmedPriceKRW || 0;
 
               return (
-                <View key={parcel.parcelId} style={styles.parcelCard}>
+                <View key={req.requestId} style={styles.reqCard}>
                   {/* Card Top Row */}
                   <View style={styles.cardHeaderRow}>
                     <View>
-                      <Text style={styles.parcelIdText}>{parcel.parcelId}</Text>
-                      <Text style={styles.parcelDateText}>
-                        {new Date(parcel.createdAt).toLocaleDateString()} • {parcel.destinationCountry === 'India' ? 'India 🇮🇳' : 'Nepal 🇳🇵'}
+                      <Text style={styles.reqIdText}>{req.requestId}</Text>
+                      <Text style={styles.reqDateText}>
+                        {new Date(req.createdAt).toLocaleDateString()} • Source: {req.originCountry === 'India' ? 'India 🇮🇳' : 'Nepal 🇳🇵'}
                       </Text>
                     </View>
                     <View style={[styles.statusBadge, { backgroundColor: statusCfg.bg }]}>
@@ -229,60 +221,60 @@ export default function ParcelsScreen() {
                     </View>
                   </View>
 
-                  {/* Confirmed Price Banner Notice */}
-                  {isPriceConfirmed && parcel.paymentStatus !== 'paid' && parcel.paymentStatus !== 'submitted' && (
+                  {/* Price Confirmed Banner Notice */}
+                  {isPriceConfirmed && req.paymentStatus !== 'paid' && req.paymentStatus !== 'submitted' && (
                     <View style={styles.confirmedNoticeBox}>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.confirmedNoticeTitle}>✨ Price Confirmed by Admin!</Text>
+                        <Text style={styles.confirmedNoticeTitle}>✨ Final Price Confirmed by Admin!</Text>
                         <Text style={styles.confirmedNoticeSub}>
-                          Final Confirmed Amount: <Text style={styles.confirmedNoticePrice}>{formatPrice(confirmedPrice)}</Text>
+                          Item Cost: ₩{(req.itemCostKRW || 0).toLocaleString()} • Shipping: ₩{(req.shippingCostKRW || 0).toLocaleString()}
+                        </Text>
+                        <Text style={styles.confirmedNoticeTotal}>
+                          Total Amount: <Text style={{ fontWeight: '900' }}>{formatPrice(confirmedPrice)}</Text>
                         </Text>
                       </View>
                       <TouchableOpacity
-                        style={styles.payNowSmallBtn}
+                        style={styles.payNowBtn}
                         onPress={() => {
-                          setPayParcel(parcel);
+                          setPayRequest(req);
                           setIsPayModalOpen(true);
                         }}
                       >
-                        <Text style={styles.payNowSmallBtnText}>Pay Now 💳</Text>
+                        <Text style={styles.payNowBtnText}>Pay Now 💳</Text>
                       </TouchableOpacity>
                     </View>
                   )}
 
-                  {/* Itemized summary */}
+                  {/* Requested items breakdown */}
                   <View style={styles.itemsSummaryWrap}>
-                    <Text style={styles.itemsSummaryTitle}>Items in Parcel Box ({parcel.items?.length || 0}):</Text>
-                    {parcel.items?.map((item: any, idx: number) => (
+                    <Text style={styles.itemsSummaryTitle}>Requested Items ({req.items?.length || 0}):</Text>
+                    {req.items?.map((item: any, idx: number) => (
                       <Text key={idx} style={styles.itemBulletRow} numberOfLines={1}>
-                        • {item.name} (Qty: {item.quantity}, {item.weightKg} kg)
-                        {item.calculatedPriceKRW > 0 ? ` - ${formatPrice(item.calculatedPriceKRW)}` : ' - Price Pending Admin'}
+                        • {item.name} (Qty: {item.quantity}) {item.brand ? `• ${item.brand}` : ''} {item.sizeColor ? `• ${item.sizeColor}` : ''}
                       </Text>
                     ))}
                   </View>
 
-                  {/* Recipient & Tracking */}
+                  {/* Korea Delivery Address & Tracking */}
                   <View style={styles.recipientRow}>
                     <Text style={styles.recipientText}>
-                      Recipient: <Text style={{ fontWeight: '800' }}>{parcel.recipient?.name}</Text> ({parcel.recipient?.city})
+                      Delivery: <Text style={{ fontWeight: '800' }}>{req.koreaDeliveryAddress?.recipientName}</Text> ({req.koreaDeliveryAddress?.city})
                     </Text>
-                    <Text style={styles.trackingText}>AWB: {parcel.trackingNumber}</Text>
+                    <Text style={styles.trackingText}>AWB: {req.trackingNumber}</Text>
                   </View>
 
                   {/* Bottom Action Bar */}
                   <View style={styles.cardFooterBar}>
                     <View>
                       <Text style={styles.priceMetaLabel}>
-                        {isPriceConfirmed ? 'Confirmed Cargo Charge' : 'Estimated Cargo Charge'}
+                        {isPriceConfirmed ? 'Confirmed Sourcing Price' : 'Sourcing Price Status'}
                       </Text>
-                      <Text style={styles.priceMetaValue}>{formatPrice(confirmedPrice)}</Text>
+                      <Text style={styles.priceMetaValue}>
+                        {isPriceConfirmed ? formatPrice(confirmedPrice) : 'Awaiting Admin Pricing'}
+                      </Text>
                     </View>
 
-                    <TouchableOpacity
-                      style={styles.viewDetailBtn}
-                      onPress={() => setSelectedParcel(parcel)}
-                      activeOpacity={0.8}
-                    >
+                    <TouchableOpacity style={styles.viewDetailBtn} onPress={() => setSelectedRequest(req)} activeOpacity={0.8}>
                       <Text style={styles.viewDetailBtnText}>View Details 🔍</Text>
                     </TouchableOpacity>
                   </View>
@@ -292,61 +284,55 @@ export default function ParcelsScreen() {
           )}
         </ScrollView>
 
-        {/* PARCEL DETAIL MODAL */}
-        <Modal visible={!!selectedParcel} transparent animationType="slide">
+        {/* DETAIL MODAL */}
+        <Modal visible={!!selectedRequest} transparent animationType="slide">
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeaderRow}>
-                <Text style={styles.modalTitle}>Parcel Details</Text>
-                <TouchableOpacity onPress={() => setSelectedParcel(null)}>
+                <Text style={styles.modalTitle}>Item Request Details</Text>
+                <TouchableOpacity onPress={() => setSelectedRequest(null)}>
                   <Text style={styles.closeIcon}>✕</Text>
                 </TouchableOpacity>
               </View>
 
-              {selectedParcel && (
+              {selectedRequest && (
                 <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
                   <View style={styles.modalCardGroup}>
-                    <Text style={styles.modalGroupTitle}>Parcel Info</Text>
-                    <Text style={styles.modalTextLine}>ID: {selectedParcel.parcelId}</Text>
-                    <Text style={styles.modalTextLine}>Tracking Number: {selectedParcel.trackingNumber}</Text>
-                    <Text style={styles.modalTextLine}>Destination: {selectedParcel.destinationCountry}</Text>
-                    <Text style={styles.modalTextLine}>Current Status: {selectedParcel.status}</Text>
-                    <Text style={styles.modalTextLine}>Total Weight: {selectedParcel.totalWeightKg} kg</Text>
+                    <Text style={styles.modalGroupTitle}>Request Reference</Text>
+                    <Text style={styles.modalTextLine}>ID: {selectedRequest.requestId}</Text>
+                    <Text style={styles.modalTextLine}>Tracking #: {selectedRequest.trackingNumber}</Text>
+                    <Text style={styles.modalTextLine}>Source Country: {selectedRequest.originCountry}</Text>
+                    <Text style={styles.modalTextLine}>Status: {selectedRequest.status}</Text>
                   </View>
 
                   <View style={styles.modalCardGroup}>
-                    <Text style={styles.modalGroupTitle}>Korea Pickup Address</Text>
-                    <Text style={styles.modalTextLine}>Name: {selectedParcel.customer?.name}</Text>
-                    <Text style={styles.modalTextLine}>Phone: {selectedParcel.customer?.phone}</Text>
-                    <Text style={styles.modalTextLine}>Address: {selectedParcel.customer?.koreaAddress}</Text>
+                    <Text style={styles.modalGroupTitle}>Korea Delivery Address</Text>
+                    <Text style={styles.modalTextLine}>Recipient: {selectedRequest.koreaDeliveryAddress?.recipientName}</Text>
+                    <Text style={styles.modalTextLine}>Phone: {selectedRequest.koreaDeliveryAddress?.phone}</Text>
+                    <Text style={styles.modalTextLine}>
+                      Address: {selectedRequest.koreaDeliveryAddress?.fullAddress}, {selectedRequest.koreaDeliveryAddress?.city}
+                    </Text>
                   </View>
 
                   <View style={styles.modalCardGroup}>
-                    <Text style={styles.modalGroupTitle}>Recipient Info</Text>
-                    <Text style={styles.modalTextLine}>Name: {selectedParcel.recipient?.name}</Text>
-                    <Text style={styles.modalTextLine}>Phone: {selectedParcel.recipient?.phone}</Text>
-                    <Text style={styles.modalTextLine}>Address: {selectedParcel.recipient?.address}, {selectedParcel.recipient?.city}</Text>
-                  </View>
-
-                  <View style={styles.modalCardGroup}>
-                    <Text style={styles.modalGroupTitle}>Item Breakdown</Text>
-                    {selectedParcel.items?.map((item: any, i: number) => (
+                    <Text style={styles.modalGroupTitle}>Requested Items ({selectedRequest.items?.length || 0})</Text>
+                    {selectedRequest.items?.map((item: any, i: number) => (
                       <View key={i} style={styles.detailItemRow}>
                         {item.photoUrl && <Image source={{ uri: item.photoUrl }} style={styles.detailItemThumb} />}
                         <View style={{ flex: 1 }}>
                           <Text style={styles.detailItemName}>{item.name}</Text>
-                          <Text style={styles.detailItemSub}>Qty: {item.quantity} | {item.weightKg} kg</Text>
+                          <Text style={styles.detailItemSub}>
+                            Qty: {item.quantity} {item.brand ? `• Brand: ${item.brand}` : ''} {item.sizeColor ? `• ${item.sizeColor}` : ''}
+                          </Text>
+                          {item.productLink ? <Text style={styles.itemLinkText} numberOfLines={1}>🔗 {item.productLink}</Text> : null}
                         </View>
-                        <Text style={styles.detailItemPrice}>
-                          {item.calculatedPriceKRW > 0 ? formatPrice(item.calculatedPriceKRW) : 'Pending'}
-                        </Text>
                       </View>
                     ))}
                   </View>
                 </ScrollView>
               )}
 
-              <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setSelectedParcel(null)}>
+              <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setSelectedRequest(null)}>
                 <Text style={styles.modalCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -358,17 +344,17 @@ export default function ParcelsScreen() {
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeaderRow}>
-                <Text style={styles.modalTitle}>Submit Parcel Payment</Text>
+                <Text style={styles.modalTitle}>Submit Item Request Payment</Text>
                 <TouchableOpacity onPress={() => setIsPayModalOpen(false)}>
                   <Text style={styles.closeIcon}>✕</Text>
                 </TouchableOpacity>
               </View>
 
-              {payParcel && (
+              {payRequest && (
                 <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false}>
                   <BankTransferCard
-                    orderAmountKRW={payParcel.finalConfirmedPriceKRW || payParcel.estimatedPriceKRW}
-                    orderIdPreview={payParcel.parcelId}
+                    orderAmountKRW={payRequest.finalConfirmedPriceKRW || 0}
+                    orderIdPreview={payRequest.requestId}
                     senderName={senderName}
                     onChangeSenderName={setSenderName}
                     paymentScreenshot={paymentScreenshot}
@@ -428,13 +414,8 @@ function getStyles(isDark: boolean) {
     backIcon: { fontSize: 18, color: accent, fontWeight: '800' },
     headerTitle: { fontSize: 18, fontWeight: '900', color: textMain },
     headerSub: { fontSize: 11, color: textSub, marginTop: 1 },
-    newParcelBtn: {
-      backgroundColor: accent,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
-      borderRadius: 12,
-    },
-    newParcelBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
+    newReqBtn: { backgroundColor: accent, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 12 },
+    newReqBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
     tabBar: {
       flexDirection: 'row',
       paddingHorizontal: 16,
@@ -444,12 +425,7 @@ function getStyles(isDark: boolean) {
       borderBottomWidth: 1,
       borderBottomColor: border,
     },
-    tabChip: {
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      borderRadius: 10,
-      backgroundColor: isDark ? '#262626' : '#F3F4F6',
-    },
+    tabChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, backgroundColor: isDark ? '#262626' : '#F3F4F6' },
     tabChipActive: { backgroundColor: accent },
     tabChipText: { fontSize: 12, fontWeight: '700', color: textSub },
     tabChipTextActive: { color: '#FFFFFF', fontWeight: '800' },
@@ -467,19 +443,12 @@ function getStyles(isDark: boolean) {
     emptyIcon: { fontSize: 40, marginBottom: 8 },
     emptyTitle: { fontSize: 16, fontWeight: '900', color: textMain },
     emptySub: { fontSize: 12, color: textSub, textAlign: 'center', marginTop: 4, lineHeight: 17 },
-    bookNowBtn: { backgroundColor: accent, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, marginTop: 14 },
-    bookNowBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
-    parcelCard: {
-      backgroundColor: cardBg,
-      borderRadius: 16,
-      padding: 14,
-      borderWidth: 1,
-      borderColor: border,
-      gap: 10,
-    },
+    requestNowBtn: { backgroundColor: accent, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, marginTop: 14 },
+    requestNowBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
+    reqCard: { backgroundColor: cardBg, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: border, gap: 10 },
     cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-    parcelIdText: { fontSize: 15, fontWeight: '900', color: textMain },
-    parcelDateText: { fontSize: 11, color: textSub, marginTop: 2 },
+    reqIdText: { fontSize: 15, fontWeight: '900', color: textMain },
+    reqDateText: { fontSize: 11, color: textSub, marginTop: 2 },
     statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
     statusBadgeText: { fontSize: 11, fontWeight: '800' },
     confirmedNoticeBox: {
@@ -493,12 +462,13 @@ function getStyles(isDark: boolean) {
     },
     confirmedNoticeTitle: { fontSize: 12, fontWeight: '800', color: '#0369A1' },
     confirmedNoticeSub: { fontSize: 11, color: '#0284C7', marginTop: 1 },
-    confirmedNoticePrice: { fontWeight: '900', color: '#0369A1' },
-    payNowSmallBtn: { backgroundColor: '#0284C7', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-    payNowSmallBtnText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
+    confirmedNoticeTotal: { fontSize: 11, color: '#0369A1', marginTop: 2 },
+    payNowBtn: { backgroundColor: '#0284C7', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+    payNowBtnText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
     itemsSummaryWrap: { backgroundColor: isDark ? '#262626' : '#F9FAFB', borderRadius: 10, padding: 10 },
     itemsSummaryTitle: { fontSize: 11, fontWeight: '800', color: textMain, marginBottom: 4 },
     itemBulletRow: { fontSize: 11, color: textSub, marginTop: 2 },
+    itemLinkText: { fontSize: 10, color: '#2563EB', marginTop: 2 },
     recipientRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     recipientText: { fontSize: 11, color: textMain, flex: 1 },
     trackingText: { fontSize: 10, color: textSub, fontWeight: '700' },
@@ -526,7 +496,6 @@ function getStyles(isDark: boolean) {
     detailItemThumb: { width: 32, height: 32, borderRadius: 6 },
     detailItemName: { fontSize: 12, fontWeight: '800', color: textMain },
     detailItemSub: { fontSize: 10, color: textSub },
-    detailItemPrice: { fontSize: 12, fontWeight: '800', color: accent },
     modalCloseBtn: { backgroundColor: isDark ? '#374151' : '#E5E7EB', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 10 },
     modalCloseBtnText: { fontSize: 13, fontWeight: '800', color: textMain },
     submitPayBtn: { backgroundColor: accent, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 12 },

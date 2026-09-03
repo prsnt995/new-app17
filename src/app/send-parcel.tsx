@@ -1,6 +1,7 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
+  Image,
   Modal,
   RefreshControl,
   ScrollView,
@@ -10,272 +11,272 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { useApp } from '@/context/AppContext';
 import { BottomNav } from '@/components/BottomNav';
-import { BankTransferCard } from '@/components/BankTransferCard';
-import { BankAccountInfo, getRandomBankAccount } from '@/data/mockData';
-import { OrderItem } from '@/types';
-
-interface ParcelItem {
-  id: string;
-  category: string;
-  name: string;
-  quantity: number;
-  weightKg: number;
-  unitPriceKRW: number;
-  calculatedPriceKRW: number;
-  isPerPiece?: boolean;
-}
-
-const PARCEL_CATEGORIES = [
-  {
-    id: 'mobile',
-    title: 'Mobile Phone',
-    icon: '📱',
-    badge: '₹3,000 INR / unit',
-    rateDescription: 'Special customs duty + air express included (₩48,000 per phone)',
-    unitPriceKRW: 48000,
-    isPerPiece: true,
-    defaultWeight: 0.4,
-    defaultName: 'Smartphone / Mobile Device',
-  },
-  {
-    id: 'jewelry',
-    title: 'Jewelry & Ornaments',
-    icon: '💎',
-    badge: '₩25,000 / kg',
-    rateDescription: 'Gold-plated, Kundan, Silver & traditional jewelry (Insured Air Express)',
-    unitPriceKRW: 25000,
-    isPerPiece: false,
-    defaultWeight: 0.8,
-    defaultName: 'Jewelry & Precious Accessories',
-  },
-  {
-    id: 'sweets',
-    title: 'Sweets & Mithai',
-    icon: '🍬',
-    badge: '₩12,000 / kg',
-    rateDescription: 'Packaged Indian & Nepali festival sweets (Kaju Katli, Gulab Jamun, Lakhamari)',
-    unitPriceKRW: 12000,
-    isPerPiece: false,
-    defaultWeight: 2.0,
-    defaultName: 'Packaged Sweets & Mithai',
-  },
-  {
-    id: 'clothes',
-    title: 'Clothes & Garments',
-    icon: '👕',
-    badge: '₩15,000 / kg',
-    rateDescription: 'Textiles, shirts, sarees, jackets & winterwear priced by weight at ₩15,000/kg',
-    unitPriceKRW: 15000,
-    isPerPiece: false,
-    defaultWeight: 2.0,
-    defaultName: 'Clothes & Apparel (KG)',
-  },
-  {
-    id: 'laptop',
-    title: 'Laptop & Electronics',
-    icon: '💻',
-    badge: '₹4,500 INR / unit',
-    rateDescription: 'Laptops, tablets, smart watches & gadgets (₹4,500 / ₩72,000 per device)',
-    unitPriceKRW: 72000, // ~4500 INR
-    isPerPiece: true,
-    defaultWeight: 2.2,
-    defaultName: 'Laptop / Tablet Device',
-  },
-  {
-    id: 'food',
-    title: 'Dry Food & Spices',
-    icon: '🍲',
-    badge: '₩12,000 / kg',
-    rateDescription: 'Packaged dry foods, noodles & spices at ₩12,000/kg',
-    unitPriceKRW: 12000,
-    isPerPiece: false,
-    defaultWeight: 2.0,
-    defaultName: 'Packaged Dry Food & Snacks',
-  },
-  {
-    id: 'documents',
-    title: 'Documents & Certificates',
-    icon: '📚',
-    badge: '₩10,000 Flat',
-    rateDescription: 'Passports, degree certificates, legal papers & letters (Fast Air)',
-    unitPriceKRW: 10000,
-    isPerPiece: true,
-    defaultWeight: 0.3,
-    defaultName: 'Official Documents & Papers',
-  },
-  {
-    id: 'cosmetics',
-    title: 'Cosmetics & Gifts',
-    icon: '🎁',
-    badge: '₩14,000 / kg',
-    rateDescription: 'Korean skincare, cosmetics, personal gifts & household items at ₩14,000/kg',
-    unitPriceKRW: 14000,
-    isPerPiece: false,
-    defaultWeight: 1.5,
-    defaultName: 'Cosmetics & Personal Gifts',
-  },
-];
+import {
+  subscribeParcelPricing,
+  createParcelBooking,
+  DEFAULT_PARCEL_PRICING,
+} from '@/services/parcelService';
+import {
+  ParcelPricingItem,
+  ParcelBookingItem,
+  ParcelBookingRequest,
+} from '@/types';
 
 export default function SendParcelScreen() {
   const router = useRouter();
-  const { user, formatPrice, createOrder, t, isDarkMode } = useApp();
+  const { user, formatPrice, t, isDarkMode } = useApp();
 
   const styles = React.useMemo(() => getStyles(isDarkMode), [isDarkMode]);
 
-  // Selected Category Builder State
-  const [selectedCatId, setSelectedCatId] = useState('mobile');
-  const [customItemName, setCustomItemName] = useState('');
+  // Dynamic Pricing Items from DB
+  const [pricingItems, setPricingItems] = useState<ParcelPricingItem[]>(DEFAULT_PARCEL_PRICING);
+  const [selectedPricingId, setSelectedPricingId] = useState<string>(DEFAULT_PARCEL_PRICING[0].id);
+
+  // Item Builder Inputs for Predefined Item
   const [itemQty, setItemQty] = useState(1);
   const [itemWeight, setItemWeight] = useState(1);
+  const [itemCustomNote, setItemCustomNote] = useState('');
 
-  // Parcel Box Items
-  const [parcelItems, setParcelItems] = useState<ParcelItem[]>([
+  // Custom "Other Item" Form Inputs
+  const [otherItemName, setOtherItemName] = useState('');
+  const [otherItemQty, setOtherItemQty] = useState(1);
+  const [otherItemWeight, setOtherItemWeight] = useState(1);
+  const [otherItemDesc, setOtherItemDesc] = useState('');
+  const [otherItemPhoto, setOtherItemPhoto] = useState<string | null>(null);
+
+  // Parcel Box Items List
+  const [parcelItems, setParcelItems] = useState<ParcelBookingItem[]>([
     {
-      id: 'item-1',
-      category: 'Mobile Phone',
-      name: 'Samsung / iPhone Mobile Device',
+      id: 'item-phone-1',
+      pricingItemId: 'price-phone',
+      category: 'mobile',
+      name: 'Phone (Smartphone / Mobile Device)',
+      isCustom: false,
       quantity: 1,
       weightKg: 0.4,
-      unitPriceKRW: 48000, // ₹3,000 INR
-      calculatedPriceKRW: 48000,
-      isPerPiece: true,
+      unitPriceKRW: 70000,
+      calculatedPriceKRW: 70000,
+      requiresAdminPricing: false,
     },
     {
-      id: 'item-2',
-      category: 'Clothes & Garments',
-      name: 'Winter Jackets & Cotton Clothes',
+      id: 'item-clothes-1',
+      pricingItemId: 'price-clothes',
+      category: 'clothes',
+      name: 'Clothes (Winter Jackets & Apparel)',
+      isCustom: false,
       quantity: 1,
       weightKg: 3.0,
-      unitPriceKRW: 15000, // ₩15,000/kg
-      calculatedPriceKRW: 45000, // 3kg * 15,000
-      isPerPiece: false,
+      unitPriceKRW: 15000,
+      calculatedPriceKRW: 45000,
+      requiresAdminPricing: false,
     },
   ]);
 
   // Destination & Pickup State
   const [destinationCountry, setDestinationCountry] = useState<'India' | 'Nepal'>('India');
-  const [selectedAddressId, setSelectedAddressId] = useState(user.savedAddresses[0]?.id || '');
-  const [recipientName, setRecipientName] = useState(user.savedAddresses[0]?.recipientName || 'Rahul Sharma');
-  const [recipientPhone, setRecipientPhone] = useState(user.savedAddresses[0]?.phone || '+91 98765 43210');
-  const [recipientAddress, setRecipientAddress] = useState(user.savedAddresses[0]?.fullAddress || 'Flat 402, Sunshine Heights, Sector 14, Dwarka');
-  const [recipientCity, setRecipientCity] = useState(user.savedAddresses[0]?.city || 'New Delhi');
-  const [recipientPostal, setRecipientPostal] = useState(user.savedAddresses[0]?.postalCode || '110075');
 
-  // Korea Origin & Scheduling
-  const [koreaHub, setKoreaHub] = useState('Send by Parcel');
-  const [pickupLocationText, setPickupLocationText] = useState('');
-  const [pickupDate, setPickupDate] = useState('Tomorrow (Aug 18)');
-  const [pickupSlot, setPickupSlot] = useState('Afternoon (12:00 PM - 06:00 PM)');
+  // Customer Korea Info (Auto-populated)
+  const defaultKoreaAddr = user.savedAddresses?.find((a) => a.country === 'South Korea') || user.savedAddresses?.[0];
+  const [customerName, setCustomerName] = useState(user.name || 'PARSHANT');
+  const [customerPhone, setCustomerPhone] = useState(user.phone || '+82 10-1234-5678');
+  const [customerEmail, setCustomerEmail] = useState(user.email || 'customer@example.com');
+  const [koreaAddress, setKoreaAddress] = useState(
+    defaultKoreaAddr ? `${defaultKoreaAddr.fullAddress}, ${defaultKoreaAddr.city}` : 'Building 102, Gangnam-daero 456, Gangnam-gu, Seoul'
+  );
 
-  // Simplified Payment Method Options: Pay Now vs Cash on Delivery
-  const [paymentOption, setPaymentOption] = useState<'PAY_NOW' | 'CASH_ON_DELIVERY'>('PAY_NOW');
+  // Recipient Info
+  const defaultRecipientAddr = user.savedAddresses?.find((a) => a.country !== 'South Korea');
+  const [recipientName, setRecipientName] = useState(defaultRecipientAddr?.recipientName || 'Rahul Sharma');
+  const [recipientPhone, setRecipientPhone] = useState(defaultRecipientAddr?.phone || '+91 98765 43210');
+  const [recipientAddress, setRecipientAddress] = useState(defaultRecipientAddr?.fullAddress || 'Flat 402, Sunshine Heights, Sector 14, Dwarka');
+  const [recipientCity, setRecipientCity] = useState(defaultRecipientAddr?.city || 'New Delhi');
+  const [recipientPostal, setRecipientPostal] = useState(defaultRecipientAddr?.postalCode || '110075');
 
-  // Success Modal
+  // Customer Notes
+  const [customerNotes, setCustomerNotes] = useState('');
+
+  // Submission & Modal State
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittedParcel, setSubmittedParcel] = useState<ParcelBookingRequest | null>(null);
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
-  const [bookedOrder, setBookedOrder] = useState<OrderItem | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedBank, setSelectedBank] = useState<BankAccountInfo>(() => getRandomBankAccount());
-  const [senderName, setSenderName] = useState(user?.name || 'PARSHANT');
-  const [paymentScreenshot, setPaymentScreenshot] = useState<string | null>(null);
+
+  // Subscribe to Parcel Pricing from DB
+  useEffect(() => {
+    const unsub = subscribeParcelPricing((items) => {
+      if (items && items.length > 0) {
+        const activeItems = items.filter((i) => i.active !== false);
+        setPricingItems(activeItems.length > 0 ? activeItems : DEFAULT_PARCEL_PRICING);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const activePricingConfig = pricingItems.find((p) => p.id === selectedPricingId) || pricingItems[0] || DEFAULT_PARCEL_PRICING[0];
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     setTimeout(() => {
       setRefreshing(false);
-    }, 1000);
+    }, 800);
   }, []);
 
-  const activeCategoryConfig = PARCEL_CATEGORIES.find((c) => c.id === selectedCatId) || PARCEL_CATEGORIES[0];
+  // Pick Custom Item Photo
+  const handlePickPhoto = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission Denied', 'Camera roll access is required to attach an item photo.');
+        return;
+      }
 
-  // Add Item to Parcel Box
-  const handleAddItem = () => {
-    const isPerPiece = activeCategoryConfig.isPerPiece;
+      const pickerResult = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (!pickerResult.canceled && pickerResult.assets?.[0]?.uri) {
+        setOtherItemPhoto(pickerResult.assets[0].uri);
+      }
+    } catch (e: any) {
+      Alert.alert('Image Error', e.message || 'Could not pick image.');
+    }
+  };
+
+  // Add Predefined Item
+  const handleAddPredefinedItem = () => {
+    if (!activePricingConfig) return;
+    const isPerPiece = activePricingConfig.pricingUnit === 'per_item';
     const qty = Math.max(1, itemQty);
-    const weight = isPerPiece ? activeCategoryConfig.defaultWeight * qty : Math.max(0.5, itemWeight);
+    const weight = isPerPiece
+      ? Number((activePricingConfig.defaultWeightKg * qty).toFixed(2))
+      : Math.max(0.5, itemWeight);
     const price = isPerPiece
-      ? activeCategoryConfig.unitPriceKRW * qty
-      : Math.round(activeCategoryConfig.unitPriceKRW * weight);
+      ? activePricingConfig.unitPriceKRW * qty
+      : Math.round(activePricingConfig.unitPriceKRW * weight);
 
-    const newItem: ParcelItem = {
-      id: `pitem-${Date.now()}`,
-      category: activeCategoryConfig.title,
-      name: customItemName.trim() || activeCategoryConfig.defaultName,
+    const newItem: ParcelBookingItem = {
+      id: `item-${Date.now()}`,
+      pricingItemId: activePricingConfig.id,
+      category: activePricingConfig.category,
+      name: `${activePricingConfig.title} (${itemCustomNote.trim() || activePricingConfig.defaultName})`,
+      isCustom: false,
       quantity: qty,
-      weightKg: Number(weight.toFixed(1)),
-      unitPriceKRW: activeCategoryConfig.unitPriceKRW,
+      weightKg: weight,
+      unitPriceKRW: activePricingConfig.unitPriceKRW,
       calculatedPriceKRW: price,
-      isPerPiece,
+      requiresAdminPricing: false,
     };
 
     setParcelItems((prev) => [...prev, newItem]);
-    setCustomItemName('');
     setItemQty(1);
-    setItemWeight(isPerPiece ? 1 : 2);
+    setItemWeight(1);
+    setItemCustomNote('');
     Alert.alert('Item Added', `${newItem.name} added to your parcel box.`);
+  };
+
+  // Add Custom "Other Item"
+  const handleAddCustomItem = () => {
+    if (!otherItemName.trim()) {
+      Alert.alert('Item Name Required', 'Please enter a name for the custom item (e.g. Shoes, Watch, Books).');
+      return;
+    }
+
+    const qty = Math.max(1, otherItemQty);
+    const weight = Math.max(0.1, otherItemWeight);
+
+    const newItem: ParcelBookingItem = {
+      id: `custom-${Date.now()}`,
+      name: `Other Item: ${otherItemName.trim()}`,
+      isCustom: true,
+      quantity: qty,
+      weightKg: weight,
+      unitPriceKRW: 0,
+      calculatedPriceKRW: 0, // Price to be confirmed by Admin
+      requiresAdminPricing: true,
+      description: otherItemDesc.trim() || undefined,
+      photoUrl: otherItemPhoto || undefined,
+    };
+
+    setParcelItems((prev) => [...prev, newItem]);
+    setOtherItemName('');
+    setOtherItemQty(1);
+    setOtherItemWeight(1);
+    setOtherItemDesc('');
+    setOtherItemPhoto(null);
+    Alert.alert('Custom Item Added', `"${newItem.name}" added to parcel box. Price will be confirmed by Admin.`);
   };
 
   const handleRemoveItem = (id: string) => {
     setParcelItems((prev) => prev.filter((i) => i.id !== id));
   };
 
-  // Calculations
-  const totalParcelWeightKg = Number(
-    parcelItems.reduce((s, i) => s + i.weightKg, 0).toFixed(2)
-  );
+  // Totals & Pricing Checks
+  const totalWeightKg = Number(parcelItems.reduce((sum, item) => sum + item.weightKg, 0).toFixed(2));
+  const estimatedCargoChargeKRW = parcelItems.reduce((sum, item) => sum + item.calculatedPriceKRW, 0);
+  const hasUnpricedItems = parcelItems.some((item) => item.requiresAdminPricing || item.calculatedPriceKRW <= 0);
 
-  const parcelSubtotalKRW = parcelItems.reduce(
-    (s, i) => s + i.calculatedPriceKRW,
-    0
-  );
-
-  const grandTotalKRW = parcelSubtotalKRW;
-
-  const handleBookShipment = () => {
+  // Submit Parcel Booking Request
+  const handleSubmitParcelRequest = async () => {
     if (parcelItems.length === 0) {
-      Alert.alert('Parcel Box Empty', 'Please add at least one item to your parcel box.');
+      Alert.alert('Parcel Box Empty', 'Please add at least one item to your parcel box before submitting.');
       return;
     }
 
-    if (!recipientName || !recipientAddress || !recipientCity) {
-      Alert.alert('Missing Address', 'Please provide recipient name, street address, and city.');
+    if (!recipientName.trim() || !recipientPhone.trim() || !recipientAddress.trim() || !recipientCity.trim()) {
+      Alert.alert('Recipient Details Required', 'Please fill in all recipient contact and address details.');
       return;
     }
 
-    const order = createOrder({
-      originHub: koreaHub === 'Pick up location' ? `Pickup: ${pickupLocationText}` : 'Send by Parcel',
-      destinationCity: recipientCity,
-      destinationCountry,
-      shippingMethod: 'Express',
-      paymentMethod: `Direct Bank Transfer (${selectedBank.bankNameKr})`,
-      bankAccount: {
-        bankName: `${selectedBank.bankName} (${selectedBank.bankNameKr})`,
-        accountNumber: selectedBank.accountNumber,
-        accountHolder: selectedBank.accountHolder,
-      },
-      senderName: senderName || user.name,
-      paymentScreenshot: paymentScreenshot || undefined,
-      recipient: {
-        name: recipientName,
-        phone: recipientPhone,
-        address: recipientAddress,
-        city: recipientCity,
-        postalCode: recipientPostal,
-        country: destinationCountry,
-      },
-    });
+    if (!koreaAddress.trim()) {
+      Alert.alert('Pickup Address Required', 'Please provide your Korea pickup address.');
+      return;
+    }
 
-    setBookedOrder(order);
-    setIsSuccessModalOpen(true);
+    try {
+      setIsSubmitting(true);
+
+      const requestPayload = {
+        userId: user.id || 'guest_user',
+        customer: {
+          name: customerName.trim() || user.name,
+          email: customerEmail.trim() || user.email,
+          phone: customerPhone.trim() || user.phone,
+          koreaAddress: koreaAddress.trim(),
+        },
+        destinationCountry,
+        recipient: {
+          name: recipientName.trim(),
+          phone: recipientPhone.trim(),
+          address: recipientAddress.trim(),
+          city: recipientCity.trim(),
+          postalCode: recipientPostal.trim() || '110001',
+          country: destinationCountry,
+        },
+        items: parcelItems,
+        customerNotes: customerNotes.trim(),
+      };
+
+      const result = await createParcelBooking(requestPayload);
+      setSubmittedParcel(result);
+      setIsSuccessModalOpen(true);
+    } catch (err: any) {
+      Alert.alert('Booking Error', err.message || 'Could not submit parcel request. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleSelectSavedAddress = (addrId: string) => {
-    setSelectedAddressId(addrId);
-    const addr = user.savedAddresses.find((a) => a.id === addrId);
+    const addr = user.savedAddresses?.find((a) => a.id === addrId);
     if (addr) {
       setRecipientName(addr.recipientName);
       setRecipientPhone(addr.phone);
@@ -298,320 +299,433 @@ export default function SendParcelScreen() {
           <TouchableOpacity
             style={styles.backButton}
             onPress={() => router.replace('/')}
+            activeOpacity={0.7}
           >
-            <Text style={styles.backArrow}>←</Text>
+            <Text style={styles.backIcon}>←</Text>
           </TouchableOpacity>
 
           <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.headerTitle}>{t('sendParcelTitle')}</Text>
-            <Text style={styles.headerSubtitle}>
-              {t('sendParcelSubtitle')}
-            </Text>
+            <Text style={styles.headerTitle}>Send Parcel to Home ✈️</Text>
+            <Text style={styles.headerSub}>Korea ➔ India & Nepal Express Air Cargo</Text>
           </View>
 
-          <View style={styles.headerBadge}>
-            <Text style={styles.headerBadgeText}>📦 {totalParcelWeightKg} kg</Text>
-          </View>
+          <TouchableOpacity
+            style={styles.myParcelsBtn}
+            onPress={() => router.push('/parcels')}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.myParcelsBtnText}>My Parcels 📦</Text>
+          </TouchableOpacity>
         </View>
 
         <ScrollView
-          showsVerticalScrollIndicator={false}
+          style={{ flex: 1 }}
           contentContainerStyle={styles.scrollContent}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              colors={['#C88D2B']}
-              tintColor="#C88D2B"
-              title="Updating parcel rates..."
-              titleColor="#8A857A"
-            />
-          }
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#D97706" />}
         >
-          {/* BANNER PROMO */}
-          <View style={styles.heroBanner}>
-            <View style={{ flex: 1 }}>
-              <View style={styles.heroBadge}>
-                <Text style={styles.heroBadgeText}>CUSTOM PARCEL SERVICE</Text>
+          {/* BANNER CARD */}
+          <View style={styles.bannerCard}>
+            <View style={styles.bannerBadgeRow}>
+              <View style={styles.bannerPill}>
+                <Text style={styles.bannerPillText}>DIRECT EXPRESS AIR CARGO</Text>
               </View>
-              <Text style={styles.heroTitle}>Ship Directly to India & Nepal ✈️</Text>
-              <Text style={styles.heroDesc}>
-                Special rates: Mobile Phones @ ₹3,000 INR • Clothes @ ₩15,000/kg
-              </Text>
+              <Text style={styles.deliveryDaysTag}>⚡ 3–5 Days Delivery</Text>
             </View>
-            <Text style={styles.heroEmoji}>🇰🇷 ➔ 🇮🇳 🇳🇵</Text>
+            <Text style={styles.bannerTitle}>Fast, Reliable & Doorstep Shipping</Text>
+            <Text style={styles.bannerDesc}>
+              Send phones, laptops, clothing, sweets, gifts & custom items from Korea to India and Nepal with full tracking.
+            </Text>
           </View>
 
-          {/* STEP 1: WHAT DO YOU WANT TO SEND HOME? */}
+          {/* STEP 1: DESTINATION & PICKUP */}
           <View style={styles.sectionCard}>
-            <View style={styles.stepHeader}>
-              <View style={styles.stepBadge}>
-                <Text style={styles.stepBadgeText}>STEP 1</Text>
-              </View>
-              <Text style={styles.sectionTitle}>{t('step1Title')}</Text>
-            </View>
-            <Text style={styles.sectionSubtitle}>
-              {t('step1Subtitle')}
-            </Text>
+            <Text style={styles.stepTitle}>1. Destination Country 🌍</Text>
+            <Text style={styles.stepSub}>Select where you are sending the parcel from Korea</Text>
 
-            {/* CATEGORIES GRID */}
-            <View style={styles.categoryGrid}>
-              {PARCEL_CATEGORIES.map((cat) => {
-                const isSelected = selectedCatId === cat.id;
+            <View style={styles.destToggleRow}>
+              <TouchableOpacity
+                style={[
+                  styles.destCard,
+                  destinationCountry === 'India' && styles.destCardActive,
+                ]}
+                onPress={() => setDestinationCountry('India')}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.destFlag}>🇮🇳</Text>
+                <Text style={[styles.destName, destinationCountry === 'India' && styles.destNameActive]}>
+                  INDIA
+                </Text>
+                <Text style={styles.destSubText}>All major cities & states</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.destCard,
+                  destinationCountry === 'Nepal' && styles.destCardActive,
+                ]}
+                onPress={() => setDestinationCountry('Nepal')}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.destFlag}>🇳🇵</Text>
+                <Text style={[styles.destName, destinationCountry === 'Nepal' && styles.destNameActive]}>
+                  NEPAL
+                </Text>
+                <Text style={styles.destSubText}>Kathmandu, Pokhara & More</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Korea Pickup Address */}
+            <View style={styles.koreaPickupWrap}>
+              <Text style={styles.inputLabel}>Pickup Address in South Korea 🇰🇷</Text>
+              <TextInput
+                style={styles.textInput}
+                value={koreaAddress}
+                onChangeText={setKoreaAddress}
+                placeholder="Enter your South Korea pickup address"
+                placeholderTextColor="#9CA3AF"
+                multiline
+              />
+            </View>
+          </View>
+
+          {/* STEP 2: SELECT PREDEFINED ITEMS */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.stepTitle}>2. Select Items to Send 📦</Text>
+            <Text style={styles.stepSub}>Choose standard items or add your custom items below</Text>
+
+            {/* Item Category Scroll Pills */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.itemCategoryScroll}>
+              {pricingItems.map((item) => {
+                const isSelected = item.id === selectedPricingId;
                 return (
                   <TouchableOpacity
-                    key={cat.id}
-                    style={[
-                      styles.categoryCard,
-                      isSelected && styles.categoryCardSelected,
-                    ]}
-                    activeOpacity={0.85}
+                    key={item.id}
+                    style={[styles.itemCategoryChip, isSelected && styles.itemCategoryChipActive]}
                     onPress={() => {
-                      setSelectedCatId(cat.id);
+                      setSelectedPricingId(item.id);
                       setItemQty(1);
-                      setItemWeight(cat.isPerPiece ? 1 : 2);
+                      setItemWeight(item.defaultWeightKg || 1);
                     }}
+                    activeOpacity={0.8}
                   >
-                    <Text style={styles.categoryIcon}>{cat.icon}</Text>
-                    <Text
-                      style={[
-                        styles.categoryTitle,
-                        isSelected && styles.categoryTitleSelected,
-                      ]}
-                    >
-                      {cat.title}
-                    </Text>
-                    <View
-                      style={[
-                        styles.rateBadge,
-                        isSelected && styles.rateBadgeSelected,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.rateBadgeText,
-                          isSelected && styles.rateBadgeTextSelected,
-                        ]}
-                      >
-                        {cat.badge}
+                    <Text style={styles.itemChipIcon}>{item.icon}</Text>
+                    <View>
+                      <Text style={[styles.itemChipTitle, isSelected && styles.itemChipTitleActive]}>
+                        {item.title}
+                      </Text>
+                      <Text style={styles.itemChipPrice}>
+                        {formatPrice(item.unitPriceKRW)} {item.pricingUnit === 'per_kg' ? '/ kg' : '/ item'}
                       </Text>
                     </View>
                   </TouchableOpacity>
                 );
               })}
-            </View>
+            </ScrollView>
 
-            {/* SELECTED CATEGORY RATE INFO */}
-            <View style={styles.rateInfoBox}>
-              <Text style={styles.rateInfoIcon}>ℹ️</Text>
-              <Text style={styles.rateInfoText}>
-                {activeCategoryConfig.rateDescription}
-              </Text>
-            </View>
+            {/* Selected Pricing Item Config Box */}
+            {activePricingConfig && (
+              <View style={styles.itemConfigBox}>
+                <View style={styles.configHeaderRow}>
+                  <Text style={styles.configHeaderIcon}>{activePricingConfig.icon}</Text>
+                  <View style={{ flex: 1, marginLeft: 8 }}>
+                    <Text style={styles.configHeaderTitle}>{activePricingConfig.title}</Text>
+                    <Text style={styles.configHeaderRate}>{activePricingConfig.rateDescription}</Text>
+                  </View>
+                  <View style={styles.ratePill}>
+                    <Text style={styles.ratePillText}>
+                      {formatPrice(activePricingConfig.unitPriceKRW)}
+                      {activePricingConfig.pricingUnit === 'per_kg' ? ' / kg' : ' / pc'}
+                    </Text>
+                  </View>
+                </View>
 
-            {/* ITEM BUILDER FORM */}
-            <View style={styles.itemBuilderForm}>
-              <Text style={styles.inputLabel}>Item Description (Optional)</Text>
-              <TextInput
-                style={styles.textInput}
-                placeholder={`e.g. ${activeCategoryConfig.defaultName}`}
-                placeholderTextColor="#A2A2A2"
-                value={customItemName}
-                onChangeText={setCustomItemName}
-              />
+                <Text style={[styles.inputLabel, { marginTop: 10 }]}>Item Details / Specific Name (Optional)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={itemCustomNote}
+                  onChangeText={setItemCustomNote}
+                  placeholder={`e.g. ${activePricingConfig.defaultName}`}
+                  placeholderTextColor="#9CA3AF"
+                />
 
-              {activeCategoryConfig.isPerPiece ? (
-                /* QUANTITY FOR PER PIECE ITEMS (MOBILE, LAPTOP, DOCS) */
-                <View style={styles.counterRow}>
+                {/* Quantity & Weight Controls */}
+                <View style={styles.qtyWeightRow}>
+                  <View style={styles.qtyControlCol}>
+                    <Text style={styles.inputLabel}>Quantity</Text>
+                    <View style={styles.counterBox}>
+                      <TouchableOpacity
+                        style={styles.counterBtn}
+                        onPress={() => setItemQty((prev) => Math.max(1, prev - 1))}
+                      >
+                        <Text style={styles.counterBtnText}>-</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.counterValue}>{itemQty}</Text>
+                      <TouchableOpacity
+                        style={styles.counterBtn}
+                        onPress={() => setItemQty((prev) => prev + 1)}
+                      >
+                        <Text style={styles.counterBtnText}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <View style={styles.qtyControlCol}>
+                    <Text style={styles.inputLabel}>
+                      {activePricingConfig.pricingUnit === 'per_kg' ? 'Weight (kg)' : 'Approx Weight (kg)'}
+                    </Text>
+                    {activePricingConfig.pricingUnit === 'per_kg' ? (
+                      <View style={styles.counterBox}>
+                        <TouchableOpacity
+                          style={styles.counterBtn}
+                          onPress={() => setItemWeight((prev) => Math.max(0.5, Number((prev - 0.5).toFixed(1))))}
+                        >
+                          <Text style={styles.counterBtnText}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.counterValue}>{itemWeight} kg</Text>
+                        <TouchableOpacity
+                          style={styles.counterBtn}
+                          onPress={() => setItemWeight((prev) => Number((prev + 0.5).toFixed(1)))}
+                        >
+                          <Text style={styles.counterBtnText}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <View style={styles.weightStaticBox}>
+                        <Text style={styles.weightStaticText}>
+                          {(activePricingConfig.defaultWeightKg * itemQty).toFixed(1)} kg
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                {/* Subtotal preview & Add Button */}
+                <View style={styles.itemAddFooterRow}>
                   <View>
-                    <Text style={styles.counterLabel}>Quantity (Pieces):</Text>
-                    <Text style={styles.counterSub}>
-                      {activeCategoryConfig.id === 'mobile'
-                        ? '₹3,000 INR (~₩48,000) per mobile'
-                        : 'Fixed duty & air handling included'}
+                    <Text style={styles.calculatedSubLabel}>Item Total</Text>
+                    <Text style={styles.calculatedSubPrice}>
+                      {activePricingConfig.pricingUnit === 'per_kg'
+                        ? formatPrice(Math.round(activePricingConfig.unitPriceKRW * itemWeight))
+                        : formatPrice(activePricingConfig.unitPriceKRW * itemQty)}
                     </Text>
                   </View>
 
-                  <View style={styles.counterControls}>
+                  <TouchableOpacity
+                    style={styles.addToListBtn}
+                    onPress={handleAddPredefinedItem}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.addToListBtnText}>+ Add to Parcel Box</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </View>
+
+          {/* STEP 3: OTHER ITEM (CUSTOM) */}
+          <View style={styles.sectionCard}>
+            <View style={styles.customHeaderRow}>
+              <Text style={styles.stepTitle}>3. Other Item (Custom) 📦</Text>
+              <View style={styles.adminReviewBadge}>
+                <Text style={styles.adminReviewBadgeText}>Price Confirmed by Admin</Text>
+              </View>
+            </View>
+            <Text style={styles.stepSub}>
+              Have something else? Enter details & upload an optional photo. Admin will review and confirm the price.
+            </Text>
+
+            <View style={styles.customFormBox}>
+              <Text style={styles.inputLabel}>Item Name *</Text>
+              <TextInput
+                style={styles.textInput}
+                value={otherItemName}
+                onChangeText={setOtherItemName}
+                placeholder="e.g. Leather Shoes, Traditional Jacket, Musical Instrument"
+                placeholderTextColor="#9CA3AF"
+              />
+
+              <View style={styles.qtyWeightRow}>
+                <View style={styles.qtyControlCol}>
+                  <Text style={styles.inputLabel}>Quantity</Text>
+                  <View style={styles.counterBox}>
                     <TouchableOpacity
                       style={styles.counterBtn}
-                      onPress={() => setItemQty((q) => Math.max(1, q - 1))}
+                      onPress={() => setOtherItemQty((prev) => Math.max(1, prev - 1))}
                     >
-                      <Text style={styles.counterBtnText}>−</Text>
+                      <Text style={styles.counterBtnText}>-</Text>
                     </TouchableOpacity>
-                    <Text style={styles.counterValue}>{itemQty}</Text>
+                    <Text style={styles.counterValue}>{otherItemQty}</Text>
                     <TouchableOpacity
                       style={styles.counterBtn}
-                      onPress={() => setItemQty((q) => q + 1)}
+                      onPress={() => setOtherItemQty((prev) => prev + 1)}
                     >
                       <Text style={styles.counterBtnText}>+</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
-              ) : (
-                /* WEIGHT SELECTOR FOR KG ITEMS (CLOTHES, FOOD, COSMETICS) */
-                <View style={styles.weightSelectorContainer}>
-                  <View style={styles.weightHeaderRow}>
-                    <Text style={styles.counterLabel}>Estimated Weight (KG):</Text>
-                    <Text style={styles.weightCalculatedText}>
-                      {itemWeight} kg × ₩{activeCategoryConfig.unitPriceKRW.toLocaleString()} ={' '}
-                      <Text style={{ fontWeight: '900', color: '#C88D2B' }}>
-                        {formatPrice(itemWeight * activeCategoryConfig.unitPriceKRW)}
-                      </Text>
-                    </Text>
-                  </View>
 
-                  {/* QUICK WEIGHT CHIPS */}
-                  <View style={styles.weightChipsRow}>
-                    {[1, 2, 3, 5, 10, 15, 20].map((w) => (
-                      <TouchableOpacity
-                        key={w}
-                        style={[
-                          styles.weightChip,
-                          itemWeight === w && styles.weightChipActive,
-                        ]}
-                        onPress={() => setItemWeight(w)}
-                      >
-                        <Text
-                          style={[
-                            styles.weightChipText,
-                            itemWeight === w && styles.weightChipTextActive,
-                          ]}
-                        >
-                          {w} kg
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                <View style={styles.qtyControlCol}>
+                  <Text style={styles.inputLabel}>Approx Weight (kg)</Text>
+                  <View style={styles.counterBox}>
+                    <TouchableOpacity
+                      style={styles.counterBtn}
+                      onPress={() => setOtherItemWeight((prev) => Math.max(0.5, Number((prev - 0.5).toFixed(1))))}
+                    >
+                      <Text style={styles.counterBtnText}>-</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.counterValue}>{otherItemWeight} kg</Text>
+                    <TouchableOpacity
+                      style={styles.counterBtn}
+                      onPress={() => setOtherItemWeight((prev) => Number((prev + 0.5).toFixed(1)))}
+                    >
+                      <Text style={styles.counterBtnText}>+</Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
-              )}
-
-              {/* ADD ITEM TO PARCEL BOX BUTTON */}
-              <TouchableOpacity
-                style={styles.addItemBtn}
-                activeOpacity={0.85}
-                onPress={handleAddItem}
-              >
-                <Text style={styles.addItemBtnText}>{t('addToParcelBox')}</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* PARCEL BOX CONTENTS LIST */}
-            <View style={styles.parcelBoxContainer}>
-              <View style={styles.parcelBoxHeader}>
-                <Text style={styles.parcelBoxTitle}>
-                  {t('itemsInBox')} ({parcelItems.length})
-                </Text>
-                <Text style={styles.parcelBoxTotalWeight}>
-                  {t('totalParcelWeight')}: {totalParcelWeightKg} kg
-                </Text>
               </View>
 
-              {parcelItems.length === 0 ? (
-                <Text style={styles.emptyBoxText}>
-                  No items added yet. Choose a category above and tap Add.
-                </Text>
-              ) : (
-                parcelItems.map((item) => (
-                  <View key={item.id} style={styles.parcelItemRow}>
+              <Text style={[styles.inputLabel, { marginTop: 10 }]}>Description & Special Instructions</Text>
+              <TextInput
+                style={[styles.textInput, { height: 60 }]}
+                value={otherItemDesc}
+                onChangeText={setOtherItemDesc}
+                placeholder="e.g. Fragile item, original packaging, brand name..."
+                placeholderTextColor="#9CA3AF"
+                multiline
+              />
+
+              {/* Photo Upload */}
+              <View style={styles.photoUploadRow}>
+                <TouchableOpacity style={styles.photoPickerBtn} onPress={handlePickPhoto} activeOpacity={0.8}>
+                  <Text style={styles.photoPickerBtnIcon}>📷</Text>
+                  <Text style={styles.photoPickerBtnText}>
+                    {otherItemPhoto ? 'Change Photo' : 'Upload Item Photo (Optional)'}
+                  </Text>
+                </TouchableOpacity>
+
+                {otherItemPhoto && (
+                  <View style={styles.photoPreviewWrap}>
+                    <Image source={{ uri: otherItemPhoto }} style={styles.photoPreviewImage} />
+                    <TouchableOpacity style={styles.removePhotoBadge} onPress={() => setOtherItemPhoto(null)}>
+                      <Text style={styles.removePhotoText}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+
+              <TouchableOpacity
+                style={styles.addCustomBtn}
+                onPress={handleAddCustomItem}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.addCustomBtnText}>+ Add Other Item to Parcel Box</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* STEP 4: PARCEL SUMMARY */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.stepTitle}>4. Parcel Box Summary 📋</Text>
+            <Text style={styles.stepSub}>Review selected items and estimated charges</Text>
+
+            {parcelItems.length === 0 ? (
+              <View style={styles.emptyParcelBox}>
+                <Text style={styles.emptyParcelIcon}>📦</Text>
+                <Text style={styles.emptyParcelText}>Your parcel box is currently empty.</Text>
+                <Text style={styles.emptyParcelSub}>Select items above to add them here.</Text>
+              </View>
+            ) : (
+              <View style={styles.parcelBoxList}>
+                {parcelItems.map((item, index) => (
+                  <View key={item.id || index} style={styles.parcelItemCard}>
+                    {item.photoUrl && (
+                      <Image source={{ uri: item.photoUrl }} style={styles.parcelItemThumb} />
+                    )}
                     <View style={{ flex: 1 }}>
                       <Text style={styles.parcelItemName}>{item.name}</Text>
                       <Text style={styles.parcelItemMeta}>
-                        Category: {item.category} •{' '}
-                        {item.isPerPiece
-                          ? `${item.quantity} pc(s)`
-                          : `${item.weightKg} kg`}
+                        Qty: {item.quantity}  •  Weight: {item.weightKg} kg
                       </Text>
-                    </View>
 
-                    <Text style={styles.parcelItemPrice}>
-                      {formatPrice(item.calculatedPriceKRW)}
-                    </Text>
+                      {item.requiresAdminPricing || item.calculatedPriceKRW <= 0 ? (
+                        <View style={styles.pendingPriceTag}>
+                          <Text style={styles.pendingPriceTagText}>⚠️ Price to be confirmed by Admin</Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.parcelItemPrice}>
+                          Subtotal: {formatPrice(item.calculatedPriceKRW)}
+                        </Text>
+                      )}
+                    </View>
 
                     <TouchableOpacity
                       style={styles.deleteItemBtn}
                       onPress={() => handleRemoveItem(item.id)}
+                      activeOpacity={0.7}
                     >
-                      <Text style={styles.deleteItemIcon}>✕</Text>
+                      <Text style={styles.deleteItemIcon}>🗑️</Text>
                     </TouchableOpacity>
                   </View>
-                ))
-              )}
-            </View>
+                ))}
+
+                {/* Total Summary */}
+                <View style={styles.summaryTotalsBox}>
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Destination:</Text>
+                    <Text style={styles.totalValBold}>
+                      {destinationCountry === 'India' ? 'India 🇮🇳' : 'Nepal 🇳🇵'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Total Items:</Text>
+                    <Text style={styles.totalVal}>{parcelItems.length} item types</Text>
+                  </View>
+
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Total Estimated Weight:</Text>
+                    <Text style={styles.totalVal}>{totalWeightKg} kg</Text>
+                  </View>
+
+                  <View style={[styles.totalRow, styles.dividerTop]}>
+                    <Text style={styles.grandTotalLabel}>Estimated Cargo Charge:</Text>
+                    <Text style={styles.grandTotalPrice}>{formatPrice(estimatedCargoChargeKRW)}</Text>
+                  </View>
+
+                  {hasUnpricedItems && (
+                    <View style={styles.adminWarningBox}>
+                      <Text style={styles.adminWarningIcon}>💡</Text>
+                      <Text style={styles.adminWarningText}>
+                        <Text style={{ fontWeight: '800' }}>Note:</Text> Your parcel contains custom items.
+                        Final price will be confirmed by Admin after review.
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            )}
           </View>
 
-          {/* STEP 2: WHERE TO SEND YOUR PARCEL? */}
+          {/* STEP 5: CUSTOMER & RECIPIENT INFORMATION */}
           <View style={styles.sectionCard}>
-            <View style={styles.stepHeader}>
-              <View style={styles.stepBadge}>
-                <Text style={styles.stepBadgeText}>STEP 2</Text>
-              </View>
-              <Text style={styles.sectionTitle}>{t('step2Title')}</Text>
-            </View>
-            <Text style={styles.sectionSubtitle}>
-              {t('step2Subtitle')}
-            </Text>
+            <Text style={styles.stepTitle}>5. Customer & Recipient Details 👤</Text>
+            <Text style={styles.stepSub}>Sender and destination recipient information</Text>
 
-            {/* DESTINATION COUNTRY TOGGLE */}
-            <View style={styles.countryPickerRow}>
-              <TouchableOpacity
-                style={[
-                  styles.countryPickerBtn,
-                  destinationCountry === 'India' && styles.countryPickerBtnActive,
-                ]}
-                onPress={() => setDestinationCountry('India')}
-              >
-                <Text style={styles.countryFlag}>🇮🇳</Text>
-                <Text
-                  style={[
-                    styles.countryPickerText,
-                    destinationCountry === 'India' && styles.countryPickerTextActive,
-                  ]}
-                >
-                  {t('deliverToIndia')}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.countryPickerBtn,
-                  destinationCountry === 'Nepal' && styles.countryPickerBtnActive,
-                ]}
-                onPress={() => setDestinationCountry('Nepal')}
-              >
-                <Text style={styles.countryFlag}>🇳🇵</Text>
-                <Text
-                  style={[
-                    styles.countryPickerText,
-                    destinationCountry === 'Nepal' && styles.countryPickerTextActive,
-                  ]}
-                >
-                  {t('deliverToNepal')}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* SAVED ADDRESS SELECTOR CHIPS */}
-            {user.savedAddresses.length > 0 && (
-              <View style={styles.savedAddressesBox}>
-                <Text style={styles.inputLabel}>Quick Select Saved Address:</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {/* Saved Addresses Picker */}
+            {user.savedAddresses && user.savedAddresses.length > 0 && (
+              <View style={styles.savedAddrWrap}>
+                <Text style={styles.inputLabel}>Autofill from Saved Recipient Addresses</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                   {user.savedAddresses.map((addr) => (
                     <TouchableOpacity
                       key={addr.id}
-                      style={[
-                        styles.savedAddressChip,
-                        selectedAddressId === addr.id && styles.savedAddressChipActive,
-                      ]}
+                      style={styles.savedAddrPill}
                       onPress={() => handleSelectSavedAddress(addr.id)}
+                      activeOpacity={0.8}
                     >
-                      <Text
-                        style={[
-                          styles.savedAddressChipText,
-                          selectedAddressId === addr.id && styles.savedAddressChipTextActive,
-                        ]}
-                      >
-                        📍 {addr.title} ({addr.recipientName})
+                      <Text style={styles.savedAddrPillText}>
+                        📍 {addr.recipientName} ({addr.country})
                       </Text>
                     </TouchableOpacity>
                   ))}
@@ -619,998 +733,823 @@ export default function SendParcelScreen() {
               </View>
             )}
 
-            {/* RECIPIENT INPUTS */}
-            <View style={styles.addressForm}>
-              <Text style={styles.inputLabel}>{t('recipientNameLabel')}</Text>
+            {/* Sender Info (Korea) */}
+            <View style={styles.subFormGroup}>
+              <Text style={styles.subFormHeading}>Sender Information (Korea 🇰🇷)</Text>
+
+              <Text style={styles.inputLabel}>Sender Name</Text>
+              <TextInput style={styles.textInput} value={customerName} onChangeText={setCustomerName} />
+
+              <View style={styles.rowInputs}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Phone Number</Text>
+                  <TextInput style={styles.textInput} value={customerPhone} onChangeText={setCustomerPhone} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Email Address</Text>
+                  <TextInput style={styles.textInput} value={customerEmail} onChangeText={setCustomerEmail} />
+                </View>
+              </View>
+            </View>
+
+            {/* Recipient Info (India / Nepal) */}
+            <View style={[styles.subFormGroup, { marginTop: 14 }]}>
+              <Text style={styles.subFormHeading}>
+                Recipient Information ({destinationCountry === 'India' ? 'India 🇮🇳' : 'Nepal 🇳🇵'})
+              </Text>
+
+              <Text style={styles.inputLabel}>Recipient Full Name *</Text>
+              <TextInput style={styles.textInput} value={recipientName} onChangeText={setRecipientName} />
+
+              <Text style={styles.inputLabel}>Recipient Phone Number *</Text>
+              <TextInput style={styles.textInput} value={recipientPhone} onChangeText={setRecipientPhone} />
+
+              <Text style={styles.inputLabel}>Destination Street Address *</Text>
               <TextInput
                 style={styles.textInput}
-                placeholder="Full Name of Family / Contact Person"
-                placeholderTextColor="#A2A2A2"
-                value={recipientName}
-                onChangeText={setRecipientName}
-              />
-
-              <Text style={styles.inputLabel}>{t('recipientPhoneLabel')}</Text>
-              <TextInput
-                style={styles.textInput}
-                placeholder="+91 98765 43210"
-                placeholderTextColor="#A2A2A2"
-                keyboardType="phone-pad"
-                value={recipientPhone}
-                onChangeText={setRecipientPhone}
-              />
-
-              <Text style={styles.inputLabel}>{t('streetAddressLabel')}</Text>
-              <TextInput
-                style={[styles.textInput, { height: 60 }]}
-                multiline
-                placeholder="House/Flat No., Landmark, Colony/Sector"
-                placeholderTextColor="#A2A2A2"
                 value={recipientAddress}
                 onChangeText={setRecipientAddress}
+                multiline
               />
 
-              <View style={{ flexDirection: 'row', gap: 10 }}>
+              <View style={styles.rowInputs}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>{t('cityLabel')}</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="e.g. Delhi, Kathmandu"
-                    placeholderTextColor="#A2A2A2"
-                    value={recipientCity}
-                    onChangeText={setRecipientCity}
-                  />
+                  <Text style={styles.inputLabel}>City / District *</Text>
+                  <TextInput style={styles.textInput} value={recipientCity} onChangeText={setRecipientCity} />
                 </View>
-
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>{t('postalLabel')}</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="e.g. 110075"
-                    placeholderTextColor="#A2A2A2"
-                    keyboardType="numeric"
-                    value={recipientPostal}
-                    onChangeText={setRecipientPostal}
-                  />
+                  <Text style={styles.inputLabel}>Postal / Pin Code</Text>
+                  <TextInput style={styles.textInput} value={recipientPostal} onChangeText={setRecipientPostal} />
                 </View>
               </View>
-            </View>
 
-            {/* KOREA SEND/PICKUP OPTIONS */}
-            <View style={styles.koreaHubContainer}>
-              <Text style={styles.inputLabel}>How to send your parcel?</Text>
-              {[
-                'Send by Parcel',
-                'Pick up location',
-              ].map((hub) => (
-                <TouchableOpacity
-                  key={hub}
-                  style={[
-                    styles.hubOption,
-                    koreaHub === hub && styles.hubOptionActive,
-                  ]}
-                  onPress={() => setKoreaHub(hub)}
-                >
-                  <Text style={styles.hubRadio}>
-                    {koreaHub === hub ? '●' : '○'}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.hubOptionText,
-                      koreaHub === hub && styles.hubOptionTextActive,
-                    ]}
-                  >
-                    {hub}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-
-              {koreaHub === 'Send by Parcel' && (
-                <View style={{ marginTop: 10, padding: 12, backgroundColor: '#FFF5E5', borderRadius: 8 }}>
-                  <Text style={{ fontSize: 14, color: '#C88D2B', fontWeight: 'bold', marginBottom: 4 }}>Please send your parcel to:</Text>
-                  <Text style={{ fontSize: 16, color: '#212121', fontWeight: 'bold' }}>경기도 남양주시 불암로 41-2 102호</Text>
-                  <Text style={{ fontSize: 16, color: '#212121' }}>parshant 01083615305</Text>
-                </View>
-              )}
-
-              {koreaHub === 'Pick up location' && (
-                <View style={{ marginTop: 10 }}>
-                  <Text style={styles.inputLabel}>Enter Pick up location</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="Type your detailed pick up address"
-                    placeholderTextColor="#A2A2A2"
-                    value={pickupLocationText}
-                    onChangeText={setPickupLocationText}
-                  />
-                </View>
-              )}
-
-              <View style={styles.slotRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Pickup Date:</Text>
-                  <TouchableOpacity
-                    style={styles.slotPicker}
-                    onPress={() =>
-                      setPickupDate(
-                        pickupDate === 'Tomorrow (Aug 18)'
-                          ? 'Wed, Aug 19'
-                          : 'Tomorrow (Aug 18)'
-                      )
-                    }
-                  >
-                    <Text style={styles.slotPickerText}>📅 {pickupDate}</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Time Window:</Text>
-                  <TouchableOpacity
-                    style={styles.slotPicker}
-                    onPress={() =>
-                      setPickupSlot(
-                        pickupSlot.includes('Afternoon')
-                          ? 'Evening (06:00 PM - 09:00 PM)'
-                          : 'Afternoon (12:00 PM - 06:00 PM)'
-                      )
-                    }
-                  >
-                    <Text style={styles.slotPickerText}>⏰ {pickupSlot.split(' ')[0]}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+              <Text style={[styles.inputLabel, { marginTop: 10 }]}>Customer Notes for Courier (Optional)</Text>
+              <TextInput
+                style={[styles.textInput, { height: 60 }]}
+                value={customerNotes}
+                onChangeText={setCustomerNotes}
+                placeholder="e.g. Deliver during daytime, handle with care..."
+                placeholderTextColor="#9CA3AF"
+                multiline
+              />
             </View>
           </View>
 
-          {/* BANK TRANSFER & SCREENSHOT UPLOADER */}
-          <BankTransferCard
-            orderAmountKRW={grandTotalKRW}
-            selectedBank={selectedBank}
-            onSelectBank={setSelectedBank}
-            senderName={senderName}
-            onChangeSenderName={setSenderName}
-            paymentScreenshot={paymentScreenshot}
-            onSelectScreenshot={setPaymentScreenshot}
-            isDarkMode={false}
-          />
-
-          {/* PRICE QUOTE BREAKDOWN */}
-          <View style={styles.billSummaryCard}>
-            <Text style={styles.billTitle}>{t('parcelQuote')}</Text>
-
-            <View style={styles.billRow}>
-              <Text style={styles.billLabel}>{t('totalParcelWeight')}</Text>
-              <Text style={styles.billValBold}>{totalParcelWeightKg} kg</Text>
-            </View>
-
-            <View style={styles.billRow}>
-              <Text style={styles.billLabel}>
-                {t('categoryFreight')} ({parcelItems.length})
-              </Text>
-              <Text style={styles.billVal}>{formatPrice(parcelSubtotalKRW)}</Text>
-            </View>
-
-            <View style={styles.billDivider} />
-
-            <View style={styles.grandTotalRow}>
-              <View>
-                <Text style={styles.grandTotalLabel}>{t('estimatedTotal')}</Text>
-                <Text style={styles.grandTotalSub}>
-                  Customs & Airway Duty Included
-                </Text>
-              </View>
-              <Text style={styles.grandTotalAmount}>
-                {formatPrice(grandTotalKRW)}
-              </Text>
-            </View>
-          </View>
-
-          {/* BOOK SHIPMENT BUTTON */}
+          {/* STEP 6: SUBMIT BUTTON */}
           <TouchableOpacity
-            style={styles.bookBtn}
-            activeOpacity={0.85}
-            onPress={handleBookShipment}
+            style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
+            onPress={handleSubmitParcelRequest}
+            disabled={isSubmitting}
+            activeOpacity={0.88}
           >
-            <Text style={styles.bookBtnText}>{t('confirmAndBook')}</Text>
-            <Text style={styles.bookBtnPrice}>{formatPrice(grandTotalKRW)}</Text>
+            {isSubmitting ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={styles.submitButtonText}>Send Parcel Request ✈️</Text>
+            )}
           </TouchableOpacity>
 
-          <View style={{ height: 100 }} />
+          <View style={{ height: 40 }} />
         </ScrollView>
 
-        {/* ORDER SUCCESS MODAL */}
+        {/* SUCCESS CONFIRMATION MODAL */}
         <Modal visible={isSuccessModalOpen} transparent animationType="fade">
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
-              <Text style={styles.modalEmoji}>🎉</Text>
-              <Text style={styles.modalTitle}>Parcel Shipment Booked!</Text>
-              <Text style={styles.modalDesc}>
-                Your international parcel has been registered with NamasteMart Logistics.
+              <Text style={styles.modalSuccessIcon}>✈️</Text>
+              <Text style={styles.modalTitle}>Parcel Request Submitted!</Text>
+
+              <View style={styles.modalIdCard}>
+                <Text style={styles.modalIdLabel}>Parcel Booking ID</Text>
+                <Text style={styles.modalIdText}>{submittedParcel?.parcelId}</Text>
+                <Text style={styles.modalTrackingText}>Tracking #: {submittedParcel?.trackingNumber}</Text>
+              </View>
+
+              <Text style={styles.modalMessage}>
+                Your parcel booking request has been created and set to{' '}
+                <Text style={{ fontWeight: '800', color: '#D97706' }}>"Pending Review"</Text>.
               </Text>
 
-              {bookedOrder && (
-                <View style={styles.modalDetailsBox}>
-                  <View style={styles.modalRow}>
-                    <Text style={styles.modalRowLabel}>Order ID:</Text>
-                    <Text style={styles.modalRowCode}>
-                      {bookedOrder.orderNumber}
-                    </Text>
-                  </View>
-
-                  <View style={styles.modalRow}>
-                    <Text style={styles.modalRowLabel}>Route:</Text>
-                    <Text style={styles.modalRowVal}>
-                      Seoul ➔ {bookedOrder.destinationCity}, {bookedOrder.destinationCountry}
-                    </Text>
-                  </View>
-
-                  <View style={styles.modalRow}>
-                    <Text style={styles.modalRowLabel}>Pickup Time:</Text>
-                    <Text style={styles.modalRowVal}>{pickupDate} • {pickupSlot.split(' ')[0]}</Text>
-                  </View>
-
-                  <View style={styles.modalRow}>
-                    <Text style={styles.modalRowLabel}>Payment Mode:</Text>
-                    <Text style={styles.modalRowVal}>
-                      {bookedOrder.paymentMethod}
-                    </Text>
-                  </View>
-                </View>
-              )}
+              <View style={styles.modalStatusBox}>
+                <Text style={styles.statusBoxIcon}>ℹ️</Text>
+                <Text style={styles.statusBoxText}>
+                  Our Admin team will review your parcel items and confirm the final price. You can view progress anytime in <Text style={{ fontWeight: '800' }}>My Parcels</Text>.
+                </Text>
+              </View>
 
               <TouchableOpacity
-                style={styles.modalTrackBtn}
+                style={styles.modalActionBtn}
                 onPress={() => {
                   setIsSuccessModalOpen(false);
-                  router.replace('/orders');
+                  router.push('/parcels');
                 }}
               >
-                <Text style={styles.modalTrackBtnText}>VIEW IN ORDERS & LIVE TRACK →</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.modalHomeBtn}
-                onPress={() => {
-                  setIsSuccessModalOpen(false);
-                  router.replace('/');
-                }}
-              >
-                <Text style={styles.modalHomeBtnText}>Back to Home</Text>
+                <Text style={styles.modalActionBtnText}>View My Parcels 📦</Text>
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
 
-        {/* BOTTOM NAV */}
-        <BottomNav />
+        <BottomNav currentTab="home" />
       </SafeAreaView>
     </>
   );
 }
 
-const getStyles = (isDark: boolean) => {
+function getStyles(isDark: boolean) {
   const bg = isDark ? '#121212' : '#F8F7F3';
   const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
-  const cardBgElevated = isDark ? '#262626' : '#F8F7F3';
-  const textMain = isDark ? '#FFFFFF' : '#212121';
-  const textSub = isDark ? '#A0A0A0' : '#8A857A';
-  const border = isDark ? '#333333' : '#EFEBE4';
-  const accent = isDark ? '#D4AF37' : '#C88D2B';
-  const activeTint = isDark ? '#2D271E' : '#FFF9ED';
-  const borderLight = isDark ? '#262626' : '#F5F5F5';
+  const textMain = isDark ? '#F3F4F6' : '#1F2937';
+  const textSub = isDark ? '#9CA3AF' : '#6B7280';
+  const border = isDark ? '#374151' : '#E5E7EB';
+  const accent = '#D97706';
 
   return StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: bg,
-  },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 14,
-    backgroundColor: cardBg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: border,
-  },
-  backButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: isDark ? '#2D271E' : '#F5EEDC',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  backArrow: {
-    fontSize: 18,
-    color: textMain,
-    fontWeight: '800',
-  },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: textMain,
-  },
-  headerSubtitle: {
-    fontSize: 11,
-    color: textSub,
-    marginTop: 2,
-  },
-  headerBadge: {
-    backgroundColor: activeTint,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: isDark ? '#4D3B18' : '#F3E1BA',
-  },
-  headerBadgeText: {
-    color: accent,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 20,
-  },
-  heroBanner: {
-    backgroundColor: '#23201C',
-    borderRadius: 18,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  heroBadge: {
-    backgroundColor: 'rgba(200, 141, 43, 0.25)',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    marginBottom: 6,
-  },
-  heroBadgeText: {
-    color: '#F0BA5A',
-    fontSize: 9,
-    fontWeight: '800',
-  },
-  heroTitle: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '900',
-  },
-  heroDesc: {
-    color: '#D4CEBF',
-    fontSize: 10,
-    marginTop: 4,
-  },
-  heroEmoji: {
-    fontSize: 28,
-    marginLeft: 8,
-  },
-  sectionCard: {
-    backgroundColor: cardBg,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: isDark ? 0.3 : 0.04,
-    shadowRadius: 5,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  stepHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
-  },
-  stepBadge: {
-    backgroundColor: isDark ? accent : '#212121',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  stepBadgeText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 9,
-    fontWeight: '800',
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: textMain,
-  },
-  sectionSubtitle: {
-    fontSize: 11,
-    color: textSub,
-    marginBottom: 12,
-  },
-  categoryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 12,
-  },
-  categoryCard: {
-    width: '31.3%',
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 12,
-    padding: 10,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: border,
-  },
-  categoryCardSelected: {
-    borderColor: accent,
-    backgroundColor: activeTint,
-  },
-  categoryIcon: {
-    fontSize: 22,
-    marginBottom: 4,
-  },
-  categoryTitle: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: textMain,
-    textAlign: 'center',
-    minHeight: 24,
-  },
-  categoryTitleSelected: {
-    color: accent,
-  },
-  rateBadge: {
-    backgroundColor: isDark ? '#1E1E1E' : '#FFFFFF',
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 4,
-    marginTop: 4,
-  },
-  rateBadgeSelected: {
-    backgroundColor: accent,
-  },
-  rateBadgeText: {
-    fontSize: 8,
-    fontWeight: '800',
-    color: textSub,
-  },
-  rateBadgeTextSelected: {
-    color: isDark ? '#121212' : '#FFFFFF',
-  },
-  rateInfoBox: {
-    backgroundColor: isDark ? '#2D271E' : '#FFF9ED',
-    borderRadius: 10,
-    padding: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: isDark ? '#4D3B18' : '#F3E1BA',
-  },
-  rateInfoIcon: {
-    fontSize: 14,
-  },
-  rateInfoText: {
-    fontSize: 10,
-    color: accent,
-    fontWeight: '600',
-    flex: 1,
-  },
-  itemBuilderForm: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  inputLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: textMain,
-    marginBottom: 4,
-  },
-  textInput: {
-    backgroundColor: cardBg,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 12,
-    color: textMain,
-    borderWidth: 1,
-    borderColor: border,
-    marginBottom: 10,
-  },
-  counterRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: cardBg,
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  counterLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: textMain,
-  },
-  counterSub: {
-    fontSize: 9,
-    color: textSub,
-    marginTop: 2,
-  },
-  counterControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 8,
-    padding: 2,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  counterBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 6,
-    backgroundColor: cardBg,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: isDark ? 1 : 0,
-    borderColor: border,
-  },
-  counterBtnText: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: textMain,
-  },
-  counterValue: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: textMain,
-    marginHorizontal: 10,
-  },
-  weightSelectorContainer: {
-    backgroundColor: cardBg,
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  weightHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  weightCalculatedText: {
-    fontSize: 10,
-    color: textMain,
-  },
-  weightChipsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  weightChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderWidth: 1,
-    borderColor: border,
-  },
-  weightChipActive: {
-    backgroundColor: accent,
-    borderColor: accent,
-  },
-  weightChipText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: textSub,
-  },
-  weightChipTextActive: {
-    color: isDark ? '#121212' : '#FFFFFF',
-  },
-  addItemBtn: {
-    backgroundColor: isDark ? accent : '#212121',
-    borderRadius: 10,
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  addItemBtnText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  parcelBoxContainer: {
-    borderTopWidth: 1,
-    borderTopColor: border,
-    paddingTop: 12,
-  },
-  parcelBoxHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  parcelBoxTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: textMain,
-  },
-  parcelBoxTotalWeight: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: accent,
-  },
-  emptyBoxText: {
-    fontSize: 11,
-    color: textSub,
-    textAlign: 'center',
-    marginVertical: 8,
-  },
-  parcelItemRow: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 10,
-    padding: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  parcelItemName: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: textMain,
-  },
-  parcelItemMeta: {
-    fontSize: 9,
-    color: textSub,
-    marginTop: 2,
-  },
-  parcelItemPrice: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: accent,
-    marginRight: 8,
-  },
-  deleteItemBtn: {
-    padding: 4,
-  },
-  deleteItemIcon: {
-    fontSize: 12,
-    color: '#E53935',
-    fontWeight: '800',
-  },
-  countryPickerRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 12,
-  },
-  countryPickerBtn: {
-    flex: 1,
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 12,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    borderWidth: 1.5,
-    borderColor: border,
-  },
-  countryPickerBtnActive: {
-    backgroundColor: activeTint,
-    borderColor: accent,
-  },
-  countryFlag: {
-    fontSize: 18,
-  },
-  countryPickerText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: textSub,
-  },
-  countryPickerTextActive: {
-    color: accent,
-    fontWeight: '800',
-  },
-  savedAddressesBox: {
-    marginBottom: 10,
-  },
-  savedAddressChip: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginRight: 6,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  savedAddressChipActive: {
-    backgroundColor: activeTint,
-    borderColor: accent,
-  },
-  savedAddressChipText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: textSub,
-  },
-  savedAddressChipTextActive: {
-    color: accent,
-  },
-  addressForm: {
-    marginTop: 4,
-  },
-  koreaHubContainer: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 14,
-    padding: 12,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  hubOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 6,
-  },
-  hubOptionActive: {},
-  hubRadio: {
-    fontSize: 14,
-    color: accent,
-    marginRight: 8,
-  },
-  hubOptionText: {
-    fontSize: 11,
-    color: textSub,
-  },
-  hubOptionTextActive: {
-    color: textMain,
-    fontWeight: '700',
-  },
-  slotRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 8,
-  },
-  slotPicker: {
-    backgroundColor: cardBg,
-    padding: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  slotPickerText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: textMain,
-  },
-  paymentOptionsContainer: {
-    marginTop: 6,
-  },
-  paymentChoiceCard: {
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 14,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: border,
-  },
-  paymentChoiceCardActive: {
-    borderColor: accent,
-    backgroundColor: activeTint,
-  },
-  paymentChoiceRadio: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: accent,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  paymentChoiceRadioDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: accent,
-  },
-  paymentChoiceTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: textMain,
-  },
-  paymentChoiceDesc: {
-    fontSize: 10,
-    color: textSub,
-    marginTop: 2,
-  },
-  paymentChoiceCheck: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: accent,
-    marginLeft: 8,
-  },
-  billSummaryCard: {
-    backgroundColor: cardBg,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: isDark ? 0.3 : 0.04,
-    shadowRadius: 5,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  billTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: textMain,
-    marginBottom: 10,
-  },
-  billRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  billLabel: {
-    fontSize: 11,
-    color: textSub,
-  },
-  billVal: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: textMain,
-  },
-  billValBold: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: textMain,
-  },
-  billDivider: {
-    height: 1,
-    backgroundColor: borderLight,
-    marginVertical: 8,
-  },
-  grandTotalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  grandTotalLabel: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: textMain,
-  },
-  grandTotalSub: {
-    fontSize: 9,
-    color: textSub,
-  },
-  grandTotalAmount: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: accent,
-  },
-  bookBtn: {
-    backgroundColor: accent,
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  bookBtnText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  bookBtnPrice: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    backgroundColor: cardBg,
-    borderRadius: 24,
-    padding: 24,
-    width: '100%',
-    maxWidth: 380,
-    alignItems: 'center',
-    borderWidth: isDark ? 1 : 0,
-    borderColor: border,
-  },
-  modalEmoji: {
-    fontSize: 48,
-    marginBottom: 8,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: textMain,
-    textAlign: 'center',
-  },
-  modalDesc: {
-    fontSize: 11,
-    color: textSub,
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 16,
-  },
-  modalDetailsBox: {
-    width: '100%',
-    backgroundColor: isDark ? '#262626' : '#F8F7F3',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: border,
-  },
-  modalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  modalRowLabel: {
-    fontSize: 10,
-    color: textSub,
-  },
-  modalRowVal: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: textMain,
-  },
-  modalRowCode: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: accent,
-  },
-  modalTrackBtn: {
-    backgroundColor: accent,
-    borderRadius: 12,
-    paddingVertical: 12,
-    width: '100%',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  modalTrackBtnText: {
-    color: isDark ? '#121212' : '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  modalHomeBtn: {
-    paddingVertical: 6,
-  },
-  modalHomeBtnText: {
-    color: textSub,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-});
-};
+    container: {
+      flex: 1,
+      backgroundColor: bg,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: cardBg,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+    },
+    backButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: isDark ? '#2D271E' : '#FFFBEB',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    backIcon: {
+      fontSize: 18,
+      color: accent,
+      fontWeight: '800',
+    },
+    headerTitle: {
+      fontSize: 17,
+      fontWeight: '900',
+      color: textMain,
+    },
+    headerSub: {
+      fontSize: 11,
+      color: textSub,
+      marginTop: 1,
+    },
+    myParcelsBtn: {
+      backgroundColor: isDark ? '#2D271E' : '#FEF3C7',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: accent,
+    },
+    myParcelsBtnText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: accent,
+    },
+    scrollContent: {
+      padding: 16,
+      gap: 16,
+    },
+    bannerCard: {
+      backgroundColor: isDark ? '#2A1F13' : '#FFFBEB',
+      borderRadius: 18,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: '#FDE68A',
+    },
+    bannerBadgeRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 8,
+    },
+    bannerPill: {
+      backgroundColor: accent,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 8,
+    },
+    bannerPillText: {
+      color: '#FFFFFF',
+      fontSize: 9,
+      fontWeight: '900',
+      letterSpacing: 0.5,
+    },
+    deliveryDaysTag: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: '#B45309',
+    },
+    bannerTitle: {
+      fontSize: 18,
+      fontWeight: '900',
+      color: isDark ? '#FEF3C7' : '#92400E',
+      marginBottom: 4,
+    },
+    bannerDesc: {
+      fontSize: 12,
+      color: isDark ? '#D1D5DB' : '#78350F',
+      lineHeight: 17,
+    },
+    sectionCard: {
+      backgroundColor: cardBg,
+      borderRadius: 18,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    stepTitle: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: textMain,
+    },
+    stepSub: {
+      fontSize: 12,
+      color: textSub,
+      marginTop: 2,
+      marginBottom: 12,
+    },
+    destToggleRow: {
+      flexDirection: 'row',
+      gap: 12,
+    },
+    destCard: {
+      flex: 1,
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
+      borderRadius: 14,
+      padding: 14,
+      alignItems: 'center',
+      borderWidth: 2,
+      borderColor: border,
+    },
+    destCardActive: {
+      borderColor: accent,
+      backgroundColor: isDark ? '#2D271E' : '#FEF3C7',
+    },
+    destFlag: {
+      fontSize: 28,
+      marginBottom: 4,
+    },
+    destName: {
+      fontSize: 14,
+      fontWeight: '900',
+      color: textMain,
+    },
+    destNameActive: {
+      color: accent,
+    },
+    destSubText: {
+      fontSize: 10,
+      color: textSub,
+      marginTop: 2,
+      textAlign: 'center',
+    },
+    koreaPickupWrap: {
+      marginTop: 14,
+    },
+    inputLabel: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: textMain,
+      marginBottom: 6,
+    },
+    textInput: {
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
+      borderWidth: 1,
+      borderColor: border,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      fontSize: 13,
+      color: textMain,
+    },
+    itemCategoryScroll: {
+      gap: 10,
+      marginBottom: 14,
+    },
+    itemCategoryChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: isDark ? '#262626' : '#F3F4F6',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 14,
+      borderWidth: 1.5,
+      borderColor: border,
+      gap: 8,
+    },
+    itemCategoryChipActive: {
+      borderColor: accent,
+      backgroundColor: isDark ? '#2D271E' : '#FEF3C7',
+    },
+    itemChipIcon: {
+      fontSize: 20,
+    },
+    itemChipTitle: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: textMain,
+    },
+    itemChipTitleActive: {
+      color: accent,
+    },
+    itemChipPrice: {
+      fontSize: 10,
+      color: textSub,
+      marginTop: 1,
+    },
+    itemConfigBox: {
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
+      borderRadius: 14,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    configHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    configHeaderIcon: {
+      fontSize: 24,
+    },
+    configHeaderTitle: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: textMain,
+    },
+    configHeaderRate: {
+      fontSize: 11,
+      color: textSub,
+      marginTop: 1,
+    },
+    ratePill: {
+      backgroundColor: accent,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 8,
+    },
+    ratePillText: {
+      color: '#FFFFFF',
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    qtyWeightRow: {
+      flexDirection: 'row',
+      gap: 12,
+      marginTop: 10,
+    },
+    qtyControlCol: {
+      flex: 1,
+    },
+    counterBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: isDark ? '#1E1E1E' : '#FFFFFF',
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: border,
+      justifyContent: 'space-between',
+      paddingHorizontal: 6,
+      paddingVertical: 4,
+    },
+    counterBtn: {
+      width: 28,
+      height: 28,
+      borderRadius: 6,
+      backgroundColor: isDark ? '#374151' : '#E5E7EB',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    counterBtnText: {
+      fontSize: 16,
+      fontWeight: '800',
+      color: textMain,
+    },
+    counterValue: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: textMain,
+    },
+    weightStaticBox: {
+      backgroundColor: isDark ? '#1E1E1E' : '#FFFFFF',
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: border,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      alignItems: 'center',
+    },
+    weightStaticText: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: textMain,
+    },
+    itemAddFooterRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 14,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: border,
+    },
+    calculatedSubLabel: {
+      fontSize: 10,
+      color: textSub,
+      fontWeight: '700',
+    },
+    calculatedSubPrice: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: accent,
+    },
+    addToListBtn: {
+      backgroundColor: accent,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      borderRadius: 10,
+    },
+    addToListBtnText: {
+      color: '#FFFFFF',
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    customHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    adminReviewBadge: {
+      backgroundColor: '#FEF3C7',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#FDE68A',
+    },
+    adminReviewBadgeText: {
+      color: '#B45309',
+      fontSize: 9,
+      fontWeight: '800',
+    },
+    customFormBox: {
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
+      borderRadius: 14,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    photoUploadRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginTop: 10,
+    },
+    photoPickerBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: isDark ? '#1E1E1E' : '#FFFFFF',
+      borderWidth: 1.5,
+      borderStyle: 'dashed',
+      borderColor: accent,
+      borderRadius: 10,
+      padding: 10,
+      gap: 8,
+    },
+    photoPickerBtnIcon: {
+      fontSize: 18,
+    },
+    photoPickerBtnText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: accent,
+    },
+    photoPreviewWrap: {
+      position: 'relative',
+    },
+    photoPreviewImage: {
+      width: 44,
+      height: 44,
+      borderRadius: 8,
+    },
+    removePhotoBadge: {
+      position: 'absolute',
+      top: -4,
+      right: -4,
+      backgroundColor: '#EF4444',
+      width: 18,
+      height: 18,
+      borderRadius: 9,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    removePhotoText: {
+      color: '#FFFFFF',
+      fontSize: 10,
+      fontWeight: '900',
+    },
+    addCustomBtn: {
+      backgroundColor: isDark ? '#374151' : '#374151',
+      paddingVertical: 10,
+      borderRadius: 10,
+      alignItems: 'center',
+      marginTop: 12,
+    },
+    addCustomBtnText: {
+      color: '#FFFFFF',
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    emptyParcelBox: {
+      alignItems: 'center',
+      paddingVertical: 20,
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
+      borderRadius: 12,
+    },
+    emptyParcelIcon: {
+      fontSize: 32,
+      marginBottom: 4,
+    },
+    emptyParcelText: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: textMain,
+    },
+    emptyParcelSub: {
+      fontSize: 11,
+      color: textSub,
+      marginTop: 2,
+    },
+    parcelBoxList: {
+      gap: 10,
+    },
+    parcelItemCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
+      padding: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: border,
+      gap: 10,
+    },
+    parcelItemThumb: {
+      width: 44,
+      height: 44,
+      borderRadius: 8,
+    },
+    parcelItemName: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: textMain,
+    },
+    parcelItemMeta: {
+      fontSize: 11,
+      color: textSub,
+      marginTop: 2,
+    },
+    pendingPriceTag: {
+      backgroundColor: '#FEF3C7',
+      alignSelf: 'flex-start',
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 6,
+      marginTop: 4,
+    },
+    pendingPriceTagText: {
+      fontSize: 9,
+      fontWeight: '800',
+      color: '#92400E',
+    },
+    parcelItemPrice: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: accent,
+      marginTop: 3,
+    },
+    deleteItemBtn: {
+      padding: 6,
+    },
+    deleteItemIcon: {
+      fontSize: 16,
+    },
+    summaryTotalsBox: {
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
+      borderRadius: 14,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: border,
+      marginTop: 6,
+      gap: 8,
+    },
+    totalRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    totalLabel: {
+      fontSize: 12,
+      color: textSub,
+    },
+    totalVal: {
+      fontSize: 12,
+      color: textMain,
+      fontWeight: '700',
+    },
+    totalValBold: {
+      fontSize: 13,
+      color: textMain,
+      fontWeight: '800',
+    },
+    dividerTop: {
+      paddingTop: 8,
+      borderTopWidth: 1,
+      borderTopColor: border,
+      marginTop: 4,
+    },
+    grandTotalLabel: {
+      fontSize: 14,
+      fontWeight: '900',
+      color: textMain,
+    },
+    grandTotalPrice: {
+      fontSize: 18,
+      fontWeight: '900',
+      color: accent,
+    },
+    adminWarningBox: {
+      flexDirection: 'row',
+      backgroundColor: '#FFFBEB',
+      borderRadius: 10,
+      padding: 10,
+      gap: 8,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: '#FDE68A',
+      marginTop: 4,
+    },
+    adminWarningIcon: {
+      fontSize: 16,
+    },
+    adminWarningText: {
+      flex: 1,
+      fontSize: 11,
+      color: '#92400E',
+      lineHeight: 15,
+    },
+    savedAddrWrap: {
+      marginBottom: 12,
+    },
+    savedAddrPill: {
+      backgroundColor: isDark ? '#262626' : '#F3F4F6',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    savedAddrPillText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: textMain,
+    },
+    subFormGroup: {
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
+      borderRadius: 12,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    subFormHeading: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: accent,
+      marginBottom: 10,
+    },
+    rowInputs: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 6,
+    },
+    submitButton: {
+      backgroundColor: accent,
+      borderRadius: 16,
+      paddingVertical: 15,
+      alignItems: 'center',
+      marginTop: 10,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.2,
+      shadowRadius: 6,
+      elevation: 4,
+    },
+    submitButtonDisabled: {
+      opacity: 0.6,
+    },
+    submitButtonText: {
+      color: '#FFFFFF',
+      fontSize: 16,
+      fontWeight: '900',
+      letterSpacing: 0.5,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.65)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    modalContent: {
+      backgroundColor: cardBg,
+      borderRadius: 22,
+      padding: 22,
+      width: '100%',
+      maxWidth: 380,
+      alignItems: 'center',
+      borderWidth: isDark ? 1 : 0,
+      borderColor: border,
+    },
+    modalSuccessIcon: {
+      fontSize: 44,
+      marginBottom: 8,
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: '900',
+      color: textMain,
+      textAlign: 'center',
+    },
+    modalIdCard: {
+      backgroundColor: isDark ? '#2D271E' : '#FEF3C7',
+      borderRadius: 12,
+      padding: 12,
+      width: '100%',
+      alignItems: 'center',
+      marginVertical: 12,
+      borderWidth: 1,
+      borderColor: accent,
+    },
+    modalIdLabel: {
+      fontSize: 10,
+      color: textSub,
+      fontWeight: '700',
+    },
+    modalIdText: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: accent,
+      marginTop: 2,
+    },
+    modalTrackingText: {
+      fontSize: 11,
+      color: textSub,
+      marginTop: 2,
+    },
+    modalMessage: {
+      fontSize: 12,
+      color: textSub,
+      textAlign: 'center',
+      lineHeight: 17,
+      marginBottom: 12,
+    },
+    modalStatusBox: {
+      flexDirection: 'row',
+      backgroundColor: isDark ? '#262626' : '#F9FAFB',
+      borderRadius: 12,
+      padding: 12,
+      gap: 8,
+      marginBottom: 16,
+    },
+    statusBoxIcon: {
+      fontSize: 16,
+    },
+    statusBoxText: {
+      flex: 1,
+      fontSize: 11,
+      color: textMain,
+      lineHeight: 16,
+    },
+    modalActionBtn: {
+      backgroundColor: accent,
+      borderRadius: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 24,
+      width: '100%',
+      alignItems: 'center',
+    },
+    modalActionBtnText: {
+      color: '#FFFFFF',
+      fontSize: 14,
+      fontWeight: '800',
+    },
+  });
+}

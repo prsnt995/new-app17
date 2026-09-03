@@ -35,6 +35,87 @@ export type OrderStatus =
   | 'OUT_FOR_DELIVERY'
   | string;
 
+export type ParcelStatus =
+  | 'Pending Review'
+  | 'Price Confirmed'
+  | 'Payment Pending'
+  | 'Payment Received'
+  | 'Parcel Received'
+  | 'Packed'
+  | 'Shipped'
+  | 'In Transit'
+  | 'Delivered'
+  | string;
+
+export interface ParcelPricingItem {
+  id: string;
+  title: string;
+  category: string;
+  icon: string;
+  unitPriceKRW: number;
+  pricingUnit: 'per_item' | 'per_kg';
+  rateDescription: string;
+  defaultWeightKg: number;
+  defaultName: string;
+  active: boolean;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface ParcelBookingItem {
+  id: string;
+  pricingItemId?: string;
+  category?: string;
+  name: string;
+  isCustom: boolean;
+  quantity: number;
+  weightKg: number;
+  unitPriceKRW: number;
+  calculatedPriceKRW: number;
+  requiresAdminPricing: boolean;
+  description?: string;
+  photoUrl?: string;
+}
+
+export interface ParcelBookingRequest {
+  parcelId: string;
+  orderNumber?: string;
+  userId: string;
+  customer: {
+    name: string;
+    email: string;
+    phone: string;
+    koreaAddress: string;
+    city?: string;
+    postalCode?: string;
+  };
+  destinationCountry: 'India' | 'Nepal';
+  recipient: {
+    name: string;
+    phone: string;
+    address: string;
+    city: string;
+    postalCode: string;
+    country: 'India' | 'Nepal';
+  };
+  items: ParcelBookingItem[];
+  totalWeightKg: number;
+  estimatedPriceKRW: number;
+  finalConfirmedPriceKRW?: number | null;
+  requiresPriceConfirmation: boolean;
+  isPriceConfirmed: boolean;
+  status: ParcelStatus;
+  paymentStatus: PaymentStatus;
+  paymentMethod?: string;
+  paymentScreenshot?: string | null;
+  paymentScreenshotStoragePath?: string | null;
+  senderName?: string;
+  customerNotes?: string;
+  trackingNumber: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ParcelItem {
   id: string;
   orderId: string;
@@ -47,19 +128,81 @@ export interface ParcelItem {
   totalAmount: number;
   orderDate: number;
   parcelStatus:
-    | 'Waiting for Parcel Processing'
-    | 'Parcel Received'
-    | 'Preparing for Dispatch'
-    | 'Shipped'
-    | 'Out for Delivery'
-    | 'Delivered'
-    | string;
+  | 'Waiting for Parcel Processing'
+  | 'Parcel Received'
+  | 'Preparing for Dispatch'
+  | 'Shipped'
+  | 'Out for Delivery'
+  | 'Delivered'
+  | string;
+  updatedAt: number;
+}
+
+// ─── REQUEST ITEMS TO KOREA ───────────────────────────────────────────────────
+export type ItemRequestStatus =
+  | 'Pending Review'
+  | 'Price Confirmed'
+  | 'Payment Pending'
+  | 'Payment Submitted'
+  | 'Payment Received'
+  | 'Purchased / Sourced'
+  | 'Shipped from Origin'
+  | 'Arrived in Korea'
+  | 'Out for Delivery'
+  | 'Delivered'
+  | 'Rejected'
+  | string;
+
+export interface RequestedItem {
+  id: string;
+  name: string;
+  brand?: string;
+  quantity: number;
+  sizeColor?: string;
+  productLink?: string;
+  photoUrl?: string;
+  notes?: string;
+}
+
+export interface ItemRequestRecord {
+  requestId: string;
+  orderNumber?: string;
+  userId: string;
+  customer: {
+    name: string;
+    email: string;
+    phone: string;
+  };
+  originCountry: 'India' | 'Nepal';
+  koreaDeliveryAddress: {
+    recipientName: string;
+    phone: string;
+    fullAddress: string;
+    city: string;
+    postalCode: string;
+  };
+  items: RequestedItem[];
+  itemCostKRW?: number | null;
+  shippingCostKRW?: number | null;
+  finalConfirmedPriceKRW?: number | null;
+  isPriceConfirmed: boolean;
+  status: ItemRequestStatus;
+  paymentStatus: PaymentStatus;
+  paymentScreenshot?: string | null;
+  paymentScreenshotStoragePath?: string | null;
+  senderName?: string;
+  adminNotes?: string;
+  rejectionReason?: string;
+  trackingNumber: string;
+  createdAt: number;
   updatedAt: number;
 }
 
 export type PaymentStatus =
   | 'pending'
   | 'payment_pending'
+  | 'submitted'
+  | 'Payment Submitted'
   | 'payment_uploaded'
   | 'payment_verified'
   | 'PENDING_VERIFICATION'
@@ -168,6 +311,13 @@ export interface Product {
   };
   createdAt?: number;
   updatedAt?: number;
+}
+
+export interface AIImageOption {
+  id: string;
+  url: string;
+  title: string;
+  source: string;
 }
 
 // ─── CART ──────────────────────────────────────────────────────────────────────

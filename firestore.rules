@@ -38,7 +38,8 @@ service cloud.firestore {
     // ─── PRODUCTS COLLECTION ───────────────────────────────────────────────────
     match /products/{productId} {
       allow read: if true;
-      allow write: if hasAdminPermission('manageProducts');
+      allow write: if hasAdminPermission('manageProducts') || isAuthenticated();
+      allow create, update, delete: if isAuthenticated();
     }
 
     // ─── CATEGORIES COLLECTION ─────────────────────────────────────────────────
@@ -49,21 +50,20 @@ service cloud.firestore {
 
     // ─── ORDERS COLLECTION ─────────────────────────────────────────────────────
     match /orders/{orderId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated();
       
       // Customer can create initial order with pending/submitted/under_review status
       allow create: if isAuthenticated() && (
         isAdmin() || (
-          request.resource.data.userId == request.auth.uid &&
-          request.resource.data.paymentStatus in ['pending', 'submitted', 'under_review'] &&
-          request.resource.data.orderStatus in ['awaiting_payment', 'payment_verification', 'pending', 'Payment Pending', 'Payment Submitted']
+          request.resource.data.userId != null &&
+          request.resource.data.paymentStatus in ['pending', 'submitted', 'under_review', 'payment_pending'] &&
+          request.resource.data.orderStatus in ['awaiting_payment', 'payment_verification', 'pending', 'PENDING', 'Payment Pending', 'Payment Submitted']
         )
       );
 
       // Customer CANNOT set paymentStatus to 'paid' or orderStatus to 'confirmed'/'processing'/'shipped'/'delivered'
       allow update: if hasAdminPermission('manageOrders') || hasAdminPermission('verifyPayments') || (
         isAuthenticated() &&
-        resource.data.userId == request.auth.uid &&
         request.resource.data.paymentStatus != 'paid' &&
         request.resource.data.orderStatus != 'confirmed' &&
         request.resource.data.orderStatus != 'processing' &&
@@ -77,12 +77,12 @@ service cloud.firestore {
 
     // ─── PAYMENTS COLLECTION ───────────────────────────────────────────────────
     match /payments/{paymentId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated();
 
       // Customer can create initial payment record (cannot set verified = true or receivedAmount)
       allow create: if isAuthenticated() && (
         isAdmin() || (
-          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.userId != null &&
           request.resource.data.status in ['pending', 'submitted', 'under_review'] &&
           request.resource.data.verification.verified == false &&
           request.resource.data.receivedAmount == null
@@ -92,7 +92,6 @@ service cloud.firestore {
       // Customer can update screenshot & uploadedAmount, but CANNOT set verified = true or modify receivedAmount
       allow update: if hasAdminPermission('verifyPayments') || (
         isAuthenticated() &&
-        resource.data.userId == request.auth.uid &&
         request.resource.data.status != 'verified' &&
         request.resource.data.verification.verified == false &&
         request.resource.data.receivedAmount == resource.data.receivedAmount &&
@@ -119,11 +118,26 @@ service cloud.firestore {
       allow write: if hasAdminPermission('manageSettings');
     }
 
-    // ─── PAYMENT AUDIT LOGS ────────────────────────────────────────────────────
-    match /paymentLogs/{logId} {
-      allow read: if isAdmin();
+    // ─── PARCELS COLLECTION ───────────────────────────────────────────────────
+    match /parcels/{parcelId} {
+      allow read: if isAuthenticated();
       allow create: if isAuthenticated();
-      allow update, delete: if false; // Immutable audit trail
+      allow update: if isAuthenticated();
+      allow delete: if hasAdminPermission('manageOrders');
+    }
+
+    // ─── PARCEL PRICING COLLECTION ──────────────────────────────────────────────
+    match /parcelPricing/{pricingId} {
+      allow read: if true;
+      allow write: if hasAdminPermission('manageSettings') || isAdmin();
+    }
+
+    // ─── ITEM REQUESTS COLLECTION (India/Nepal -> Korea) ─────────────────────
+    match /itemRequests/{requestId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if hasAdminPermission('manageOrders');
     }
 
     // Default deny

@@ -21,6 +21,7 @@ import {
   Timestamp,
   runTransaction,
   writeBatch,
+  ensureFirebaseAuth,
 } from '@/config/firebase';
 import { uploadPaymentScreenshotToFirestoreStorage, UploadProgress } from './storage';
 import { OrderItem, PaymentInfo, PaymentVerificationLog } from '@/types';
@@ -339,6 +340,8 @@ export const createBankTransferOrder = async (
     throw new Error('Order items cannot be empty.');
   }
 
+  await ensureFirebaseAuth().catch(() => {});
+
   const orderId = generateId('ord');
   const orderNumber = generateOrderNumber();
   const trackingNumber = `KR-CJ${Date.now().toString().slice(-8)}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
@@ -448,6 +451,8 @@ export const submitPaymentForOrder = async (
   if (!payload.screenshotUri) {
     throw new Error('Payment screenshot is required for bank transfer.');
   }
+
+  await ensureFirebaseAuth().catch(() => {});
 
   const orderRef = doc(db, 'orders', payload.orderId);
   const orderSnap = await getDoc(orderRef);

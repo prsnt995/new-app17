@@ -326,10 +326,17 @@ export const saveUserDeliveryAddress = async (
       addresses = addresses.map((a) => ({ ...a, isDefault: false }));
     }
 
-    // Update existing or add new
-    const existingIdx = addresses.findIndex((a) => a.id === newAddress.id);
+    // Update existing or add new (check by ID or identical content)
+    const existingIdx = addresses.findIndex((a) =>
+      a.id === newAddress.id ||
+      ((a.recipientName || '').trim().toLowerCase() === (newAddress.recipientName || '').trim().toLowerCase() &&
+       (a.phoneNumber || a.phone || '').trim() === (newAddress.phoneNumber || newAddress.phone || '').trim() &&
+       (a.postalCode || '').trim() === (newAddress.postalCode || '').trim() &&
+       (a.address || a.streetAddress || '').trim().toLowerCase() === (newAddress.address || newAddress.streetAddress || '').trim().toLowerCase() &&
+       (a.detailAddress || '').trim().toLowerCase() === (newAddress.detailAddress || '').trim().toLowerCase())
+    );
     if (existingIdx >= 0) {
-      addresses[existingIdx] = newAddress;
+      addresses[existingIdx] = { ...addresses[existingIdx], ...newAddress, id: addresses[existingIdx].id };
     } else {
       addresses.push(newAddress);
     }

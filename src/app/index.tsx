@@ -3,6 +3,7 @@ import {
   Alert,
   Image,
   Modal,
+  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -82,6 +83,65 @@ export default function HomeScreen() {
   const [newAddrCity, setNewAddrCity] = useState('');
   const [newAddrPostal, setNewAddrPostal] = useState('');
   const [newAddrPhone, setNewAddrPhone] = useState('');
+
+  // ─── FEATURED HIGHLIGHTS SLIDE CAROUSEL DATA ────────────────────────────────
+  const [parcelSlideIndex, setParcelSlideIndex] = useState(0);
+  const [sweetsSlideIndex, setSweetsSlideIndex] = useState(0);
+
+  const parcelSlides = React.useMemo(() => [
+    {
+      country: 'INDIA',
+      flag: '🇮🇳',
+      image: 'https://images.unsplash.com/photo-1564507592333-c60657eea523?auto=format&fit=crop&q=80&w=800',
+    },
+    {
+      country: 'NEPAL',
+      flag: '🇳🇵',
+      image: 'https://images.unsplash.com/photo-1544735716-392fe2489ffa?auto=format&fit=crop&q=80&w=800',
+    },
+    {
+      country: 'KOREA',
+      flag: '🇰🇷',
+      image: 'https://images.unsplash.com/photo-1538485399081-7191377e8241?auto=format&fit=crop&q=80&w=800',
+    },
+  ], []);
+
+  const sweetsSlides = React.useMemo(() => [
+    {
+      name: 'Laddoo',
+      image: 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&q=80&w=800',
+    },
+    {
+      name: 'Kaju Katli & Barfi',
+      image: 'https://images.unsplash.com/photo-1599488615731-7e5c2823ff28?auto=format&fit=crop&q=80&w=800',
+    },
+    {
+      name: 'Gulab Jamun',
+      image: 'https://images.unsplash.com/photo-1541781774459-bb2af2f05b55?auto=format&fit=crop&q=80&w=800',
+    },
+    {
+      name: 'Rasgulla',
+      image: 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&q=80&w=800',
+    },
+  ], []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setParcelSlideIndex((prev) => (prev + 1) % parcelSlides.length);
+      setSweetsSlideIndex((prev) => (prev + 1) % sweetsSlides.length);
+    }, 3500);
+    return () => clearInterval(timer);
+  }, [parcelSlides.length, sweetsSlides.length]);
+
+  const handlePrevHighlight = () => {
+    setParcelSlideIndex((prev) => (prev - 1 + parcelSlides.length) % parcelSlides.length);
+    setSweetsSlideIndex((prev) => (prev - 1 + sweetsSlides.length) % sweetsSlides.length);
+  };
+
+  const handleNextHighlight = () => {
+    setParcelSlideIndex((prev) => (prev + 1) % parcelSlides.length);
+    setSweetsSlideIndex((prev) => (prev + 1) % sweetsSlides.length);
+  };
 
   // Get Korean addresses from user's saved addresses
   const koreanAddresses = user.savedAddresses.filter(
@@ -297,102 +357,120 @@ export default function HomeScreen() {
             })}
           </ScrollView>
 
-          {/* THREE FEATURED SIDE BOXES CAROUSEL */}
-          <View style={styles.threeSideBoxesHeaderRow}>
-            <Text style={styles.threeSideBoxesHeaderTitle}>✨ Featured Highlights</Text>
-            <View style={styles.threeSideBoxesBadge}>
-              <Text style={styles.threeSideBoxesBadgeText}>3 SPECIAL OFFERS</Text>
+          {/* FEATURED HIGHLIGHTS (2 LARGE ROUNDED CARDS SIDE BY SIDE) */}
+          <View style={styles.featuredSectionContainer}>
+            <View style={styles.featuredHeaderRow}>
+              <Text style={styles.featuredHeaderTitle}>✨ Featured Highlights</Text>
+              <View style={styles.arrowControlsRow}>
+                <TouchableOpacity style={styles.arrowButton} onPress={handlePrevHighlight} activeOpacity={0.7}>
+                  <Text style={styles.arrowButtonText}>‹</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.arrowButton} onPress={handleNextHighlight} activeOpacity={0.7}>
+                  <Text style={styles.arrowButtonText}>›</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.featuredCardsGrid}>
+              {/* CARD 1 (LEFT): AIR CARGO / PARCEL */}
+              <TouchableOpacity
+                style={styles.featuredHighlightCard}
+                activeOpacity={0.92}
+                onPress={() => router.push('/send-parcel')}
+              >
+                <Image
+                  source={{ uri: parcelSlides[parcelSlideIndex].image }}
+                  style={styles.featuredCardBgImage}
+                />
+                <View style={styles.featuredCardGradientOverlay}>
+                  {/* Top Row: Country Flag Badge */}
+                  <View style={styles.cardTopRow}>
+                    <View style={styles.countryPillBadge}>
+                      <Text style={styles.countryPillFlag}>{parcelSlides[parcelSlideIndex].flag}</Text>
+                      <Text style={styles.countryPillText}>{parcelSlides[parcelSlideIndex].country}</Text>
+                    </View>
+                  </View>
+
+                  {/* Middle Content */}
+                  <View style={styles.cardCenterContent}>
+                    <View style={styles.tagBadgeOrange}>
+                      <Text style={styles.tagBadgeIcon}>✈️</Text>
+                      <Text style={styles.tagBadgeText}>AIR CARGO</Text>
+                    </View>
+                    <Text style={styles.cardMainTitle}>Send Parcel to Home</Text>
+                    <Text style={styles.cardSubtitle}>Direct Express Air Cargo</Text>
+                  </View>
+
+                  {/* Bottom Action Row */}
+                  <View style={styles.cardBottomRow}>
+                    <View style={styles.orangeActionBtn}>
+                      <Text style={styles.orangeActionBtnText}>Send Now ✈</Text>
+                    </View>
+                    <View style={styles.deliveryBadgePill}>
+                      <Text style={styles.deliveryBadgeText}>3–5 Days Delivery</Text>
+                    </View>
+                  </View>
+
+                  {/* Bottom Center Dots */}
+                  <View style={styles.paginationDotsRow}>
+                    {parcelSlides.map((_, i) => (
+                      <View
+                        key={i}
+                        style={[styles.dotIndicator, i === parcelSlideIndex && styles.dotIndicatorActive]}
+                      />
+                    ))}
+                  </View>
+                </View>
+              </TouchableOpacity>
+
+              {/* CARD 2 (RIGHT): REQUEST ITEMS TO KOREA */}
+              <TouchableOpacity
+                style={styles.featuredHighlightCard}
+                activeOpacity={0.92}
+                onPress={() => router.push('/request-item')}
+              >
+                <Image
+                  source={{ uri: sweetsSlides[sweetsSlideIndex].image }}
+                  style={styles.featuredCardBgImage}
+                />
+                <View style={styles.featuredCardGradientOverlay}>
+                  {/* Top Row: Tag Badge */}
+                  <View style={styles.cardTopRow}>
+                    <View style={styles.tagBadgeOrange}>
+                      <Text style={styles.tagBadgeIcon}>🛍️</Text>
+                      <Text style={styles.tagBadgeText}>ITEM SOURCING</Text>
+                    </View>
+                  </View>
+
+                  {/* Middle Content */}
+                  <View style={styles.cardCenterContent}>
+                    <Text style={styles.cardMainTitle}>Request Items to Korea</Text>
+                    <Text style={styles.cardSubtitle}>India / Nepal ➔ South Korea Sourcing</Text>
+                  </View>
+
+                  {/* Bottom Action Row */}
+                  <View style={styles.cardBottomRow}>
+                    <View style={styles.orangeActionBtn}>
+                      <Text style={styles.orangeActionBtnText}>Request Items 🛍️</Text>
+                    </View>
+                    <View style={styles.deliveryBadgePill}>
+                      <Text style={styles.deliveryBadgeText}>Custom Orders</Text>
+                    </View>
+                  </View>
+
+                  {/* Bottom Center Dots */}
+                  <View style={styles.paginationDotsRow}>
+                    {sweetsSlides.map((_, i) => (
+                      <View
+                        key={i}
+                        style={[styles.dotIndicator, i === sweetsSlideIndex && styles.dotIndicatorActive]}
+                      />
+                    ))}
+                  </View>
+                </View>
+              </TouchableOpacity>
             </View>
           </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.threeSideBoxesScrollContainer}
-            decelerationRate="fast"
-            snapToInterval={294}
-          >
-            {/* SIDE BOX 1: COURIER & AIR CARGO */}
-            <TouchableOpacity
-              style={[styles.sideBoxCard, { borderColor: '#C88D2B' }]}
-              activeOpacity={0.92}
-              onPress={() => router.push('/send-parcel')}
-            >
-              <Image
-                source={{
-                  uri: 'https://images.unsplash.com/photo-1524492412937-b28074a5d7da?auto=format&fit=crop&q=80&w=800',
-                }}
-                style={styles.sideBoxMediaImage}
-              />
-              <View style={styles.sideBoxGradientOverlay}>
-                <View style={[styles.sideBoxTagPill, { backgroundColor: '#C88D2B' }]}>
-                  <Text style={styles.sideBoxTagText}>AIR CARGO ✈️</Text>
-                </View>
-                <Text style={styles.sideBoxMainTitle}>Send Parcel to Home</Text>
-                <Text style={styles.sideBoxSubtitle}>Direct Express Air Korea ➔ India & Nepal</Text>
-                <View style={styles.sideBoxActionRow}>
-                  <View style={[styles.sideBoxButton, { backgroundColor: '#C88D2B' }]}>
-                    <Text style={styles.sideBoxBtnText}>Send Now ✈️</Text>
-                  </View>
-                  <Text style={styles.sideBoxBadgeMini}>3-5 Days</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
-
-            {/* SIDE BOX 2: FRESH SWEETS */}
-            <TouchableOpacity
-              style={[styles.sideBoxCard, { borderColor: '#D97706' }]}
-              activeOpacity={0.92}
-              onPress={() => setSelectedCategory('Sweets')}
-            >
-              <Image
-                source={{
-                  uri: 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&q=80&w=800',
-                }}
-                style={styles.sideBoxMediaImage}
-              />
-              <View style={styles.sideBoxGradientOverlay}>
-                <View style={[styles.sideBoxTagPill, { backgroundColor: '#D97706' }]}>
-                  <Text style={styles.sideBoxTagText}>FRESH MITHAI 🍬</Text>
-                </View>
-                <Text style={styles.sideBoxMainTitle}>Fresh Sweets & Mithai</Text>
-                <Text style={styles.sideBoxSubtitle}>Gulab Jamun, Kaju Katli & Lakhamari</Text>
-                <View style={styles.sideBoxActionRow}>
-                  <View style={[styles.sideBoxButton, { backgroundColor: '#D97706' }]}>
-                    <Text style={styles.sideBoxBtnText}>Shop Sweets 🍬</Text>
-                  </View>
-                  <Text style={styles.sideBoxBadgeMini}>Fresh Daily</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
-
-            {/* SIDE BOX 3: FESTIVAL JEWELRY */}
-            <TouchableOpacity
-              style={[styles.sideBoxCard, { borderColor: '#B45309' }]}
-              activeOpacity={0.92}
-              onPress={() => setSelectedCategory('Jewelry')}
-            >
-              <Image
-                source={{
-                  uri: 'https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&q=80&w=800',
-                }}
-                style={styles.sideBoxMediaImage}
-              />
-              <View style={styles.sideBoxGradientOverlay}>
-                <View style={[styles.sideBoxTagPill, { backgroundColor: '#B45309' }]}>
-                  <Text style={styles.sideBoxTagText}>NEW ARRIVALS 💎</Text>
-                </View>
-                <Text style={styles.sideBoxMainTitle}>Royal Festival Jewelry</Text>
-                <Text style={styles.sideBoxSubtitle}>24K Kundan Chokers & Tilhari Sets</Text>
-                <View style={styles.sideBoxActionRow}>
-                  <View style={[styles.sideBoxButton, { backgroundColor: '#B45309' }]}>
-                    <Text style={styles.sideBoxBtnText}>Explore Jewelry 💎</Text>
-                  </View>
-                  <Text style={styles.sideBoxBadgeMini}>New In</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
-          </ScrollView>
 
           {/* QUICK VALUE PROPS */}
           <View style={styles.benefitRow}>
@@ -1298,112 +1376,198 @@ const getStyles = (isDark: boolean) => {
     backgroundColor: 'rgba(0,0,0,0.68)',
     padding: 12,
   },
-  // ── Three Side Boxes Carousel ──
-  threeSideBoxesHeaderRow: {
+  // ── Featured Highlights (2 Large Rounded Cards) ──
+  featuredSectionContainer: {
+    marginTop: 20,
+    marginBottom: 20,
+    paddingHorizontal: 16,
+  },
+  featuredHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 18,
-    marginBottom: 10,
-    paddingHorizontal: 4,
+    marginBottom: 14,
   },
-  threeSideBoxesHeaderTitle: {
-    fontSize: 16,
-    fontWeight: '800',
+  featuredHeaderTitle: {
+    fontSize: 20,
+    fontWeight: '900',
     color: isDark ? '#F3F4F6' : '#1F2937',
+    letterSpacing: -0.3,
   },
-  threeSideBoxesBadge: {
-    backgroundColor: isDark ? '#374151' : '#E5E7EB',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
+  arrowControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
-  threeSideBoxesBadgeText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: isDark ? '#F3F4F6' : '#374151',
-  },
-  threeSideBoxesScrollContainer: {
-    paddingRight: 16,
-    gap: 14,
-  },
-  sideBoxCard: {
-    width: 280,
-    height: 200,
+  arrowButton: {
+    width: 32,
+    height: 32,
     borderRadius: 16,
-    overflow: 'hidden',
     borderWidth: 1.5,
-    backgroundColor: isDark ? '#1F2937' : '#F9FAFB',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
+    borderColor: isDark ? '#4B5563' : '#E5E7EB',
+    backgroundColor: isDark ? '#1F2937' : '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  sideBoxMediaImage: {
+  arrowButtonText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: isDark ? '#E5E7EB' : '#374151',
+    marginTop: -2,
+  },
+  featuredCardsGrid: {
+    flexDirection: 'row',
+    gap: 16,
+    flexWrap: 'wrap',
+  },
+  featuredHighlightCard: {
+    flex: 1,
+    minWidth: Platform.OS === 'web' ? 320 : 280,
+    minHeight: 260,
+    height: 270,
+    borderRadius: 22,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: '#1E1E1E',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 6,
+    borderWidth: isDark ? 1 : 0,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  featuredCardBgImage: {
+    ...StyleSheet.absoluteFillObject,
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
   },
-  sideBoxGradientOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    top: 0,
-    backgroundColor: 'rgba(0,0,0,0.52)',
-    justifyContent: 'flex-end',
-    padding: 14,
+  featuredCardGradientOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    padding: 18,
+    justifyContent: 'space-between',
   },
-  sideBoxTagPill: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    marginBottom: 6,
+  cardTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    minHeight: 32,
   },
-  sideBoxTagText: {
-    color: '#FFFFFF',
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  sideBoxMainTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '800',
-    lineHeight: 20,
-  },
-  sideBoxSubtitle: {
-    color: '#E5E7EB',
-    fontSize: 11,
-    marginTop: 3,
-    lineHeight: 15,
-  },
-  sideBoxActionRow: {
+  countryPillBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 10,
-  },
-  sideBoxButton: {
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    gap: 6,
   },
-  sideBoxBtnText: {
+  countryPillFlag: {
+    fontSize: 14,
+  },
+  countryPillText: {
     color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  cardCenterContent: {
+    marginVertical: 'auto',
+  },
+  tagBadgeOrange: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D97706',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    gap: 5,
+    marginBottom: 8,
+  },
+  tagBadgeIcon: {
     fontSize: 11,
+  },
+  tagBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+  },
+  cardMainTitle: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: '900',
+    lineHeight: 26,
+    textShadowColor: 'rgba(0, 0, 0, 0.6)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  cardSubtitle: {
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  cardBottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  orangeActionBtn: {
+    backgroundColor: '#D97706',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 22,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  orangeActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
     fontWeight: '800',
   },
-  sideBoxBadgeMini: {
-    color: '#F3F4F6',
-    fontSize: 10,
-    fontWeight: '600',
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
+  deliveryBadgePill: {
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  deliveryBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  paginationDotsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    position: 'absolute',
+    bottom: 8,
+    left: 0,
+    right: 0,
+  },
+  dotIndicator: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  dotIndicatorActive: {
+    width: 18,
+    backgroundColor: '#D97706',
+    borderRadius: 4,
   },
   adTagPill: {
     backgroundColor: accent,

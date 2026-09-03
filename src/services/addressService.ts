@@ -87,7 +87,27 @@ export const addUserKoreanAddress = async (
 
   const existingAddresses: KoreanAddress[] = data?.addresses || [];
 
-  const addressId = newAddress.id || `kr-addr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+  // Check if address already exists by ID
+  const idMatchIndex = newAddress.id ? existingAddresses.findIndex((a) => a.id === newAddress.id) : -1;
+
+  // Check if address already exists by content
+  const contentMatchIndex = existingAddresses.findIndex((a) =>
+    (a.recipientName || '').trim().toLowerCase() === (newAddress.recipientName || '').trim().toLowerCase() &&
+    (a.phoneNumber || a.phone || '').trim() === (newAddress.phoneNumber || newAddress.phone || '').trim() &&
+    (a.postalCode || '').trim() === (newAddress.postalCode || '').trim() &&
+    (a.address || a.streetAddress || '').trim().toLowerCase() === (newAddress.address || newAddress.streetAddress || '').trim().toLowerCase() &&
+    (a.detailAddress || '').trim().toLowerCase() === (newAddress.detailAddress || '').trim().toLowerCase()
+  );
+
+  const targetIdx = idMatchIndex >= 0 ? idMatchIndex : contentMatchIndex;
+
+  let addressId = newAddress.id;
+  if (targetIdx >= 0) {
+    addressId = existingAddresses[targetIdx].id;
+  } else if (!addressId) {
+    addressId = `kr-addr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+  }
+
   const isFirst = existingAddresses.length === 0;
 
   const fullAddressObj: KoreanAddress = {
@@ -98,12 +118,16 @@ export const addUserKoreanAddress = async (
     isDefault: isFirst ? true : !!newAddress.isDefault,
   };
 
-  // If this new address is set as default, mark previous addresses as non-default
-  const updatedAddresses = fullAddressObj.isDefault
-    ? existingAddresses.map((a) => ({ ...a, isDefault: false }))
-    : existingAddresses;
+  let updatedAddresses = [...existingAddresses];
+  if (fullAddressObj.isDefault) {
+    updatedAddresses = updatedAddresses.map((a) => ({ ...a, isDefault: false }));
+  }
 
-  updatedAddresses.push(fullAddressObj);
+  if (targetIdx >= 0) {
+    updatedAddresses[targetIdx] = { ...updatedAddresses[targetIdx], ...fullAddressObj };
+  } else {
+    updatedAddresses.push(fullAddressObj);
+  }
 
   const { error: updateError } = await supabase
     .from(TABLES.PROFILES)

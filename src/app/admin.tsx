@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
@@ -52,12 +53,30 @@ import {
 import { uploadProductImage } from '@/services/storage';
 import { BankAccountInfo, KOREA_BANK_ACCOUNTS } from '@/data/mockData';
 import {
+  subscribeAllParcelsAdmin,
+  updateParcelStatusAndPriceAdmin,
+  subscribeParcelPricing,
+  saveParcelPricingAdmin,
+  deleteParcelPricingAdmin,
+} from '@/services/parcelService';
+import {
+  subscribeAllItemRequestsAdmin,
+  updateItemRequestAdmin,
+} from '@/services/itemRequestService';
+import { findProductImagesAI } from '@/services/aiImageService';
+import {
   FirestoreUser,
   OrderItem,
   OrderStatus,
   Product,
   BankTransferSettings,
   PaymentVerificationLog,
+  ParcelBookingRequest,
+  ParcelPricingItem,
+  ParcelStatus,
+  ItemRequestRecord,
+  ItemRequestStatus,
+  AIImageOption,
 } from '@/types';
 
 function useScreenWidth() {
@@ -114,6 +133,8 @@ type AdminTab =
   | 'ORDERS'
   | 'PENDING_ORDERS'
   | 'PARCELS'
+  | 'PARCEL_PRICING'
+  | 'ITEM_REQUESTS'
   | 'CUSTOMERS'
   | 'ANALYTICS'
   | 'INVENTORY'
@@ -189,6 +210,28 @@ export default function AdminScreen() {
   const [inventoryFilter, setInventoryFilter] = useState<'ALL' | 'LOW' | 'OUT'>('ALL');
   const [discountFilter, setDiscountFilter] = useState<'ALL' | 'DISCOUNTED'>('ALL');
 
+  // ── ITEM REQUESTS SYSTEM STATES ─────────────────────────────────────────
+  const [allItemRequests, setAllItemRequests] = useState<ItemRequestRecord[]>([]);
+  const [hasNewPendingItemReq, setHasNewPendingItemReq] = useState(false);
+  const [itemReqSearch, setItemReqSearch] = useState('');
+  const [allParcelRequests, setAllParcelRequests] = useState<ParcelBookingRequest[]>([]);
+  const [hasNewPendingParcel, setHasNewPendingParcel] = useState(false);
+  const [pricingItemsAdmin, setPricingItemsAdmin] = useState<ParcelPricingItem[]>([]);
+  const [selectedAdminParcel, setSelectedAdminParcel] = useState<ParcelBookingRequest | null>(null);
+  const [confirmPriceInput, setConfirmPriceInput] = useState('');
+  const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
+  const [editingPricingItem, setEditingPricingItem] = useState<ParcelPricingItem | null>(null);
+
+  // Pricing Item Form
+  const [pTitle, setPTitle] = useState('');
+  const [pCategory, setPCategory] = useState('general');
+  const [pIcon, setPIcon] = useState('📦');
+  const [pUnitPrice, setPUnitPrice] = useState('10000');
+  const [pUnit, setPUnit] = useState<'per_item' | 'per_kg'>('per_item');
+  const [pDesc, setPDesc] = useState('');
+  const [pWeight, setPWeight] = useState('1.0');
+  const [pActive, setPActive] = useState(true);
+
   // ── MODAL STATES ────────────────────────────────────────────────────────
   const [selectedOrder, setSelectedOrder] = useState<OrderItem | null>(null);
   const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
@@ -196,6 +239,7 @@ export default function AdminScreen() {
   // ── ADD / EDIT PRODUCT FORM STATES ──────────────────────────────────────
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [fName, setFName] = useState('');
+  const [fBrand, setFBrand] = useState('');
   const [fCategory, setFCategory] = useState('Rice');
   const [fDescription, setFDescription] = useState('');
   const [fImage, setFImage] = useState('');
@@ -204,6 +248,11 @@ export default function AdminScreen() {
   const [fStock, setFStock] = useState('50');
   const [fAvailable, setFAvailable] = useState(true);
   const [productLoading, setProductLoading] = useState(false);
+
+  // ── AI PRODUCT IMAGE FINDER STATES ──────────────────────────────────────
+  const [aiImageOptions, setAiImageOptions] = useState<AIImageOption[]>([]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   // Auto-calculated final price based on original price and discount percentage
   const basePriceNum = parseInt(fPriceKRW, 10) || 0;
@@ -251,6 +300,35 @@ export default function AdminScreen() {
     if (!isAuthenticated) return;
     const unsub = subscribeAllUsersAdmin((users) => {
       setAllCustomers(users);
+    });
+    return () => unsub();
+  }, [isAuthenticated]);
+
+  // ── SUBSCRIBE TO ITEM REQUESTS (India/Nepal -> Korea) IN REAL TIME ───────
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const unsub = subscribeAllItemRequestsAdmin((requests, hasPending) => {
+      setAllItemRequests(requests);
+      setHasNewPendingItemReq(hasPending);
+    });
+    return () => unsub();
+  }, [isAuthenticated]);
+
+  // ── SUBSCRIBE TO PARCEL BOOKINGS IN REAL TIME ───────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const unsub = subscribeAllParcelsAdmin((parcels, hasNewPending) => {
+      setAllParcelRequests(parcels);
+      setHasNewPendingParcel(hasNewPending);
+    });
+    return () => unsub();
+  }, [isAuthenticated]);
+
+  // ── SUBSCRIBE TO PARCEL PRICING IN REAL TIME ────────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const unsub = subscribeParcelPricing((items) => {
+      setPricingItemsAdmin(items);
     });
     return () => unsub();
   }, [isAuthenticated]);
@@ -501,6 +579,7 @@ export default function AdminScreen() {
   const openAddProductModal = () => {
     setEditingProduct(null);
     setFName('');
+    setFBrand('');
     setFCategory('Rice');
     setFDescription('');
     setFImage('https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500');
@@ -508,12 +587,15 @@ export default function AdminScreen() {
     setFDiscountPercent('0');
     setFStock('50');
     setFAvailable(true);
+    setAiImageOptions([]);
+    setAiError(null);
     setActiveTab('ADD_PRODUCT');
   };
 
   const openEditProductModal = (product: Product) => {
     setEditingProduct(product);
     setFName(product.name);
+    setFBrand(product.brand || '');
     setFCategory(product.category);
     setFDescription(product.description || '');
     setFImage(product.image || product.imageUrl || '');
@@ -521,7 +603,34 @@ export default function AdminScreen() {
     setFDiscountPercent((product.discountPercent ?? 0).toString());
     setFStock((product.stock ?? 50).toString());
     setFAvailable(product.available !== false);
+    setAiImageOptions([]);
+    setAiError(null);
     setActiveTab('ADD_PRODUCT');
+  };
+
+  const handleAiFindImage = async () => {
+    if (!fName.trim() && !fCategory.trim()) {
+      Alert.alert('Product Name Required', 'Please enter a product name (e.g. Kurkure, Ladoo, Wai Wai Noodles) before finding AI images.');
+      return;
+    }
+
+    try {
+      setAiLoading(true);
+      setAiError(null);
+      const options = await findProductImagesAI({
+        name: fName,
+        brand: fBrand,
+        category: fCategory,
+        description: fDescription,
+      });
+      setAiImageOptions(options);
+    } catch (err: any) {
+      console.log('AI Image Search error:', err.message);
+      setAiError('No suitable image found. Please upload an image manually.');
+      setAiImageOptions([]);
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   const handlePickProductImage = async () => {
@@ -594,6 +703,7 @@ export default function AdminScreen() {
 
       const payload: Partial<Product> = {
         name: fName.trim(),
+        brand: fBrand.trim() || undefined,
         category: fCategory,
         description: fDescription.trim(),
         image: resolvedImg,
@@ -632,22 +742,40 @@ export default function AdminScreen() {
   };
 
   const handleDeleteProduct = (product: Product) => {
-    Alert.alert('Delete Product', `Are you sure you want to permanently remove "${product.name}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteProductFromFirestore(product.id);
-            deleteProduct(product.id);
-            Alert.alert('Deleted', 'Product was removed.');
-          } catch (err: any) {
-            Alert.alert('Error', err.message);
-          }
+    if (isProcessingAction) return;
+
+    Alert.alert(
+      'Delete Product',
+      `Are you sure you want to delete "${product.name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            if (isProcessingAction) return;
+            try {
+              setIsProcessingAction(true);
+              setProductLoading(true);
+
+              // 1. Delete from Firebase/Firestore, Supabase, and Storage
+              await deleteProductFromFirestore(product.id, product);
+
+              // 2. Immediately update local Admin & Customer UI state
+              deleteProduct(product.id);
+
+              Alert.alert('Success ✅', 'Product deleted successfully.');
+            } catch (err: any) {
+              console.error('Delete product error:', err);
+              Alert.alert('Delete Error ❌', err.message || 'Failed to delete product from database.');
+            } finally {
+              setIsProcessingAction(false);
+              setProductLoading(false);
+            }
+          },
         },
-      },
-    ]);
+      ]
+    );
   };
 
   const handleQuickStockUpdate = async (product: Product, delta: number) => {
@@ -1103,6 +1231,13 @@ export default function AdminScreen() {
     { id: 'ORDERS', label: 'Orders', icon: '🛍️', badge: allOrders.length },
     { id: 'PENDING_ORDERS', label: 'Pending Orders', icon: '⏳', badge: stats.pendingOrdersCount },
     { id: 'PARCELS', label: 'Parcel Management', icon: '🚚', badge: stats.pendingParcelsCount },
+    { id: 'PARCEL_PRICING', label: 'Parcel Pricing Settings', icon: '⚙️' },
+    {
+      id: 'ITEM_REQUESTS',
+      label: 'Item Requests to Korea',
+      icon: '🛍️',
+      badge: allItemRequests.filter((r) => r.status === 'Pending Review' || r.status === 'pending').length || undefined,
+    },
     { id: 'CUSTOMERS', label: 'Customers', icon: '👥', badge: allCustomers.length },
     { id: 'ANALYTICS', label: 'Sales & Analytics', icon: '📈' },
     { id: 'INVENTORY', label: 'Inventory / Stock', icon: '🏭', badge: stats.lowStockCount > 0 ? stats.lowStockCount : undefined },
@@ -1308,6 +1443,8 @@ export default function AdminScreen() {
                 isEditing={!!editingProduct}
                 name={fName}
                 setName={setFName}
+                brand={fBrand}
+                setBrand={setFBrand}
                 category={fCategory}
                 setCategory={setFCategory}
                 desc={fDescription}
@@ -1324,6 +1461,10 @@ export default function AdminScreen() {
                 available={fAvailable}
                 setAvailable={setFAvailable}
                 loading={productLoading}
+                aiOptions={aiImageOptions}
+                aiLoading={aiLoading}
+                aiError={aiError}
+                onAiFindImage={handleAiFindImage}
                 onPickImage={handlePickProductImage}
                 onSave={handleSaveProduct}
                 onCancel={() => setActiveTab('PRODUCTS')}
@@ -1365,10 +1506,31 @@ export default function AdminScreen() {
             {activeTab === 'PARCELS' && (
               <ParcelManagementSection
                 S={S}
-                parcels={parcelItems}
+                parcels={allParcelRequests}
                 search={parcelSearch}
                 setSearch={setParcelSearch}
-                onUpdateParcelStatus={handleUpdateParcelStatus}
+                onUpdateParcelStatus={updateParcelStatusAndPriceAdmin}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
+            {activeTab === 'PARCEL_PRICING' && (
+              <ParcelPricingSection
+                S={S}
+                pricingItems={pricingItemsAdmin}
+                onSavePricing={saveParcelPricingAdmin}
+                onDeletePricing={deleteParcelPricingAdmin}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
+            {activeTab === 'ITEM_REQUESTS' && (
+              <ItemRequestsManagementSection
+                S={S}
+                requests={allItemRequests}
+                search={itemReqSearch}
+                setSearch={setItemReqSearch}
+                onUpdateItemRequest={updateItemRequestAdmin}
                 isDarkMode={isDarkMode}
               />
             )}
@@ -1908,13 +2070,13 @@ function ProductsManagementSection({
 }
 
 /**
- * 3. ADD / EDIT PRODUCT SECTION
+ * 3. ADD / EDIT PRODUCT SECTION (With AI Automatic Product Image Finder)
  */
 function AddProductSection({
-  S, isEditing, name, setName, category, setCategory, desc, setDesc,
+  S, isEditing, name, setName, brand, setBrand, category, setCategory, desc, setDesc,
   image, setImage, price, setPrice, discountPct, setDiscountPct,
   calculatedFinalPrice, stock, setStock, available, setAvailable,
-  loading, onPickImage, onSave, onCancel, isDarkMode,
+  loading, aiOptions, aiLoading, aiError, onAiFindImage, onPickImage, onSave, onCancel, isDarkMode,
 }: any) {
   return (
     <View style={S.panelContainer}>
@@ -1926,10 +2088,20 @@ function AddProductSection({
         <Text style={S.formLabel}>Product Name *</Text>
         <TextInput
           style={S.formInput}
-          placeholder="e.g. Royal Basmati Rice 5kg"
+          placeholder="e.g. Kurkure Masala Munch, Wai Wai Noodles, Ladoo"
           placeholderTextColor={isDarkMode ? '#666' : '#999'}
           value={name}
           onChangeText={setName}
+        />
+
+        {/* Brand / Manufacturer */}
+        <Text style={S.formLabel}>Brand / Manufacturer (Optional)</Text>
+        <TextInput
+          style={S.formInput}
+          placeholder="e.g. Haldiram, Kurkure, Wai Wai, Amul, Lays"
+          placeholderTextColor={isDarkMode ? '#666' : '#999'}
+          value={brand}
+          onChangeText={setBrand}
         />
 
         {/* Category */}
@@ -1957,14 +2129,130 @@ function AddProductSection({
           multiline
         />
 
-        {/* Product Photo Upload */}
-        <Text style={S.formLabel}>Product Photo *</Text>
+        {/* Product Photo Header & AI Find Image Button */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, marginBottom: 8 }}>
+          <Text style={[S.formLabel, { marginBottom: 0 }]}>Product Photo *</Text>
+
+          <TouchableOpacity
+            style={[
+              {
+                backgroundColor: '#D97706',
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 10,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+              },
+              aiLoading && { opacity: 0.6 },
+            ]}
+            onPress={onAiFindImage}
+            disabled={aiLoading}
+            activeOpacity={0.8}
+          >
+            {aiLoading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <>
+                <Text style={{ fontSize: 13 }}>✨</Text>
+                <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '800' }}>AI Find Image</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* AI Candidates Options Drawer / Grid (3-4 Choices) */}
+        {aiLoading && (
+          <View style={{ backgroundColor: isDarkMode ? '#2D271E' : '#FFFBEB', borderRadius: 12, padding: 14, marginBottom: 12, alignItems: 'center', borderWidth: 1, borderColor: '#FDE68A' }}>
+            <ActivityIndicator color="#D97706" size="small" />
+            <Text style={{ fontSize: 12, fontWeight: '800', color: '#B45309', marginTop: 6 }}>
+              ✨ AI is searching suitable images for "{name || category}"...
+            </Text>
+          </View>
+        )}
+
+        {aiError && !aiLoading && (
+          <View style={{ backgroundColor: '#FEE2E2', borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#FCA5A5' }}>
+            <Text style={{ fontSize: 12, fontWeight: '800', color: '#991B1B' }}>⚠️ {aiError}</Text>
+            <TouchableOpacity
+              style={{ marginTop: 6, backgroundColor: '#DC2626', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, alignSelf: 'flex-start' }}
+              onPress={onAiFindImage}
+            >
+              <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '800' }}>Retry AI Search 🔄</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {aiOptions && aiOptions.length > 0 && !aiLoading && (
+          <View style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F9FAFB', borderRadius: 14, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: '#D97706' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={{ fontSize: 13, fontWeight: '900', color: isDarkMode ? '#FFF' : '#111' }}>
+                ✨ AI Found {aiOptions.length} Image Options (Select One):
+              </Text>
+              <TouchableOpacity onPress={onAiFindImage}>
+                <Text style={{ fontSize: 11, color: '#D97706', fontWeight: '800' }}>Retry 🔄</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
+              {aiOptions.map((opt: AIImageOption) => {
+                const isSelected = image === opt.url;
+                return (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[
+                      {
+                        width: 120,
+                        backgroundColor: isDarkMode ? '#262626' : '#FFFFFF',
+                        borderRadius: 12,
+                        padding: 6,
+                        borderWidth: 2,
+                        borderColor: isSelected ? '#10B981' : isDarkMode ? '#444' : '#E5E7EB',
+                        alignItems: 'center',
+                      },
+                      isSelected && { backgroundColor: isDarkMode ? '#14382B' : '#ECFDF5' },
+                    ]}
+                    onPress={() => setImage(opt.url)}
+                    activeOpacity={0.8}
+                  >
+                    <Image source={{ uri: opt.url }} style={{ width: 106, height: 90, borderRadius: 8, resizeMode: 'cover' }} />
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: isDarkMode ? '#EEE' : '#333', marginTop: 4, textAlign: 'center' }} numberOfLines={1}>
+                      {opt.title}
+                    </Text>
+                    <Text style={{ fontSize: 9, color: '#D97706', marginTop: 1 }} numberOfLines={1}>
+                      {opt.source}
+                    </Text>
+                    <View style={[{ marginTop: 6, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: isSelected ? '#10B981' : '#D97706' }]}>
+                      <Text style={{ color: '#FFFFFF', fontSize: 9, fontWeight: '900' }}>
+                        {isSelected ? 'SELECTED ✓' : 'Select ✅'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* Selected Image Preview & Control Box */}
         <View style={S.photoUploadRow}>
-          <Image source={{ uri: image || 'https://via.placeholder.com/100' }} style={S.photoPreview} />
+          <View style={{ position: 'relative' }}>
+            <Image source={{ uri: image || 'https://via.placeholder.com/100' }} style={S.photoPreview} />
+            {image ? (
+              <TouchableOpacity
+                style={{ position: 'absolute', top: -6, right: -6, backgroundColor: '#EF4444', width: 20, height: 20, borderRadius: 10, justifyContent: 'center', alignItems: 'center' }}
+                onPress={() => setImage('')}
+              >
+                <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>✕</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
           <View style={{ flex: 1, gap: 8 }}>
             <TouchableOpacity style={S.photoPickBtn} onPress={onPickImage}>
               <Text style={S.photoPickBtnText}>📷 Upload from Device</Text>
             </TouchableOpacity>
+
             <TextInput
               style={[S.formInput, { marginBottom: 0 }]}
               placeholder="Or paste image URL"
@@ -1972,6 +2260,12 @@ function AddProductSection({
               value={image}
               onChangeText={setImage}
             />
+
+            {image ? (
+              <TouchableOpacity style={{ alignSelf: 'flex-start' }} onPress={() => setImage('')}>
+                <Text style={{ fontSize: 11, color: '#EF4444', fontWeight: '800' }}>Clear/Remove Image 🗑️</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
 
@@ -2292,74 +2586,806 @@ function PendingOrdersSection({
 }
 
 /**
- * 6. PARCEL MANAGEMENT SYSTEM
+ * 6. PARCEL MANAGEMENT SYSTEM (📦 Parcel Orders & Admin Controls)
  */
 function ParcelManagementSection({ S, parcels, search, setSearch, onUpdateParcelStatus, isDarkMode }: any) {
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [selectedParcel, setSelectedParcel] = useState<ParcelBookingRequest | null>(null);
+  const [priceInputMap, setPriceInputMap] = useState<Record<string, string>>({});
+  const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
+
+  const filteredParcels = useMemo(() => {
+    return parcels.filter((p: ParcelBookingRequest) => {
+      const q = (search || '').toLowerCase();
+      const pId = (p.parcelId || '').toLowerCase();
+      const cName = (p.customer?.name || '').toLowerCase();
+      const cPhone = (p.customer?.phone || '').toLowerCase();
+      const rName = (p.recipient?.name || '').toLowerCase();
+      const rCity = (p.recipient?.city || '').toLowerCase();
+
+      const matchesSearch =
+        !q ||
+        pId.includes(q) ||
+        cName.includes(q) ||
+        cPhone.includes(q) ||
+        rName.includes(q) ||
+        rCity.includes(q);
+
+      if (!matchesSearch) return false;
+
+      if (statusFilter === 'PENDING') return p.status === 'Pending Review' || p.status === 'pending';
+      if (statusFilter === 'PRICE_CONFIRMED') return p.status === 'Price Confirmed';
+      if (statusFilter === 'PAYMENT_PENDING') return p.status === 'Payment Pending' || p.status === 'submitted';
+      if (statusFilter === 'IN_TRANSIT') return p.status === 'Shipped' || p.status === 'In Transit';
+      if (statusFilter === 'DELIVERED') return p.status === 'Delivered';
+
+      return true;
+    });
+  }, [parcels, search, statusFilter]);
+
+  const handleConfirmPrice = async (parcelId: string) => {
+    const enteredPrice = parseInt(priceInputMap[parcelId] || '0', 10);
+    if (!enteredPrice || enteredPrice <= 0) {
+      Alert.alert('Price Required', 'Please enter a valid final confirmed price in KRW.');
+      return;
+    }
+
+    try {
+      await onUpdateParcelStatus(parcelId, {
+        finalConfirmedPriceKRW: enteredPrice,
+        status: 'Price Confirmed',
+        paymentStatus: 'payment_pending',
+      });
+      Alert.alert('Price Confirmed ✅', `Final price of ₩${enteredPrice.toLocaleString()} confirmed for ${parcelId}. Customer can now proceed to payment.`);
+    } catch (e: any) {
+      Alert.alert('Update Error', e.message || 'Could not update price.');
+    }
+  };
+
+  const handleQuickStatusChange = async (parcelId: string, newStatus: ParcelStatus) => {
+    try {
+      await onUpdateParcelStatus(parcelId, { status: newStatus });
+      Alert.alert('Status Updated', `Parcel ${parcelId} status changed to "${newStatus}".`);
+    } catch (e: any) {
+      Alert.alert('Update Error', e.message || 'Could not update status.');
+    }
+  };
+
   return (
     <View style={S.panelContainer}>
-      <Text style={S.panelHeading}>Parcel Management System ({parcels.length})</Text>
-      <Text style={S.panelSub}>Track shipments, dispatch status, carrier updates, and direct delivery</Text>
+      <Text style={S.panelHeading}>📦 Parcel Orders Management ({parcels.length})</Text>
+      <Text style={S.panelSub}>Real-time review of customer parcel requests, price confirmations, and status updates</Text>
+
+      {/* Filter Tabs */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 10 }}>
+        {[
+          { id: 'ALL', label: 'All Parcels' },
+          { id: 'PENDING', label: 'Pending Review ⏳' },
+          { id: 'PRICE_CONFIRMED', label: 'Price Confirmed 🎉' },
+          { id: 'PAYMENT_PENDING', label: 'Payment Pending 💳' },
+          { id: 'IN_TRANSIT', label: 'In Transit ✈️' },
+          { id: 'DELIVERED', label: 'Delivered ✓' },
+        ].map((f) => (
+          <TouchableOpacity
+            key={f.id}
+            style={[
+              { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, backgroundColor: isDarkMode ? '#262626' : '#F3F4F6' },
+              statusFilter === f.id && { backgroundColor: '#D97706' },
+            ]}
+            onPress={() => setStatusFilter(f.id)}
+          >
+            <Text style={[{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#D1D5DB' : '#4B5563' }, statusFilter === f.id && { color: '#FFFFFF', fontWeight: '800' }]}>
+              {f.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <View style={S.searchBox}>
         <Text style={S.searchIcon}>🔍</Text>
         <TextInput
           style={S.searchInput}
-          placeholder="Search parcels by ID, recipient, or phone..."
+          placeholder="Search by Parcel ID, customer name, recipient or phone..."
           placeholderTextColor={isDarkMode ? '#666' : '#999'}
           value={search}
           onChangeText={setSearch}
         />
       </View>
 
-      {parcels.length === 0 ? (
+      {filteredParcels.length === 0 ? (
         <View style={S.emptyStateBox}>
-          <Text style={{ fontSize: 40 }}>🚚</Text>
-          <Text style={S.emptyTitle}>No Parcels Recorded</Text>
-          <Text style={S.emptySub}>All customer shipments will appear here automatically.</Text>
+          <Text style={{ fontSize: 40 }}>📦</Text>
+          <Text style={S.emptyTitle}>No Parcel Orders Found</Text>
+          <Text style={S.emptySub}>No submitted parcel requests match your current search or filter.</Text>
         </View>
       ) : (
-        parcels.map((parcel: any) => (
-          <View key={parcel.id} style={S.parcelCard}>
-            <View style={S.parcelHeaderRow}>
-              <View>
-                <Text style={S.parcelIdTitle}>📦 Parcel ID: {parcel.id}</Text>
-                <Text style={S.parcelDateSub}>{new Date(parcel.orderDate).toLocaleString()}</Text>
+        filteredParcels.map((parcel: ParcelBookingRequest) => {
+          const isPendingReview = parcel.status === 'Pending Review' || parcel.status === 'pending';
+          const currentPriceInput = priceInputMap[parcel.parcelId] ?? (parcel.finalConfirmedPriceKRW ? String(parcel.finalConfirmedPriceKRW) : String(parcel.estimatedPriceKRW || ''));
+
+          return (
+            <View key={parcel.parcelId} style={S.parcelCard}>
+              {/* Header */}
+              <View style={S.parcelHeaderRow}>
+                <View>
+                  <Text style={S.parcelIdTitle}>📦 Parcel ID: {parcel.parcelId}</Text>
+                  <Text style={S.parcelDateSub}>
+                    Submitted: {new Date(parcel.createdAt).toLocaleString()} • {parcel.destinationCountry === 'India' ? 'India 🇮🇳' : 'Nepal 🇳🇵'}
+                  </Text>
+                </View>
+                <View style={[S.parcelBadgePill, isPendingReview && { backgroundColor: '#FEF3C7' }]}>
+                  <Text style={[S.parcelBadgePillText, isPendingReview && { color: '#B45309' }]}>
+                    {parcel.status}
+                  </Text>
+                </View>
               </View>
-              <View style={S.parcelBadgePill}>
-                <Text style={S.parcelBadgePillText}>{parcel.parcelStatus}</Text>
+
+              {/* Customer & Recipient Grid */}
+              <View style={S.parcelDetailsBox}>
+                <Text style={S.parcelDetailRow}>
+                  <Text style={S.bold}>Sender (Korea 🇰🇷):</Text> {parcel.customer?.name} ({parcel.customer?.phone})
+                </Text>
+                <Text style={S.parcelDetailRow}>
+                  <Text style={S.bold}>Korea Pickup Addr:</Text> {parcel.customer?.koreaAddress}
+                </Text>
+                <Text style={S.parcelDetailRow}>
+                  <Text style={S.bold}>Recipient ({parcel.destinationCountry}):</Text> {parcel.recipient?.name} ({parcel.recipient?.phone})
+                </Text>
+                <Text style={S.parcelDetailRow}>
+                  <Text style={S.bold}>Recipient Address:</Text> {parcel.recipient?.address}, {parcel.recipient?.city} (Postal: {parcel.recipient?.postalCode})
+                </Text>
+                {parcel.customerNotes ? (
+                  <Text style={S.parcelDetailRow}>
+                    <Text style={S.bold}>Customer Notes:</Text> "{parcel.customerNotes}"
+                  </Text>
+                ) : null}
+              </View>
+
+              {/* Items Breakdown */}
+              <View style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF', borderRadius: 10, padding: 10, marginVertical: 6, borderWidth: 1, borderColor: isDarkMode ? '#333' : '#E5E7EB' }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: isDarkMode ? '#FFF' : '#111', marginBottom: 6 }}>
+                  Parcel Items ({parcel.items?.length || 0}) • Total Weight: {parcel.totalWeightKg} kg
+                </Text>
+                {parcel.items?.map((item, idx) => (
+                  <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                    {item.photoUrl && (
+                      <TouchableOpacity onPress={() => setPreviewPhotoUrl(item.photoUrl || null)}>
+                        <Image source={{ uri: item.photoUrl }} style={{ width: 36, height: 36, borderRadius: 6 }} />
+                      </TouchableOpacity>
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#EEE' : '#333' }}>{item.name}</Text>
+                      <Text style={{ fontSize: 10, color: isDarkMode ? '#AAA' : '#666' }}>
+                        Qty: {item.quantity} • Weight: {item.weightKg} kg {item.description ? `• "${item.description}"` : ''}
+                      </Text>
+                    </View>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#D97706' }}>
+                      {item.calculatedPriceKRW > 0 ? `₩${item.calculatedPriceKRW.toLocaleString()}` : 'Price Pending'}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* Admin Price Control Box */}
+              <View style={{ backgroundColor: isDarkMode ? '#2D271E' : '#FFFBEB', borderRadius: 10, padding: 12, marginVertical: 6, borderWidth: 1, borderColor: '#FDE68A' }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#B45309', marginBottom: 6 }}>
+                  ⚙️ Admin Price Confirmation Control
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 10, color: isDarkMode ? '#D1D5DB' : '#78350F', fontWeight: '700' }}>
+                      Confirm Final Price (KRW ₩)
+                    </Text>
+                    <TextInput
+                      style={{
+                        backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+                        borderWidth: 1,
+                        borderColor: '#D97706',
+                        borderRadius: 8,
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        fontSize: 13,
+                        fontWeight: '800',
+                        color: isDarkMode ? '#FFFFFF' : '#111827',
+                        marginTop: 4,
+                      }}
+                      keyboardType="numeric"
+                      value={currentPriceInput}
+                      onChangeText={(val) => setPriceInputMap((prev) => ({ ...prev, [parcel.parcelId]: val }))}
+                      placeholder="e.g. 275000"
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={{ backgroundColor: '#D97706', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, marginTop: 16 }}
+                    onPress={() => handleConfirmPrice(parcel.parcelId)}
+                  >
+                    <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '800' }}>Confirm Price ✅</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ fontSize: 10, color: '#92400E', marginTop: 4 }}>
+                  Estimated Charge: ₩{(parcel.estimatedPriceKRW || 0).toLocaleString()} | Confirmed: {parcel.finalConfirmedPriceKRW ? `₩${parcel.finalConfirmedPriceKRW.toLocaleString()}` : 'Awaiting Confirmation'}
+                </Text>
+              </View>
+
+              {/* Status Update Quick Grid */}
+              <Text style={S.parcelActionLabel}>Update Parcel Lifecycle Status:</Text>
+              <View style={S.parcelActionsGrid}>
+                <TouchableOpacity style={S.parcelBtn} onPress={() => handleQuickStatusChange(parcel.parcelId, 'Price Confirmed')}>
+                  <Text style={S.parcelBtnText}>🎉 Price Confirmed</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={S.parcelBtn} onPress={() => handleQuickStatusChange(parcel.parcelId, 'Payment Pending')}>
+                  <Text style={S.parcelBtnText}>💳 Payment Pending</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={S.parcelBtn} onPress={() => handleQuickStatusChange(parcel.parcelId, 'Parcel Received')}>
+                  <Text style={S.parcelBtnText}>📥 Parcel Received</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={S.parcelBtn} onPress={() => handleQuickStatusChange(parcel.parcelId, 'Packed')}>
+                  <Text style={S.parcelBtnText}>🎁 Packed</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={S.parcelBtn} onPress={() => handleQuickStatusChange(parcel.parcelId, 'Shipped')}>
+                  <Text style={S.parcelBtnText}>🚚 Shipped</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={S.parcelBtn} onPress={() => handleQuickStatusChange(parcel.parcelId, 'In Transit')}>
+                  <Text style={S.parcelBtnText}>✈️ In Transit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[S.parcelBtn, { backgroundColor: '#10B98120' }]} onPress={() => handleQuickStatusChange(parcel.parcelId, 'Delivered')}>
+                  <Text style={[S.parcelBtnText, { color: '#10B981' }]}>✅ Delivered</Text>
+                </TouchableOpacity>
               </View>
             </View>
+          );
+        })
+      )}
 
-            <View style={S.parcelDetailsBox}>
-              <Text style={S.parcelDetailRow}><Text style={S.bold}>Customer:</Text> {parcel.customerName}</Text>
-              <Text style={S.parcelDetailRow}><Text style={S.bold}>Contact:</Text> {parcel.phone} · {parcel.email}</Text>
-              <Text style={S.parcelDetailRow}><Text style={S.bold}>Delivery Address:</Text> {parcel.deliveryAddress}</Text>
-              <Text style={S.parcelDetailRow}><Text style={S.bold}>Items:</Text> {parcel.itemsSummary}</Text>
-              <Text style={S.parcelDetailRow}><Text style={S.bold}>Total Quantity:</Text> {parcel.totalQuantity} items</Text>
+      {/* Item Photo Preview Modal */}
+      <Modal visible={!!previewPhotoUrl} transparent animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          {previewPhotoUrl && <Image source={{ uri: previewPhotoUrl }} style={{ width: '90%', height: 350, borderRadius: 16, resizeMode: 'contain' }} />}
+          <TouchableOpacity style={{ marginTop: 16, backgroundColor: '#D97706', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 12 }} onPress={() => setPreviewPhotoUrl(null)}>
+            <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '800' }}>Close Preview</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+/**
+ * 6.5 PARCEL PRICING CONTROL SECTION (⚙️ Admin Parcel Pricing)
+ */
+function ParcelPricingSection({ S, pricingItems, onSavePricing, onDeletePricing, isDarkMode }: any) {
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [title, setTitle] = useState('');
+  const [category, setCategory] = useState('general');
+  const [icon, setIcon] = useState('📦');
+  const [unitPrice, setUnitPrice] = useState('10000');
+  const [unit, setUnit] = useState<'per_item' | 'per_kg'>('per_item');
+  const [rateDesc, setRateDesc] = useState('');
+  const [defaultWeight, setDefaultWeight] = useState('1.0');
+  const [active, setActive] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const openAddModal = () => {
+    setEditingId(null);
+    setTitle('');
+    setCategory('general');
+    setIcon('📦');
+    setUnitPrice('10000');
+    setUnit('per_item');
+    setRateDesc('');
+    setDefaultWeight('1.0');
+    setActive(true);
+    setModalVisible(true);
+  };
+
+  const openEditModal = (item: ParcelPricingItem) => {
+    setEditingId(item.id);
+    setTitle(item.title);
+    setCategory(item.category);
+    setIcon(item.icon);
+    setUnitPrice(String(item.unitPriceKRW));
+    setUnit(item.pricingUnit);
+    setRateDesc(item.rateDescription || '');
+    setDefaultWeight(String(item.defaultWeightKg || 1));
+    setActive(item.active !== false);
+    setModalVisible(true);
+  };
+
+  const handleSave = async () => {
+    if (!title.trim() || !unitPrice.trim()) {
+      Alert.alert('Missing Fields', 'Please provide a title and unit price.');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await onSavePricing({
+        id: editingId || undefined,
+        title: title.trim(),
+        category: category.trim(),
+        icon: icon.trim() || '📦',
+        unitPriceKRW: parseInt(unitPrice, 10) || 10000,
+        pricingUnit: unit,
+        rateDescription: rateDesc.trim(),
+        defaultWeightKg: parseFloat(defaultWeight) || 1.0,
+        defaultName: title.trim(),
+        active,
+      });
+
+      Alert.alert('Saved ✅', `Parcel pricing item "${title}" updated.`);
+      setModalVisible(false);
+    } catch (err: any) {
+      Alert.alert('Save Error', err.message || 'Could not save pricing.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string, itemTitle: string) => {
+    Alert.alert('Delete Pricing Item', `Are you sure you want to delete "${itemTitle}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await onDeletePricing(id);
+            Alert.alert('Deleted', 'Pricing item removed.');
+          } catch (e: any) {
+            Alert.alert('Delete Error', e.message);
+          }
+        },
+      },
+    ]);
+  };
+
+  return (
+    <View style={S.panelContainer}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <View>
+          <Text style={S.panelHeading}>⚙️ Parcel Pricing Settings ({pricingItems.length})</Text>
+          <Text style={S.panelSub}>Dynamic shipping rates for predefined items & cargo weight</Text>
+        </View>
+
+        <TouchableOpacity style={{ backgroundColor: '#D97706', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10 }} onPress={openAddModal}>
+          <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '800' }}>+ Add Pricing Item</Text>
+        </TouchableOpacity>
+      </View>
+
+      {pricingItems.length === 0 ? (
+        <View style={S.emptyStateBox}>
+          <Text style={{ fontSize: 40 }}>⚙️</Text>
+          <Text style={S.emptyTitle}>No Custom Pricing Items</Text>
+          <Text style={S.emptySub}>Default pricing will be used automatically.</Text>
+        </View>
+      ) : (
+        pricingItems.map((item: ParcelPricingItem) => (
+          <View key={item.id} style={{ backgroundColor: isDarkMode ? '#262626' : '#FFFFFF', borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: isDarkMode ? '#333' : '#E5E7EB', flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <Text style={{ fontSize: 28 }}>{item.icon}</Text>
+
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={{ fontSize: 15, fontWeight: '900', color: isDarkMode ? '#FFF' : '#111' }}>{item.title}</Text>
+                <View style={{ backgroundColor: item.active !== false ? '#DCFCE7' : '#FEE2E2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                  <Text style={{ fontSize: 9, fontWeight: '800', color: item.active !== false ? '#15803D' : '#991B1B' }}>
+                    {item.active !== false ? 'ACTIVE' : 'INACTIVE'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={{ fontSize: 12, fontWeight: '800', color: '#D97706', marginTop: 2 }}>
+                ₩{item.unitPriceKRW.toLocaleString()} {item.pricingUnit === 'per_kg' ? '/ kg' : '/ item'}
+              </Text>
+              <Text style={{ fontSize: 11, color: isDarkMode ? '#AAA' : '#666', marginTop: 2 }}>
+                {item.rateDescription || 'Standard rate'}
+              </Text>
             </View>
 
-            {/* Parcel Quick Status Updates per Prompt */}
-            <Text style={S.parcelActionLabel}>Update Parcel Status:</Text>
-            <View style={S.parcelActionsGrid}>
-              <TouchableOpacity style={S.parcelBtn} onPress={() => onUpdateParcelStatus(parcel.orderId, 'Parcel Received')}>
-                <Text style={S.parcelBtnText}>📥 Parcel Received</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity style={{ backgroundColor: isDarkMode ? '#374151' : '#F3F4F6', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }} onPress={() => openEditModal(item)}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: isDarkMode ? '#FFF' : '#333' }}>Edit</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={S.parcelBtn} onPress={() => onUpdateParcelStatus(parcel.orderId, 'Preparing for Dispatch')}>
-                <Text style={S.parcelBtnText}>📦 Preparing Dispatch</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={S.parcelBtn} onPress={() => onUpdateParcelStatus(parcel.orderId, 'Shipped')}>
-                <Text style={S.parcelBtnText}>🚚 Shipped</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={S.parcelBtn} onPress={() => onUpdateParcelStatus(parcel.orderId, 'Out for Delivery')}>
-                <Text style={S.parcelBtnText}>🏃 Out for Delivery</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[S.parcelBtn, { backgroundColor: '#10B98120' }]} onPress={() => onUpdateParcelStatus(parcel.orderId, 'Delivered')}>
-                <Text style={[S.parcelBtnText, { color: '#10B981' }]}>✅ Mark Delivered</Text>
+
+              <TouchableOpacity style={{ backgroundColor: '#EF444420', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }} onPress={() => handleDelete(item.id, item.title)}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#EF4444' }}>Delete</Text>
               </TouchableOpacity>
             </View>
           </View>
         ))
       )}
+
+      {/* Add / Edit Pricing Modal */}
+      <Modal visible={modalVisible} transparent animationType="slide">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF', borderRadius: 20, padding: 20, width: '100%', maxWidth: 420 }}>
+            <Text style={{ fontSize: 18, fontWeight: '900', color: isDarkMode ? '#FFF' : '#111', marginBottom: 14 }}>
+              {editingId ? 'Edit Parcel Pricing Item' : 'Add New Parcel Pricing Item'}
+            </Text>
+
+            <Text style={{ fontSize: 11, fontWeight: '800', color: isDarkMode ? '#AAA' : '#666', marginBottom: 4 }}>Item Title *</Text>
+            <TextInput style={{ backgroundColor: isDarkMode ? '#262626' : '#F9FAFB', borderWidth: 1, borderColor: isDarkMode ? '#444' : '#DDD', borderRadius: 8, padding: 8, fontSize: 13, color: isDarkMode ? '#FFF' : '#111', marginBottom: 10 }} value={title} onChangeText={setTitle} placeholder="e.g. Phone, Laptop, Clothes" />
+
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, fontWeight: '800', color: isDarkMode ? '#AAA' : '#666', marginBottom: 4 }}>Icon Emoji</Text>
+                <TextInput style={{ backgroundColor: isDarkMode ? '#262626' : '#F9FAFB', borderWidth: 1, borderColor: isDarkMode ? '#444' : '#DDD', borderRadius: 8, padding: 8, fontSize: 13, color: isDarkMode ? '#FFF' : '#111' }} value={icon} onChangeText={setIcon} placeholder="📱" />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, fontWeight: '800', color: isDarkMode ? '#AAA' : '#666', marginBottom: 4 }}>Category</Text>
+                <TextInput style={{ backgroundColor: isDarkMode ? '#262626' : '#F9FAFB', borderWidth: 1, borderColor: isDarkMode ? '#444' : '#DDD', borderRadius: 8, padding: 8, fontSize: 13, color: isDarkMode ? '#FFF' : '#111' }} value={category} onChangeText={setCategory} placeholder="mobile" />
+              </View>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, fontWeight: '800', color: isDarkMode ? '#AAA' : '#666', marginBottom: 4 }}>Price KRW (₩) *</Text>
+                <TextInput style={{ backgroundColor: isDarkMode ? '#262626' : '#F9FAFB', borderWidth: 1, borderColor: isDarkMode ? '#444' : '#DDD', borderRadius: 8, padding: 8, fontSize: 13, color: isDarkMode ? '#FFF' : '#111' }} keyboardType="numeric" value={unitPrice} onChangeText={setUnitPrice} placeholder="70000" />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, fontWeight: '800', color: isDarkMode ? '#AAA' : '#666', marginBottom: 4 }}>Pricing Unit</Text>
+                <View style={{ flexDirection: 'row', gap: 4 }}>
+                  <TouchableOpacity style={[{ flex: 1, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#D97706', alignItems: 'center' }, unit === 'per_item' && { backgroundColor: '#D97706' }]} onPress={() => setUnit('per_item')}>
+                    <Text style={[{ fontSize: 10, fontWeight: '800' }, unit === 'per_item' ? { color: '#FFF' } : { color: '#D97706' }]}>Per Item</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity style={[{ flex: 1, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#D97706', alignItems: 'center' }, unit === 'per_kg' && { backgroundColor: '#D97706' }]} onPress={() => setUnit('per_kg')}>
+                    <Text style={[{ fontSize: 10, fontWeight: '800' }, unit === 'per_kg' ? { color: '#FFF' } : { color: '#D97706' }]}>Per KG</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            <Text style={{ fontSize: 11, fontWeight: '800', color: isDarkMode ? '#AAA' : '#666', marginBottom: 4 }}>Rate Description</Text>
+            <TextInput style={{ backgroundColor: isDarkMode ? '#262626' : '#F9FAFB', borderWidth: 1, borderColor: isDarkMode ? '#444' : '#DDD', borderRadius: 8, padding: 8, fontSize: 13, color: isDarkMode ? '#FFF' : '#111', marginBottom: 14 }} value={rateDesc} onChangeText={setRateDesc} placeholder="Air express duty included..." />
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+              <TouchableOpacity style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#999' }} onPress={() => setModalVisible(false)}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: isDarkMode ? '#FFF' : '#333' }}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={{ backgroundColor: '#D97706', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 }} onPress={handleSave} disabled={saving}>
+                <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '800' }}>Save Item</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+/**
+ * 6.8 ITEM REQUESTS MANAGEMENT SYSTEM (🛍️ India/Nepal -> Korea Requests)
+ */
+function ItemRequestsManagementSection({ S, requests, search, setSearch, onUpdateItemRequest, isDarkMode }: any) {
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [itemCostMap, setItemCostMap] = useState<Record<string, string>>({});
+  const [shippingCostMap, setShippingCostMap] = useState<Record<string, string>>({});
+  const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
+
+  const filteredRequests = useMemo(() => {
+    return requests.filter((r: ItemRequestRecord) => {
+      const q = (search || '').toLowerCase();
+      const rId = (r.requestId || '').toLowerCase();
+      const cName = (r.customer?.name || '').toLowerCase();
+      const cPhone = (r.customer?.phone || '').toLowerCase();
+      const recName = (r.koreaDeliveryAddress?.recipientName || '').toLowerCase();
+      const recCity = (r.koreaDeliveryAddress?.city || '').toLowerCase();
+
+      const matchesSearch =
+        !q ||
+        rId.includes(q) ||
+        cName.includes(q) ||
+        cPhone.includes(q) ||
+        recName.includes(q) ||
+        recCity.includes(q);
+
+      if (!matchesSearch) return false;
+
+      if (statusFilter === 'PENDING') return r.status === 'Pending Review' || r.status === 'pending';
+      if (statusFilter === 'PRICE_CONFIRMED') return r.status === 'Price Confirmed';
+      if (statusFilter === 'PAYMENT_SUBMITTED') return r.status === 'Payment Submitted' || r.paymentStatus === 'submitted';
+      if (statusFilter === 'PURCHASED') return r.status === 'Purchased / Sourced';
+      if (statusFilter === 'DELIVERED') return r.status === 'Delivered';
+      if (statusFilter === 'REJECTED') return r.status === 'Rejected';
+
+      return true;
+    });
+  }, [requests, search, statusFilter]);
+
+  const handleConfirmPricing = async (requestId: string) => {
+    const itemCost = parseInt(itemCostMap[requestId] || '0', 10);
+    const shipCost = parseInt(shippingCostMap[requestId] || '0', 10);
+
+    if (!itemCost || itemCost <= 0) {
+      Alert.alert('Item Cost Required', 'Please enter a valid item cost in KRW.');
+      return;
+    }
+
+    try {
+      const totalCost = itemCost + shipCost;
+      await onUpdateItemRequest(requestId, {
+        itemCostKRW: itemCost,
+        shippingCostKRW: shipCost,
+        finalConfirmedPriceKRW: totalCost,
+        status: 'Price Confirmed',
+        paymentStatus: 'payment_pending',
+      });
+      Alert.alert('Price Confirmed ✅', `Confirmed total of ₩${totalCost.toLocaleString()} (Item ₩${itemCost.toLocaleString()} + Shipping ₩${shipCost.toLocaleString()}) for ${requestId}.`);
+    } catch (e: any) {
+      Alert.alert('Update Error', e.message || 'Could not update pricing.');
+    }
+  };
+
+  const handleQuickStatusChange = async (requestId: string, newStatus: ItemRequestStatus) => {
+    try {
+      await onUpdateItemRequest(requestId, { status: newStatus });
+      Alert.alert('Status Updated', `Request ${requestId} status updated to "${newStatus}".`);
+    } catch (e: any) {
+      Alert.alert('Update Error', e.message || 'Could not update status.');
+    }
+  };
+
+  const handleReject = async (requestId: string) => {
+    Alert.alert('Reject Request', 'Are you sure you want to reject this item request?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reject',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await onUpdateItemRequest(requestId, { status: 'Rejected', paymentStatus: 'failed' });
+            Alert.alert('Rejected', `Item Request ${requestId} marked as Rejected.`);
+          } catch (e: any) {
+            Alert.alert('Error', e.message);
+          }
+        },
+      },
+    ]);
+  };
+
+  return (
+    <View style={S.panelContainer}>
+      <Text style={S.panelHeading}>🛍️ Item Requests to Korea ({requests.length})</Text>
+      <Text style={S.panelSub}>Review product sourcing requests from India & Nepal, set prices, and manage shipments</Text>
+
+      {/* Filter Tabs */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 10 }}>
+        {[
+          { id: 'ALL', label: 'All Requests' },
+          { id: 'PENDING', label: 'Pending Review ⏳' },
+          { id: 'PRICE_CONFIRMED', label: 'Price Confirmed 🎉' },
+          { id: 'PAYMENT_SUBMITTED', label: 'Payment Submitted 💳' },
+          { id: 'PURCHASED', label: 'Purchased 🛍️' },
+          { id: 'DELIVERED', label: 'Delivered ✓' },
+          { id: 'REJECTED', label: 'Rejected ❌' },
+        ].map((f) => (
+          <TouchableOpacity
+            key={f.id}
+            style={[
+              { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, backgroundColor: isDarkMode ? '#262626' : '#F3F4F6' },
+              statusFilter === f.id && { backgroundColor: '#D97706' },
+            ]}
+            onPress={() => setStatusFilter(f.id)}
+          >
+            <Text style={[{ fontSize: 12, fontWeight: '700', color: isDarkMode ? '#D1D5DB' : '#4B5563' }, statusFilter === f.id && { color: '#FFFFFF', fontWeight: '800' }]}>
+              {f.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <View style={S.searchBox}>
+        <Text style={S.searchIcon}>🔍</Text>
+        <TextInput
+          style={S.searchInput}
+          placeholder="Search by Request ID, customer name, recipient or phone..."
+          placeholderTextColor={isDarkMode ? '#666' : '#999'}
+          value={search}
+          onChangeText={setSearch}
+        />
+      </View>
+
+      {filteredRequests.length === 0 ? (
+        <View style={S.emptyStateBox}>
+          <Text style={{ fontSize: 40 }}>🛍️</Text>
+          <Text style={S.emptyTitle}>No Item Requests Found</Text>
+          <Text style={S.emptySub}>No customer sourcing requests match your search or filter.</Text>
+        </View>
+      ) : (
+        filteredRequests.map((req: ItemRequestRecord) => {
+          const isPending = req.status === 'Pending Review' || req.status === 'pending';
+          const currItemCost = itemCostMap[req.requestId] ?? (req.itemCostKRW ? String(req.itemCostKRW) : '');
+          const currShipCost = shippingCostMap[req.requestId] ?? (req.shippingCostKRW ? String(req.shippingCostKRW) : '15000');
+
+          return (
+            <View key={req.requestId} style={S.parcelCard}>
+              {/* Header */}
+              <View style={S.parcelHeaderRow}>
+                <View>
+                  <Text style={S.parcelIdTitle}>🛍️ Request ID: {req.requestId}</Text>
+                  <Text style={S.parcelDateSub}>
+                    Created: {new Date(req.createdAt).toLocaleString()} • Origin: {req.originCountry === 'India' ? 'India 🇮🇳' : 'Nepal 🇳🇵'}
+                  </Text>
+                </View>
+                <View style={[S.parcelBadgePill, isPending && { backgroundColor: '#FEF3C7' }]}>
+                  <Text style={[S.parcelBadgePillText, isPending && { color: '#B45309' }]}>
+                    {req.status}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Customer & Korea Address */}
+              <View style={S.parcelDetailsBox}>
+                <Text style={S.parcelDetailRow}>
+                  <Text style={S.bold}>Customer:</Text> {req.customer?.name} ({req.customer?.phone} • {req.customer?.email})
+                </Text>
+                <Text style={S.parcelDetailRow}>
+                  <Text style={S.bold}>Delivery Recipient (Korea 🇰🇷):</Text> {req.koreaDeliveryAddress?.recipientName} ({req.koreaDeliveryAddress?.phone})
+                </Text>
+                <Text style={S.parcelDetailRow}>
+                  <Text style={S.bold}>Korea Address:</Text> {req.koreaDeliveryAddress?.fullAddress}, {req.koreaDeliveryAddress?.city} ({req.koreaDeliveryAddress?.postalCode})
+                </Text>
+                <Text style={S.parcelDetailRow}>
+                  <Text style={S.bold}>Tracking AWB:</Text> {req.trackingNumber}
+                </Text>
+              </View>
+
+              {/* Requested Items List */}
+              <View style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF', borderRadius: 10, padding: 10, marginVertical: 6, borderWidth: 1, borderColor: isDarkMode ? '#333' : '#E5E7EB' }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: isDarkMode ? '#FFF' : '#111', marginBottom: 6 }}>
+                  Requested Items ({req.items?.length || 0})
+                </Text>
+                {req.items?.map((item, idx) => (
+                  <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6, borderBottomWidth: idx < req.items.length - 1 ? 1 : 0, borderBottomColor: isDarkMode ? '#2A2A2A' : '#F3F4F6', paddingBottom: 6 }}>
+                    {item.photoUrl && (
+                      <TouchableOpacity onPress={() => setPreviewPhotoUrl(item.photoUrl || null)}>
+                        <Image source={{ uri: item.photoUrl }} style={{ width: 44, height: 44, borderRadius: 8 }} />
+                      </TouchableOpacity>
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: isDarkMode ? '#EEE' : '#111' }}>{item.name}</Text>
+                      <Text style={{ fontSize: 11, color: isDarkMode ? '#AAA' : '#666' }}>
+                        Qty: {item.quantity} {item.brand ? `• Brand: ${item.brand}` : ''} {item.sizeColor ? `• ${item.sizeColor}` : ''}
+                      </Text>
+                      {item.productLink ? (
+                        <Text style={{ fontSize: 10, color: '#2563EB', marginTop: 1 }} numberOfLines={1}>
+                          🔗 {item.productLink}
+                        </Text>
+                      ) : null}
+                      {item.notes ? (
+                        <Text style={{ fontSize: 10, color: isDarkMode ? '#888' : '#777', fontStyle: 'italic', marginTop: 1 }}>
+                          "{item.notes}"
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+                ))}
+              </View>
+
+              {/* Payment Receipt Screenshot Preview if Submitted */}
+              {req.paymentScreenshot && (
+                <View style={{ backgroundColor: isDarkMode ? '#1E293B' : '#F0F9FF', borderRadius: 10, padding: 10, marginVertical: 4, borderWidth: 1, borderColor: '#BAE6FD' }}>
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: '#0369A1', marginBottom: 4 }}>
+                    💳 Customer Payment Proof Uploaded ({req.senderName ? `Sender: ${req.senderName}` : 'Submitted'})
+                  </Text>
+                  <TouchableOpacity onPress={() => setPreviewPhotoUrl(req.paymentScreenshot || null)}>
+                    <Image source={{ uri: req.paymentScreenshot }} style={{ width: '100%', height: 120, borderRadius: 8, resizeMode: 'cover' }} />
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Admin Price Control & Approval Box */}
+              <View style={{ backgroundColor: isDarkMode ? '#2D271E' : '#FFFBEB', borderRadius: 10, padding: 12, marginVertical: 6, borderWidth: 1, borderColor: '#FDE68A' }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#B45309', marginBottom: 6 }}>
+                  ⚙️ Admin Sourcing Pricing & Approval
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 10, color: isDarkMode ? '#D1D5DB' : '#78350F', fontWeight: '700' }}>
+                      Item Sourcing Cost (₩)
+                    </Text>
+                    <TextInput
+                      style={{
+                        backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+                        borderWidth: 1,
+                        borderColor: '#D97706',
+                        borderRadius: 8,
+                        paddingHorizontal: 8,
+                        paddingVertical: 5,
+                        fontSize: 12,
+                        fontWeight: '800',
+                        color: isDarkMode ? '#FFFFFF' : '#111827',
+                        marginTop: 2,
+                      }}
+                      keyboardType="numeric"
+                      value={currItemCost}
+                      onChangeText={(val) => setItemCostMap((prev) => ({ ...prev, [req.requestId]: val }))}
+                      placeholder="e.g. 45000"
+                    />
+                  </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 10, color: isDarkMode ? '#D1D5DB' : '#78350F', fontWeight: '700' }}>
+                      Shipping Charge (₩)
+                    </Text>
+                    <TextInput
+                      style={{
+                        backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+                        borderWidth: 1,
+                        borderColor: '#D97706',
+                        borderRadius: 8,
+                        paddingHorizontal: 8,
+                        paddingVertical: 5,
+                        fontSize: 12,
+                        fontWeight: '800',
+                        color: isDarkMode ? '#FFFFFF' : '#111827',
+                        marginTop: 2,
+                      }}
+                      keyboardType="numeric"
+                      value={currShipCost}
+                      onChangeText={(val) => setShippingCostMap((prev) => ({ ...prev, [req.requestId]: val }))}
+                      placeholder="e.g. 15000"
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={{ backgroundColor: '#D97706', paddingHorizontal: 12, paddingVertical: 9, borderRadius: 8, marginTop: 14 }}
+                    onPress={() => handleConfirmPricing(req.requestId)}
+                  >
+                    <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '800' }}>Confirm Price ✅</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ fontSize: 10, color: '#92400E', marginTop: 4 }}>
+                  Item Cost: ₩{(req.itemCostKRW || 0).toLocaleString()} | Shipping: ₩{(req.shippingCostKRW || 0).toLocaleString()} | Total: ₩{(req.finalConfirmedPriceKRW || 0).toLocaleString()}
+                </Text>
+              </View>
+
+              {/* Status Update Actions */}
+              <Text style={S.parcelActionLabel}>Update Lifecycle Status:</Text>
+              <View style={S.parcelActionsGrid}>
+                <TouchableOpacity style={S.parcelBtn} onPress={() => handleQuickStatusChange(req.requestId, 'Price Confirmed')}>
+                  <Text style={S.parcelBtnText}>🎉 Price Confirmed</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={S.parcelBtn} onPress={() => handleQuickStatusChange(req.requestId, 'Payment Pending')}>
+                  <Text style={S.parcelBtnText}>💳 Payment Pending</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={S.parcelBtn} onPress={() => handleQuickStatusChange(req.requestId, 'Payment Received')}>
+                  <Text style={S.parcelBtnText}>✅ Payment Received</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={S.parcelBtn} onPress={() => handleQuickStatusChange(req.requestId, 'Purchased / Sourced')}>
+                  <Text style={S.parcelBtnText}>🛍️ Purchased / Sourced</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={S.parcelBtn} onPress={() => handleQuickStatusChange(req.requestId, 'Shipped from Origin')}>
+                  <Text style={S.parcelBtnText}>✈️ Shipped from Origin</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={S.parcelBtn} onPress={() => handleQuickStatusChange(req.requestId, 'Arrived in Korea')}>
+                  <Text style={S.parcelBtnText}>🇰🇷 Arrived in Korea</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[S.parcelBtn, { backgroundColor: '#10B98120' }]} onPress={() => handleQuickStatusChange(req.requestId, 'Delivered')}>
+                  <Text style={[S.parcelBtnText, { color: '#10B981' }]}>✅ Mark Delivered</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[S.parcelBtn, { backgroundColor: '#EF444420' }]} onPress={() => handleReject(req.requestId)}>
+                  <Text style={[S.parcelBtnText, { color: '#EF4444' }]}>❌ Reject Request</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })
+      )}
+
+      {/* Photo Preview Modal */}
+      <Modal visible={!!previewPhotoUrl} transparent animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          {previewPhotoUrl && <Image source={{ uri: previewPhotoUrl }} style={{ width: '90%', height: 380, borderRadius: 16, resizeMode: 'contain' }} />}
+          <TouchableOpacity style={{ marginTop: 16, backgroundColor: '#D97706', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 12 }} onPress={() => setPreviewPhotoUrl(null)}>
+            <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '800' }}>Close Preview</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </View>
   );
 }

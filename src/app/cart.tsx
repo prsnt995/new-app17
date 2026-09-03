@@ -80,6 +80,7 @@ export default function CartScreen() {
   }, []);
 
   // Delivery Address State
+  // Delivery Address State
   const koreanAddresses = user.savedAddresses?.filter((a) => a.country === 'South Korea') || [];
   const [selectedAddressId, setSelectedAddressId] = useState(
     koreanAddresses[0]?.id || user.savedAddresses?.[0]?.id || ''
@@ -97,6 +98,29 @@ export default function CartScreen() {
   const [detailAddress, setDetailAddress] = useState(defaultRecipient?.detailAddress || '');
   const [deliveryNote, setDeliveryNote] = useState('문 앞에 놓아주세요 (Leave at front door)');
   const [city, setCity] = useState('Seoul');
+
+  // Auto-populate form when user addresses load/change
+  React.useEffect(() => {
+    if (koreanAddresses.length > 0) {
+      const activeAddr = koreanAddresses.find((a) => a.id === selectedAddressId) ||
+        koreanAddresses.find((a) => a.isDefault) ||
+        koreanAddresses[0];
+      if (activeAddr) {
+        if (!selectedAddressId || !koreanAddresses.some((a) => a.id === selectedAddressId)) {
+          setSelectedAddressId(activeAddr.id);
+        }
+        if (!recipientName && activeAddr.recipientName) setRecipientName(activeAddr.recipientName);
+        if ((!recipientPhone || recipientPhone === '010-') && (activeAddr.phone || activeAddr.phoneNumber)) {
+          setRecipientPhone(activeAddr.phone || activeAddr.phoneNumber || '');
+        }
+        if (!postalCode && activeAddr.postalCode) setPostalCode(activeAddr.postalCode);
+        if (!streetAddress && (activeAddr.streetAddress || activeAddr.fullAddress)) {
+          setStreetAddress(activeAddr.streetAddress || activeAddr.fullAddress || '');
+        }
+        if (!detailAddress && activeAddr.detailAddress) setDetailAddress(activeAddr.detailAddress);
+      }
+    }
+  }, [user.savedAddresses]);
 
   // Payment State
   const [paymentMethodType, setPaymentMethodType] = useState<'KOREAN_CARD' | 'BANK_TRANSFER'>('BANK_TRANSFER');
@@ -154,6 +178,8 @@ export default function CartScreen() {
 
   // ─── STEP 2 → STEP 3 ────────────────────────────────────────────────────────
   const handleConfirmAddressAndPay = async () => {
+    if (isCreatingOrder) return;
+
     if (!recipientName.trim()) {
       Alert.alert('Recipient Name Required', 'Please enter the delivery recipient name.');
       return;
@@ -172,26 +198,63 @@ export default function CartScreen() {
       return;
     }
 
-    // Save address to user profile (non-blocking)
-    try {
-      const addrId = `addr_${Date.now()}`;
-      await addKoreanAddress({
-        id: addrId,
-        recipientName: recipientName.trim(),
-        phoneNumber: recipientPhone.trim(),
-        postalCode: postalCode.trim(),
-        address: streetAddress.trim(),
-        detailAddress: detailAddress.trim(),
-        deliveryInstructions: deliveryNote.trim(),
-        country: 'South Korea',
-        label: 'Home',
-        isDefault: true,
-      });
-    } catch (_) {}
-
-    // Create order in Firestore
     setIsCreatingOrder(true);
+
     try {
+      // Find matching existing saved address
+      const existingMatching = koreanAddresses.find(
+        (a) =>
+          a.id === selectedAddressId ||
+          ((a.recipientName || '').trim().toLowerCase() === recipientName.trim().toLowerCase() &&
+           (a.phone || a.phoneNumber || '').trim() === recipientPhone.trim() &&
+           (a.postalCode || '').trim() === postalCode.trim() &&
+           (a.streetAddress || a.fullAddress || '').trim().toLowerCase() === streetAddress.trim().toLowerCase() &&
+           (a.detailAddress || '').trim().toLowerCase() === detailAddress.trim().toLowerCase())
+      );
+
+      let targetAddressId = existingMatching ? existingMatching.id : selectedAddressId;
+
+      // Save/update address idempotently
+      if (!existingMatching) {
+        targetAddressId = selectedAddressId || `kr-addr-${Date.now()}`;
+        await addKoreanAddress({
+          id: targetAddressId,
+          recipientName: recipientName.trim(),
+          phoneNumber: recipientPhone.trim(),
+          postalCode: postalCode.trim(),
+          address: streetAddress.trim(),
+          detailAddress: detailAddress.trim(),
+          deliveryInstructions: deliveryNote.trim(),
+          country: 'South Korea',
+          label: 'Home',
+          isDefault: true,
+        });
+      } else {
+        const isEdited =
+          existingMatching.recipientName !== recipientName.trim() ||
+          (existingMatching.phone || existingMatching.phoneNumber) !== recipientPhone.trim() ||
+          existingMatching.postalCode !== postalCode.trim() ||
+          (existingMatching.streetAddress || existingMatching.fullAddress) !== streetAddress.trim() ||
+          existingMatching.detailAddress !== detailAddress.trim() ||
+          existingMatching.deliveryInstructions !== deliveryNote.trim();
+
+        if (isEdited) {
+          await addKoreanAddress({
+            id: existingMatching.id,
+            recipientName: recipientName.trim(),
+            phoneNumber: recipientPhone.trim(),
+            postalCode: postalCode.trim(),
+            address: streetAddress.trim(),
+            detailAddress: detailAddress.trim(),
+            deliveryInstructions: deliveryNote.trim(),
+            country: 'South Korea',
+            label: existingMatching.label || 'Home',
+            isDefault: existingMatching.isDefault,
+          });
+        }
+      }
+
+      // Create order in Firestore
       const itemsPayload = cart.map((it) => ({
         productId: it.product.id,
         name: it.product.name,
@@ -240,12 +303,12 @@ export default function CartScreen() {
       setCreatedOrderId(result.orderId);
       setCreatedOrderNumber(result.orderNumber);
       setCreatedOrderData(result.order);
-      setIsCreatingOrder(false);
       clearCart();
       setCheckoutStep('PAYMENT');
     } catch (err: any) {
-      setIsCreatingOrder(false);
       Alert.alert('Order Creation Failed', err.message || 'Error creating order. Please try again.');
+    } finally {
+      setIsCreatingOrder(false);
     }
   };
 
@@ -284,12 +347,12 @@ export default function CartScreen() {
         onUploadProgress: (p) => setUploadProgress(p.percentage),
       });
 
-      setIsSubmittingBankOrder(false);
       setCardReceipt(null);
       setCheckoutStep('SUBMITTED');
     } catch (err: any) {
-      setIsSubmittingBankOrder(false);
       Alert.alert('Payment Submission Failed', err.message || 'Error submitting payment proof.');
+    } finally {
+      setIsSubmittingBankOrder(false);
     }
   };
 
@@ -368,11 +431,11 @@ export default function CartScreen() {
       clearCart();
       setCreatedOrderData(finalOrder);
       setCardReceipt(paymentDetails);
-      setIsSubmittingCardOrder(false);
       setCheckoutStep('SUBMITTED');
     } catch (err: any) {
-      setIsSubmittingCardOrder(false);
       Alert.alert('Payment Confirmation Notice', err.message || 'Error completing payment verification.');
+    } finally {
+      setIsSubmittingCardOrder(false);
     }
   };
 

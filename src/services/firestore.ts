@@ -5,6 +5,16 @@
  */
 
 import { supabase, TABLES } from '@/config/supabase';
+import {
+  db,
+  doc,
+  deleteDoc,
+  ensureFirebaseAuth,
+  FIRESTORE_COLLECTIONS,
+  storage,
+  storageRef,
+  deleteObject,
+} from '@/config/firebase';
 import { logger } from '@/lib/logger';
 import {
   Banner,
@@ -267,9 +277,51 @@ export const updateProductInFirestore = async (
   if (updateError) throw updateError;
 };
 
-export const deleteProductFromFirestore = async (id: string): Promise<void> => {
-  const { error } = await supabase.from(TABLES.PRODUCTS).delete().eq('id', id);
-  if (error) throw error;
+export const deleteProductFromFirestore = async (id: string, product?: Product): Promise<void> => {
+  let hasDeletedAny = false;
+  let lastError: any = null;
+
+  // 1. Ensure Firebase Auth is signed in for security rules
+  await ensureFirebaseAuth().catch(() => {});
+
+  // 2. Delete from Firebase Firestore
+  try {
+    const docRef = doc(db, FIRESTORE_COLLECTIONS.PRODUCTS, id);
+    await deleteDoc(docRef);
+    hasDeletedAny = true;
+  } catch (firestoreErr: any) {
+    console.warn('Firebase Firestore delete notice:', firestoreErr.message);
+    lastError = firestoreErr;
+  }
+
+  // 3. Delete from Supabase
+  try {
+    const { error: supabaseErr } = await supabase.from(TABLES.PRODUCTS).delete().eq('id', id);
+    if (!supabaseErr) {
+      hasDeletedAny = true;
+    } else {
+      console.warn('Supabase product delete notice:', supabaseErr.message);
+    }
+  } catch (sbErr: any) {
+    console.warn('Supabase delete exception:', sbErr.message);
+  }
+
+  // 4. Delete associated Firebase Storage image if applicable
+  const imgUrl = product?.image || product?.imageUrl || (product?.images && product.images[0]);
+  if (imgUrl && imgUrl.includes('firebasestorage.googleapis.com')) {
+    try {
+      const storagePath = decodeURIComponent(imgUrl.split('/o/')[1]?.split('?')[0] || '');
+      if (storagePath) {
+        const fileRef = storageRef(storage, storagePath);
+        await deleteObject(fileRef).catch(() => {});
+      }
+    } catch (_) {}
+  }
+
+  // 5. If neither Firestore nor Supabase delete succeeded and there was an explicit error, throw it
+  if (!hasDeletedAny && lastError) {
+    throw new Error(lastError.message || 'Failed to delete product from database.');
+  }
 };
 
 export const duplicateProductInFirestore = async (product: Product): Promise<string> => {

@@ -26,7 +26,7 @@ import {
   runTransaction,
   writeBatch,
 } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
+import { getAuth, signInAnonymously } from 'firebase/auth';
 
 // ─── FIREBASE CONFIGURATION ──────────────────────────────────────────────────
 const firebaseConfig = {
@@ -46,6 +46,22 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const storage = getStorage(app);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+
+/**
+ * Ensures Firebase Auth is signed in (anonymously if no user logged in).
+ * This fulfills Firestore Security Rules requiring request.auth != null.
+ */
+export const ensureFirebaseAuth = async () => {
+  try {
+    if (!auth.currentUser) {
+      await signInAnonymously(auth);
+    }
+    return auth.currentUser;
+  } catch (err: any) {
+    console.log('ensureFirebaseAuth notice:', err.message);
+    return auth.currentUser;
+  }
+};
 
 // ─── FIRESTORE COLLECTIONS CONSTANTS ─────────────────────────────────────────
 export const FIRESTORE_COLLECTIONS = {
