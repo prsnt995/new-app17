@@ -3,12 +3,16 @@ const router = express.Router();
 const supabase = require('../lib/supabase');
 const authMiddleware = require('../middleware/auth');
 
+const FALLBACK_ADMIN_EMAILS = ['parshanttanwar995@gmail.com','dineshgodara571@gmail.com','admin@namastemart.com'];
 router.delete('/products/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     const { data: adminRows } = await supabase.from('admins').select('id').eq('id', req.user.uid).limit(1);
-    const adminOk = !!(adminRows && adminRows.length);
-    if (!adminOk) return res.status(403).json({ success: false, message: 'Admin only' });
+    const adminOk = !!(adminRows && adminRows.length) || FALLBACK_ADMIN_EMAILS.includes((req.user.email||'').toLowerCase());
+    if (!adminOk) {
+      console.log('DELETE admin blocked:', { uid: req.user.uid, email: req.user.email, adminRows });
+      return res.status(403).json({ success: false, message: `Admin only — uid ${req.user.uid} email ${req.user.email} not in admins table` });
+    }
 
     // Delete storage objects (both single and legacy double prefix)
     for (const prefix of [id, `products/${id}`]) {
@@ -36,8 +40,9 @@ router.post('/orders/:id/verify', authMiddleware, async (req, res) => {
     const { id } = req.params;
     const { adminEmail, orderAmount, customerName, orderNumber } = req.body;
     const { data: adminRows, error: adminErr } = await supabase.from('admins').select('id').eq('id', req.user.uid).limit(1);
-    console.log('admin check:', adminRows?.length, adminErr?.message);
-    if (!adminRows?.length) return res.status(403).json({ success: false, message: 'Admin only — not in admins table' });
+    const isAdmin = !!(adminRows?.length) || FALLBACK_ADMIN_EMAILS.includes((req.user.email||'').toLowerCase());
+    console.log('admin check:', adminRows?.length, adminErr?.message, 'fallback', FALLBACK_ADMIN_EMAILS.includes((req.user.email||'').toLowerCase()));
+    if (!isAdmin) return res.status(403).json({ success: false, message: `Admin only — uid ${req.user.uid} email ${req.user.email} not in admins table` });
     const { error } = await supabase.from('orders').update({
       payment_status: 'PAID', order_status: 'CONFIRMED', status: 'Payment Confirmed', updated_at: Date.now(),
     }).eq('id', id);
@@ -62,8 +67,9 @@ router.post('/orders/:id/reject', authMiddleware, async (req, res) => {
     const { id } = req.params;
     const { reason, adminEmail, orderAmount, customerName, orderNumber } = req.body;
     const { data: adminRows, error: adminErr } = await supabase.from('admins').select('id').eq('id', req.user.uid).limit(1);
-    console.log('reject admin check:', adminRows?.length, adminErr?.message);
-    if (!adminRows?.length) return res.status(403).json({ success: false, message: 'Admin only — not in admins table' });
+    const isAdminR = !!(adminRows?.length) || FALLBACK_ADMIN_EMAILS.includes((req.user.email||'').toLowerCase());
+    console.log('reject admin check:', adminRows?.length, adminErr?.message, 'fallback', FALLBACK_ADMIN_EMAILS.includes((req.user.email||'').toLowerCase()));
+    if (!isAdminR) return res.status(403).json({ success: false, message: `Admin only — uid ${req.user.uid} email ${req.user.email} not in admins table` });
     const { data: existingOrder } = await supabase.from('orders').select('payment').eq('id', id).single();
     const existingPayment = existingOrder?.payment || {};
     const { error } = await supabase.from('orders').update({

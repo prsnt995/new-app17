@@ -269,11 +269,20 @@ export const deleteProductFromFirestore = async (id: string, product?: Product):
   let hasDeletedAny = false;
   let lastError: any = null;
 
-  // Supabase-only delete: server (service_role) first, then client fallback
   try {
     const API = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5050/api';
-    const { data: { session } } = await supabase.auth.getSession();
-    const token = session?.access_token;
+    let token: string | null = null;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      token = session?.access_token || null;
+      if (!token) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: { session: s2 } } = await supabase.auth.getSession();
+          token = s2?.access_token || null;
+        }
+      }
+    } catch {}
     if (token) {
       const res = await fetch(`${API}/admin/products/${id}`, {
         method: 'DELETE',
@@ -283,19 +292,23 @@ export const deleteProductFromFirestore = async (id: string, product?: Product):
       if (res.ok && body?.success) {
         hasDeletedAny = true;
       } else {
-        console.warn('Server delete notice:', body?.message || res.statusText);
+        const msg = body?.message || res.statusText || `Server error ${res.status}`;
+        console.warn('Server delete notice:', msg);
+        if (res.status === 403) lastError = new Error(msg || 'Admin only — your user is not in admins table');
+        else lastError = new Error(msg);
       }
     }
     if (!hasDeletedAny) {
+      if (!token) lastError = new Error('No auth token — session expired. Logout/login then retry. Check Network tab: DELETE should send Bearer token.');
       const { error: supabaseErr } = await supabase.from(TABLES.PRODUCTS).delete().eq('id', id);
       if (!supabaseErr) {
         hasDeletedAny = true;
-      } else if (['22P02', '42P17', 'PGRST301'].includes(supabaseErr.code || '')) {
-        console.warn('Supabase delete skipped for local/mock or RLS:', id, supabaseErr.code);
+      } else if (['22P02', '42P17'].includes(supabaseErr.code || '')) {
+        console.warn('Supabase delete skipped for local/mock:', id, supabaseErr.code);
         hasDeletedAny = true;
       } else {
         console.warn('Supabase product delete notice:', supabaseErr.message, supabaseErr.code);
-        lastError = supabaseErr;
+        if (!lastError) lastError = new Error(supabaseErr.message + ` — code ${supabaseErr.code}. If 42501/RLS: uid not in admins table. Token present: ${!!token}`);
       }
     }
   } catch (sbErr: any) {

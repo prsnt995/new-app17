@@ -750,9 +750,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               fullAddress: `${a.address}, ${a.detailAddress} (${a.postalCode})`,
               streetAddress: a.address,
               detailAddress: a.detailAddress,
-              city: 'Seoul',
+              city: a.city || a.district || 'Seoul',
               postalCode: a.postalCode || '',
-              country: 'South Korea' as const,
+              country: (a.country as Address['country']) || 'South Korea',
               isDefault: !!a.isDefault,
               label: a.label || 'Home',
             }));
@@ -900,6 +900,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   }
                 } catch {}
               }
+            } catch {}
+
+            // Realtime sync for addresses: if profile updated on another device, reflect locally
+            try {
+              const { subscribeToUserDoc } = await import('@/services/userService');
+              const unsubProfile = subscribeToUserDoc(uid, (updated) => {
+                if (!updated || !isActive) return;
+                const addrs: any[] = (updated as any).addresses || [];
+                const mapped: Address[] = addrs.map((a: any) => ({
+                  id: a.id || `addr-${Date.now()}`,
+                  title: a.label || 'Home',
+                  type: 'HOME' as const,
+                  recipientName: a.recipientName || updated.name || '',
+                  phone: a.phoneNumber || '',
+                  phoneNumber: a.phoneNumber || '',
+                  fullAddress: `${a.address || ''}, ${a.detailAddress || ''} (${a.postalCode || ''})`,
+                  streetAddress: a.address || '',
+                  detailAddress: a.detailAddress || '',
+                  city: a.city || a.district || 'Seoul',
+                  postalCode: a.postalCode || '',
+                  country: (a.country as Address['country']) || 'South Korea',
+                  isDefault: !!a.isDefault,
+                  label: a.label || 'Home',
+                }));
+                setUser((prev) => {
+                  if (JSON.stringify(prev.savedAddresses) === JSON.stringify(mapped)) return prev;
+                  return { ...prev, savedAddresses: mapped, addresses: addrs };
+                });
+              });
+              const prevUnsub = unsubscribers_auth_ref.current;
+              unsubscribers_auth_ref.current = () => {
+                prevUnsub?.();
+                try { unsubProfile(); } catch {}
+              };
             } catch {}
           } catch (e: any) {
             console.log('Error initializing user profile:', e.message);

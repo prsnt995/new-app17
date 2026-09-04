@@ -564,7 +564,7 @@ export default function ProfileScreen() {
                       )}
                     </View>
 
-                    {!addr.isDefault && isKorea && (
+                    {!addr.isDefault && (
                       <TouchableOpacity
                         onPress={() => handleSetDefaultAddress(addr)}
                         activeOpacity={0.8}

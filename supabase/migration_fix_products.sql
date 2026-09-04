@@ -19,7 +19,7 @@ RETURNS BOOLEAN AS $$
       OR NOT EXISTS (SELECT 1 FROM public.admins);
 $$ LANGUAGE sql SECURITY DEFINER STABLE;
 
--- Fix RLS: prevent role escalation and admin enumeration
+-- Fix RLS: prevent role escalation + address integrity (WITH CHECK hardens row ownership)
 DROP POLICY IF EXISTS "profiles_update_own" ON profiles;
 CREATE POLICY "profiles_update_own" ON profiles
   FOR UPDATE USING (auth.uid() = id)

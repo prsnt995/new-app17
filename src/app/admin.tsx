@@ -749,23 +749,23 @@ export default function AdminScreen() {
       try {
         setIsProcessingAction(true);
         setProductLoading(true);
-        // Optimistic local delete (instant UI)
+        await deleteProductFromFirestore(product.id, product);
         deleteProduct(product.id);
         if (Platform.OS === 'web') {
           window.alert('Product deleted successfully.');
         } else {
           Alert.alert('Success ✅', 'Product deleted successfully.');
         }
-        // Background backend delete (don't block UI)
-        deleteProductFromFirestore(product.id, product).catch((bgErr: any) => {
-          console.warn('Background delete notice:', bgErr.message);
-        });
       } catch (err: any) {
         console.error('Delete product error:', err);
+        const msg = err.message || 'Failed to delete product from database.';
+        const hint = msg.includes('Admin only') || msg.includes('admins table') || msg.includes('RLS')
+          ? '\n\nFix: add this user to admins table:\nINSERT INTO admins (id) SELECT id FROM auth.users WHERE email = \'' + (user?.email || '') + '\';'
+          : '';
         if (Platform.OS === 'web') {
-          window.alert(err.message || 'Failed to delete product from database.');
+          window.alert(msg + hint);
         } else {
-          Alert.alert('Delete Error ❌', err.message || 'Failed to delete product from database.');
+          Alert.alert('Delete Error ❌', msg + hint);
         }
       } finally {
         setIsProcessingAction(false);
@@ -945,8 +945,10 @@ export default function AdminScreen() {
     } catch (err: any) {
       setIsProcessingAction(false);
       console.error('Verify failed:', err);
-      if (Platform.OS === 'web') window.alert(err.message || 'Failed to verify payment.');
-      else Alert.alert('Verification Notice', err.message || 'Failed to verify payment.');
+      const msg = err.message || 'Failed to verify payment.';
+      const hint = msg.includes('Admin only') || msg.includes('admins table') ? '\n\nFix: INSERT INTO admins (id) SELECT id FROM auth.users WHERE email=\'' + (user?.email || '') + '\';' : '';
+      if (Platform.OS === 'web') window.alert(msg + hint);
+      else Alert.alert('Verification Notice', msg + hint);
     }
   };
 
@@ -1049,7 +1051,9 @@ export default function AdminScreen() {
       );
     } catch (err: any) {
       setIsProcessingAction(false);
-      Alert.alert('Rejection Error', err.message || 'Failed to reject payment.');
+      const msg = err.message || 'Failed to reject payment.';
+      const hint = msg.includes('Admin only') || msg.includes('admins table') ? '\n\nFix: INSERT INTO admins (id) SELECT id FROM auth.users WHERE email=\'' + (user?.email || '') + '\';' : '';
+      Alert.alert('Rejection Error', msg + hint);
     }
   };
 

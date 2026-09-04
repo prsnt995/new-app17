@@ -81,9 +81,10 @@ export const verifyOrderPayment = async (
     });
     const body = await res.json().catch(() => null);
     if (res.ok && body?.success) return;
+    if (res.status === 403) throw new Error(body?.message || 'Admin only — your user is not in admins table');
     if (res.status === 404) throw new Error(body?.message || 'Order not found');
+    if (body?.message) throw new Error(body.message);
   }
-  // Fallback: direct Supabase (requires is_admin RLS) — keep all statuses in sync
   const { error } = await supabase.from('orders').update({
     payment_status: 'PAID',
     order_status: 'CONFIRMED',
@@ -91,7 +92,7 @@ export const verifyOrderPayment = async (
     status: 'Payment Confirmed',
     updated_at: Date.now(),
   }).eq('id', orderId);
-  if (error) throw error;
+  if (error) throw new Error(error.message + ' — not in admins table? Run: INSERT INTO admins (id) SELECT id FROM auth.users WHERE email=\'' + adminEmail + '\'');
   await supabase.from('payment_verification_logs').insert({
     order_id: orderId, order_number: orderNumber || orderId, action: 'VERIFIED',
     admin_user_id: adminUid, admin_email: adminEmail, amount: orderAmount, customer_name: customerName, created_at: Date.now(),
@@ -123,17 +124,20 @@ export const rejectOrderPayment = async (
     });
     const body = await res.json().catch(() => null);
     if (res.ok && body?.success) return;
+    if (res.status === 403) throw new Error(body?.message || 'Admin only — your user is not in admins table');
     if (res.status === 404) throw new Error(body?.message || 'Order not found');
+    if (body?.message) throw new Error(body.message);
   }
   const { data: existingOrder } = await supabase.from('orders').select('payment').eq('id', orderId).single();
   const existingPayment = (existingOrder as any)?.payment || {};
-  await supabase.from('orders').update({
+  const { error: updErr } = await supabase.from('orders').update({
     payment_status: 'REJECTED',
     order_status: 'REJECTED',
     status: 'Payment Rejected',
     payment: { ...existingPayment, verified: false, status: 'rejected', rejectionReason: reason, rejectedAt: Date.now(), rejectedBy: adminUid } as any,
     updated_at: Date.now(),
   }).eq('id', orderId);
+  if (updErr) throw new Error(updErr.message + ' — not in admins table? Run: INSERT INTO admins (id) SELECT id FROM auth.users WHERE email=\'' + adminEmail + '\'');
   await supabase.from('payment_verification_logs').insert({
     order_id: orderId, order_number: orderNumber || orderId, action: 'REJECTED',
     admin_user_id: adminUid, admin_email: adminEmail, reason, amount: orderAmount, customer_name: customerName, created_at: Date.now(),
