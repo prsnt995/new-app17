@@ -3,5 +3,7 @@
   "buildCommand": "npx expo export --platform web",
   "outputDirectory": "dist",
   "cleanUrls": true,
-  "framework": null
+  "trailingSlash": false,
+  "framework": null,
+  "rewrites": [{ "source": "/admin", "destination": "/admin.html" }]
 }
